@@ -72,9 +72,22 @@ Dograh's published workflow remains the runtime authority for phone and browser 
 - `POST /api/admin/wallet/adjust` with `{tenantId,amountPaise,idempotencyKey,reason}` returns `{ledgerEntry}`. Replays return `{duplicate:true}` and never apply twice. Admin required.
 - `POST /api/admin/tickets/reply` with `{ticketId,message,internal,status}` returns `{message}`. Admin required.
 
+## Phone numbers (Sprint 1 test inventory)
+
+Numbers are first-class Astra resources. Customers never see Dograh or VoBiz branding in the Phone Numbers UI. Provider mapping stays server-side.
+
+- `GET /api/phone-numbers` returns the authenticated tenant's assigned numbers (`id`, `e164`, label, status, agent assignment, inbound/outbound flags). Provider ids and API keys are never returned.
+- `GET /api/phone-numbers/available` returns platform-owned inventory still marked `available` (seeded live test number `+918065353938`).
+- `POST /api/phone-numbers/:id/assign` with `{agentId, inboundEnabled?, outboundEnabled?}` assigns inventory to a tenant agent, sets `agent.telephony.did`, and stores Dograh ids server-side for dial.
+- `POST /api/phone-numbers/:id/unassign` returns the number to platform inventory.
+- `PATCH /api/phone-numbers/:id` toggles `inboundEnabled` / `outboundEnabled`.
+- `POST /api/phone-numbers/purchase` returns **501** `purchase_deferred` during the testing phase.
+
+See `docs/PHONE-NUMBERS.md` for curl examples and adapter notes.
+
 ## Persistence collections
 
-Schema version 3 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, and `demoLinks`. Startup migration is additive. Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
+Schema version 4 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, and `providerResources`. Startup migration is additive. Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
 
 The JSON store remains suitable for a single-process demo. Production must move these contracts to transactional PostgreSQL before accepting money. PayU success redirects must never credit a wallet. Only a verified, idempotent server callback may convert a payment intent into a ledger credit.
 
