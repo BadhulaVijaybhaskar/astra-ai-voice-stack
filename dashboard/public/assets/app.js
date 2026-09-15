@@ -2274,7 +2274,8 @@ function paintAssignedNumbers(host, numbers) {
           await api('/api/phone-numbers/' + encodeURIComponent(n.id) + '/unassign', { method: 'POST', body: {} });
           State.loaded.phoneNumbers = false;
           toast('Number unassigned.', 'ok');
-          goto('numbers');
+          if (currentRoute() === 'numbers') onRoute();
+          else goto('numbers');
         }
       });
     };
@@ -2326,7 +2327,8 @@ function paintAvailableNumbers(host, numbers) {
         State.loaded.phoneNumbers = false;
         State.loaded.agents = false;
         toast('Assigned ' + n.e164 + ' to agent.', 'ok');
-        goto('numbers');
+        if (currentRoute() === 'numbers') onRoute();
+        else goto('numbers');
       } catch (ex) {
         toast(ex.message || 'Assign failed.', 'err');
       } finally {
