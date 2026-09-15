@@ -209,7 +209,7 @@ function renderAuth() {
 
     const card = el('div', { class: 'auth-card' }, [
       el('div', { class: 'auth-brand' }, [
-        brandMark(34),
+        brandMark(36),
         el('span', { class: 'nm' }, [document.createTextNode('astra '), el('em', {}, 'AI')])
       ]),
       el('h1', {}, mode === 'login' ? 'Welcome back' : 'Start building'),
@@ -326,7 +326,7 @@ function renderShell() {
 
   const side = el('aside', { class: 'side' }, [
     el('div', { class: 'side-brand' }, [
-      brandMark(30),
+      brandMark(28),
       el('span', { class: 'nm' }, [document.createTextNode('astra '), el('em', {}, 'AI')])
     ]),
     nav,
@@ -456,8 +456,8 @@ function onRoute() {
 function goto(id) { location.hash = '#/' + id; }
 
 /* ---- shared view header ---- */
-function viewHead(title, sub) {
-  return el('div', { class: 'view-head' }, [el('h2', {}, title), sub ? el('p', {}, sub) : null]);
+function viewHead(title, sub, extraClass) {
+  return el('div', { class: 'view-head' + (extraClass ? ' ' + extraClass : '') }, [el('h2', {}, title), sub ? el('p', {}, sub) : null]);
 }
 
 /* ===========================================================================
@@ -465,23 +465,26 @@ function viewHead(title, sub) {
    =========================================================================== */
 async function viewOverview(root) {
   const name = State.me.user.name || State.me.user.email;
-  root.appendChild(viewHead('Welcome back, ' + name + '.', 'Your voice stack at a glance. Provider health, usage, and the fastest way into a build.'));
+  root.appendChild(viewHead(
+    'Welcome back, ' + name + '.',
+    'Your voice stack at a glance. Provider health, usage, and the fastest way into a build.',
+    'overview-hero'
+  ));
 
   const statsRow = el('div', { class: 'grid grid-3' }, skeleton('sk-stat', 3));
   root.appendChild(statsRow);
 
-  const body = el('div', { class: 'grid grid-12', style: 'margin-top:18px' }, [
+  const body = el('div', { class: 'grid grid-12', style: 'margin-top:14px' }, [
     el('div', { class: 'card spark-card', id: 'sparkHost' }, skeleton('sk-card', 1)),
-    el('div', { class: 'card card-pad', id: 'qaHost' }, [
-      el('h3', { class: 't-h3', style: 'margin-bottom:14px' }, 'Quick actions'),
+    el('div', { class: 'card qa-card', id: 'qaHost' }, [
+      el('h3', {}, 'Quick actions'),
       el('div', { class: 'qa-row' }, [
         el('button', { class: 'btn btn-primary', onclick: () => goto('agents') }, 'Build an agent'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('studio') }, 'Open Voice Studio'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('talk') }, 'Talk to it'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('telephony') }, 'Telephony')
       ]),
-      el('div', { class: 'divider', style: 'margin:18px 0' }),
-      el('div', { id: 'provMini', class: 'soft', style: 'font-size:.85rem' }, 'Checking providers...')
+      el('div', { class: 'qa-foot', id: 'provMini' }, 'Checking providers...')
     ])
   ]);
   root.appendChild(body);
@@ -539,14 +542,24 @@ function estimateCost(usage) {
 function sparkPanel(days) {
   const data = (days || []).map((d) => ({ day: d.day, v: d.chars || 0 }));
   const total = data.reduce((s, d) => s + d.v, 0);
+  const hasData = data.some((d) => d.v > 0);
   const head = el('div', { class: 'hd' }, [
     el('div', { class: 't' }, 'Usage, characters per day'),
-    el('div', { class: 'v' }, fmtInr(total) + ' total')
+    el('div', { class: 'v' }, hasData ? (fmtInr(total) + ' total') : 'No data yet')
   ]);
+  if (!hasData) {
+    return el('div', {}, [
+      head,
+      el('div', { class: 'spark-empty' }, [
+        el('div', { class: 'se-title' }, 'No usage yet'),
+        el('div', { class: 'se-sub' }, 'Synthesize in Voice Studio or talk to an agent to see characters per day here.')
+      ])
+    ]);
+  }
   const svg = buildSpark(data);
   const xlabels = el('div', { class: 'spark-x' }, [
     el('span', {}, data.length ? shortDay(data[0].day) : ''),
-    el('span', {}, data.length ? shortDay(data[data.length - 1].day) : 'no data yet')
+    el('span', {}, data.length ? shortDay(data[data.length - 1].day) : '')
   ]);
   return el('div', {}, [head, svg, xlabels]);
 }
@@ -569,8 +582,9 @@ function buildSpark(data) {
   if (!data.length) {
     const txt = document.createElementNS(ns, 'text');
     txt.setAttribute('x', W / 2); txt.setAttribute('y', H / 2 + 4); txt.setAttribute('text-anchor', 'middle');
-    txt.setAttribute('fill', '#5C6479'); txt.setAttribute('font-size', '13'); txt.setAttribute('font-family', 'monospace');
-    txt.textContent = 'Synthesize something to see usage here.';
+    txt.setAttribute('fill', '#71717A'); txt.setAttribute('font-size', '13');
+    txt.setAttribute('font-family', 'Avenir Next, Segoe UI, sans-serif');
+    txt.textContent = 'No usage yet';
     svg.appendChild(txt);
     return svg;
   }

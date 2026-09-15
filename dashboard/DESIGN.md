@@ -3,10 +3,13 @@
 ## Visual system
 
 Use the Astra AI shell defined in `public/assets/brand.css` and `public/assets/app.css`.
-Dark console canvases stay dark; accents follow the official logo gradient purple `#6B21A8` → cyan `#06B6D4`.
-Charcoal `#111827` and muted gray `#6B7280` are the light-canvas text tokens. Primary actions, active nav,
-selected controls and monetary proof use the gradient / cyan accent (the `--gold` token aliases cyan for legacy class names).
-New controls must use the same tokens rather than introduce a second visual language.
+The console is a unified dark shell (sidebar, topbar, and canvas share charcoal surfaces).
+Accents follow the official logo gradient purple `#6B21A8` / `#642C8F` → cyan `#06B6D4`.
+Charcoal `#111827` and muted gray `#6B7280` are the light-canvas text tokens.
+Primary actions, active nav, selected controls and monetary proof use the gradient / cyan accent
+(the `--gold` token aliases cyan for legacy class names). Gradient is reserved for primary CTAs
+and key accents, not full-surface washes. New controls must use the same tokens rather than
+introduce a second visual language.
 
 ## Talk session model
 
