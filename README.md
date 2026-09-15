@@ -7,8 +7,8 @@ Bare Ubuntu box to a ringing phone in six scripted steps. No SaaS in the middle,
 every key stays on your own server.
 
 ```
-git clone https://github.com/toprmrproducer/rapidx-voice-agent-stack.git
-cd rapidx-voice-agent-stack
+git clone https://github.com/BadhulaVijaybhaskar/astra-ai-voice-stack.git
+cd astra-ai-voice-stack
 cp .env.example .env      # fill in 8 values
 bash deploy/01-deploy-dograh.sh
 ```

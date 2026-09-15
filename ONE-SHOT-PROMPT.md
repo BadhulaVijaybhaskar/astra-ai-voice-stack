@@ -40,8 +40,8 @@ STEP 3 and are the only login to the whole system.
 
 ## STEP 1. Clone this repo
 
-  git clone https://github.com/toprmrproducer/rapidx-voice-agent-stack.git
-  cd rapidx-voice-agent-stack
+  git clone https://github.com/BadhulaVijaybhaskar/astra-ai-voice-stack.git
+  cd astra-ai-voice-stack
   cp .env.example .env
 
 Fill .env with every value from STEP 0. Never commit .env, it is gitignored.
