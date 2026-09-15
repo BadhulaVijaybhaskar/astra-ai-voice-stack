@@ -399,7 +399,7 @@
 .talk-identity { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .talk-agent-select { display: flex; align-items: center; gap: 9px; color: var(--ink-soft); font-size: 0.78rem; }
 .talk-agent-select .select { min-width: 230px; color: var(--ink); }
-.talk-agent-select .select.is-empty { color: var(--ink-dim); }
+.talk-agent-select .select.is-empty { color: var(--ink-soft); }
 .conversation-status {
   min-height: 28px; display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px;
   border: 1px solid var(--line-2); border-radius: 999px; color: var(--ink-soft); background: var(--raised);
@@ -416,11 +416,11 @@
 .conversation-status.error { color: #fecdd3; border-color: rgba(251,113,133,.36); background: rgba(251,113,133,.1); }
 .conversation-status.error .conversation-dot { background: var(--bad); }
 .conversation-pipeline {
-  padding: 5px 9px; border-radius: 8px; border: 1px solid rgba(34,211,238,.42);
-  background: rgba(6,182,212,.12); color: var(--a-sky); font-family: var(--mono); font-size: 0.69rem;
-  font-weight: 560; letter-spacing: 0.01em;
+  padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(34,211,238,.50);
+  background: rgba(6,182,212,.16); color: #67E8F9; font-family: var(--mono); font-size: 0.74rem;
+  font-weight: 600; letter-spacing: 0.01em;
 }
-.conversation-timing { color: var(--ink-dim); font-family: var(--mono); font-size: 0.72rem; white-space: nowrap; }
+.conversation-timing { color: var(--ink-soft); font-family: var(--mono); font-size: 0.74rem; white-space: nowrap; }
 .transcript { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
 .bubble { max-width: 78%; padding: 11px 15px; border-radius: 16px; font-size: 0.92rem; line-height: 1.5; }
 .bubble.user { align-self: flex-end; background: rgba(6,182,212,0.16); border: 1px solid rgba(107,33,168,0.35); border-bottom-right-radius: 5px; }
