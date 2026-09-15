@@ -179,9 +179,9 @@
 .hchip {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 5px 10px 5px 8px; border-radius: var(--r-pill);
-  background: rgba(255,255,255,0.03); border: 1px solid var(--line-2);
+  background: rgba(255,255,255,0.04); border: 1px solid var(--line-2);
   font-size: 0.72rem; font-weight: 540; letter-spacing: 0.02em;
-  color: var(--ink-dim); transition: border-color 0.2s, background 0.2s, color 0.2s;
+  color: var(--ink-soft); transition: border-color 0.2s, background 0.2s, color 0.2s;
 }
 .hchip .dot {
   width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint);
@@ -210,7 +210,7 @@
 @keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .view-head { margin-bottom: 22px; }
 .view-head h2 { font-size: clamp(1.45rem, 2.4vw, 1.95rem); letter-spacing: -0.035em; font-weight: 660; }
-.view-head p { color: var(--ink-dim); margin-top: 8px; max-width: 54ch; font-size: 0.92rem; line-height: 1.55; }
+.view-head p { color: var(--ink-soft); margin-top: 8px; max-width: 54ch; font-size: 0.92rem; line-height: 1.55; }
 .overview-hero {
   position: relative; margin-bottom: 26px; padding-bottom: 4px;
 }
@@ -297,8 +297,8 @@
 .agent-card .ac-actions .btn { flex: 1; }
 .tag {
   display: inline-flex; align-items: center; gap: 5px; font-size: 0.7rem; padding: 4px 9px;
-  border-radius: var(--r-pill); background: var(--bg-2); border: 1px solid var(--line);
-  color: var(--ink-dim); font-family: var(--mono);
+  border-radius: var(--r-pill); background: var(--raised); border: 1px solid var(--line-2);
+  color: var(--ink-soft); font-family: var(--mono);
 }
 .empty {
   text-align: center; padding: 44px 22px; color: var(--ink-dim);
@@ -397,14 +397,15 @@
 .talk-head .who { font-size: 0.9rem; font-weight: 560; }
 .talk-head .who span { color: var(--ink-dim); font-weight: 400; }
 .talk-identity { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.talk-agent-select { display: flex; align-items: center; gap: 9px; color: var(--ink-dim); font-size: 0.78rem; }
-.talk-agent-select .select { min-width: 230px; }
+.talk-agent-select { display: flex; align-items: center; gap: 9px; color: var(--ink-soft); font-size: 0.78rem; }
+.talk-agent-select .select { min-width: 230px; color: var(--ink); }
+.talk-agent-select .select.is-empty { color: var(--ink-dim); }
 .conversation-status {
   min-height: 28px; display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px;
-  border: 1px solid var(--line); border-radius: 999px; color: var(--ink-dim); background: var(--panel-2);
+  border: 1px solid var(--line-2); border-radius: 999px; color: var(--ink-soft); background: var(--raised);
   font-size: 0.76rem; font-weight: 560; letter-spacing: 0.01em;
 }
-.conversation-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); }
+.conversation-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-dim); }
 .conversation-status.connecting .conversation-dot,
 .conversation-status.transcribing .conversation-dot,
 .conversation-status.thinking .conversation-dot { background: var(--gold); animation: micpulse 1.2s ease-in-out infinite; }
@@ -415,10 +416,11 @@
 .conversation-status.error { color: #fecdd3; border-color: rgba(251,113,133,.36); background: rgba(251,113,133,.1); }
 .conversation-status.error .conversation-dot { background: var(--bad); }
 .conversation-pipeline {
-  padding: 5px 9px; border-radius: 8px; border: 1px solid rgba(107,33,168,.35);
-  background: rgba(107,33,168,.14); color: #06B6D4; font-family: var(--mono); font-size: 0.69rem;
+  padding: 5px 9px; border-radius: 8px; border: 1px solid rgba(34,211,238,.42);
+  background: rgba(6,182,212,.12); color: var(--a-sky); font-family: var(--mono); font-size: 0.69rem;
+  font-weight: 560; letter-spacing: 0.01em;
 }
-.conversation-timing { color: var(--ink-faint); font-family: var(--mono); font-size: 0.68rem; white-space: nowrap; }
+.conversation-timing { color: var(--ink-dim); font-family: var(--mono); font-size: 0.72rem; white-space: nowrap; }
 .transcript { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
 .bubble { max-width: 78%; padding: 11px 15px; border-radius: 16px; font-size: 0.92rem; line-height: 1.5; }
 .bubble.user { align-self: flex-end; background: rgba(6,182,212,0.16); border: 1px solid rgba(107,33,168,0.35); border-bottom-right-radius: 5px; }
@@ -443,7 +445,7 @@
 .voice-orb span:nth-child(2),.voice-orb span:nth-child(4) { height:42px; animation-delay:-.4s; }
 .voice-orb span:nth-child(3) { height:60px; animation-delay:-.6s; }
 .voice-call-stage-title { font-size:22px; font-weight:700; color:var(--ink); }
-.voice-call-stage-copy { max-width:500px; color:var(--muted); line-height:1.65; }
+.voice-call-stage-copy { max-width:500px; color:var(--ink-soft); line-height:1.65; }
 @keyframes voice-wave { 0%,100% { transform:scaleY(.48); opacity:.55; } 50% { transform:scaleY(1); opacity:1; } }
 @media (prefers-reduced-motion:reduce) { .voice-orb span { animation:none; } }
 .conversation-btn.active { background: rgba(251,113,133,0.14); border-color: rgba(251,113,133,0.46); color: #fecdd3; box-shadow: none; }
@@ -457,6 +459,13 @@
 .mic-btn.rec { background: rgba(251,113,133,0.18); border-color: var(--bad); color: #ffb9c5; animation: micpulse 1.2s ease-in-out infinite; }
 @keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(251,113,133,0.4); } 50% { box-shadow: 0 0 0 8px rgba(251,113,133,0); } }
 .talk-side .card-pad { display: flex; flex-direction: column; gap: 14px; }
+.talk-side .card-pad > p.muted,
+.talk-side .card-pad .muted { color: var(--ink-soft); line-height: 1.6; }
+.talk-panel,
+.talk-side > .card {
+  border-color: var(--line-2);
+  box-shadow: var(--shadow-card), 0 0 0 1px rgba(255,255,255,0.04);
+}
 
 @media (prefers-reduced-motion: reduce) {
   .conversation-status .conversation-dot { animation: none !important; }
@@ -526,7 +535,7 @@
 .preset-card p { font-size:.84rem; line-height:1.55; flex:1; }
 .preset-icon { width:42px; height:42px; display:grid; place-items:center; border-radius:12px; color:#06B6D4; font-weight:720; font-size:1.1rem; background:rgba(6,182,212,.16); border:1px solid rgba(107,33,168,.35); }
 .preset-meta { display:flex; gap:7px; flex-wrap:wrap; }
-.preset-meta span { font-size:.7rem; color:var(--ink-dim); border:1px solid var(--line); border-radius:var(--r-pill); padding:4px 8px; }
+.preset-meta span { font-size:.7rem; color:var(--ink-soft); border:1px solid var(--line-2); border-radius:var(--r-pill); padding:4px 8px; }
 .wizard-steps { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 18px; }
 .wizard-step { display:flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--line); border-radius:999px; color:var(--ink-dim); font-size:.78rem; }
 .wizard-step.on { color:var(--ink); border-color:rgba(6,182,212,.45); background:rgba(6,182,212,.08); }

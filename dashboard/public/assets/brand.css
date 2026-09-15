@@ -14,15 +14,18 @@
   --panel:     #12141A;
   --panel-2:   #161922;
   --raised:    #1A1E28;
-  --line:      rgba(255,255,255,0.06);
-  --line-2:    rgba(255,255,255,0.10);
-  --line-strong: rgba(255,255,255,0.18);
+  --line:      rgba(255,255,255,0.11);
+  --line-2:    rgba(255,255,255,0.17);
+  --line-strong: rgba(255,255,255,0.28);
 
-  /* ---- Text, clean whites and slate ---- */
+  /* ---- Text, clean whites and slate (WCAG-ish on charcoal) ---- */
   --ink:       #F4F4F5;
-  --ink-soft:  #D4D4D8;
-  --ink-dim:   #A1A1AA;
-  --ink-faint: #71717A;
+  --ink-soft:  #E4E4E7;
+  --ink-dim:   #C4C4CC;
+  --ink-faint: #A1A1AA;
+  /* Alias used by console helpers; keep in sync with --ink-dim */
+  --muted:     #C4C4CC;
+  --text-dim:  #A1A1AA;
 
   /* ---- Light-canvas text (marketing lockups, print-like surfaces) ---- */
   --ink-dark:  #111827;
@@ -160,8 +163,8 @@ p { margin: 0; }
 
 /* ---- Elevated panels ---- */
 .card {
-  background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent 48%), var(--panel);
-  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent 48%), var(--panel);
+  border: 1px solid var(--line-2);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-card);
   position: relative;
@@ -206,6 +209,8 @@ p { margin: 0; }
 }
 .textarea { resize: vertical; min-height: 96px; line-height: 1.5; }
 ::placeholder { color: var(--ink-faint); }
+.select:disabled,
+.select.is-empty { color: var(--ink-dim); }
 
 /* ---- Backdrop atmosphere (radial glows + grid + grain) ---- */
 .atmos { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }

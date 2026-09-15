@@ -1461,7 +1461,7 @@ async function viewTalk(root) {
     el('div', { class: 'voice-call-stage-title' }, 'Ready for a live voice call'),
     el('div', { class: 'voice-call-stage-copy' }, 'Start once. Speak naturally, interrupt the agent, and continue without pressing send.')
   ]);
-  const agentSel = el('select', { class: 'select' }, State.agents.length
+  const agentSel = el('select', { class: 'select' + (State.agents.length ? '' : ' is-empty') }, State.agents.length
     ? State.agents.map((a) => el('option', { value: a.id, selected: a.id === State.activeAgentId ? 'selected' : false }, a.name))
     : [el('option', { value: '' }, 'No agents yet')]);
   agentSel.addEventListener('change', () => { State.activeAgentId = agentSel.value; });
@@ -1635,7 +1635,7 @@ async function viewTalkLegacy(root) {
     el('div', { class: 'bubble sys' }, State.agents.length ? 'Start a conversation. The agent will greet you, listen automatically and keep the call going.' : 'Create an agent first, then come back to talk to it.')
   ]);
 
-  const agentSel = el('select', { class: 'select' }, State.agents.length
+  const agentSel = el('select', { class: 'select' + (State.agents.length ? '' : ' is-empty') }, State.agents.length
     ? State.agents.map((a) => el('option', { value: a.id, selected: a.id === State.activeAgentId ? 'selected' : false }, a.name))
     : [el('option', { value: '' }, 'No agents yet')]);
   agentSel.addEventListener('change', () => { State.activeAgentId = agentSel.value; });
