@@ -1,7 +1,7 @@
 /* ==========================================================================
    Astra AI , Brand & Design System (single source of truth)
-   AstraNova-aligned palette: deep navy/black canvases, clean whites,
-   purple accent (#642C8F / #AC4BFF) from https://www.astranovain.com/
+   Official logo palette: deep violet/purple (#6B21A8) → bright cyan (#06B6D4),
+   dark charcoal text (#111827), muted gray (#6B7280), clean white canvas.
    Loaded by BOTH the marketing site and the product dashboard so they
    look like one funded product. Do not fork the tokens; extend here.
    No em dashes anywhere in this codebase. Use commas or periods.
@@ -22,21 +22,27 @@
   --ink:       #EDEDED;
   --ink-soft:  #D1D5DC;
   --ink-dim:   #A1A1A1;
-  --ink-faint: #62748E;
+  --ink-faint: #6B7280;
 
-  /* ---- Accent: AstraNova purple system ---- */
-  --a-cyan:    #C4A1FF;
-  --a-sky:     #AC4BFF;
-  --a-indigo:  #642C8F;
-  --a-violet:  #4A1F6B;
-  --accent:    #642C8F;
+  /* ---- Light-canvas text (marketing lockups, print-like surfaces) ---- */
+  --ink-dark:  #111827;
+  --ink-muted: #6B7280;
+  --canvas:    #FFFFFF;
+
+  /* ---- Accent: official Astra AI purple → cyan ---- */
+  --a-cyan:    #06B6D4;
+  --a-sky:     #22D3EE;
+  --a-indigo:  #6B21A8;
+  --a-violet:  #581C87;
+  --accent:    #6B21A8;
+  --accent-2:  #06B6D4;
   --accent-ink:#FFFFFF;
-  --grad-volt: linear-gradient(115deg, #AC4BFF 0%, #642C8F 52%, #4A1F6B 100%);
-  --grad-volt-soft: linear-gradient(115deg, rgba(172,75,255,0.28), rgba(100,44,143,0.12));
+  --grad-volt: linear-gradient(115deg, #6B21A8 0%, #7C3AED 42%, #06B6D4 100%);
+  --grad-volt-soft: linear-gradient(115deg, rgba(107,33,168,0.28), rgba(6,182,212,0.12));
 
   /* ---- Value/economics signal (kept as --gold alias for existing class names) ---- */
-  --gold:      #AC4BFF;
-  --gold-deep: #642C8F;
+  --gold:      #06B6D4;
+  --gold-deep: #6B21A8;
 
   /* ---- Status ---- */
   --ok:        #34D399;
@@ -44,20 +50,20 @@
   --bad:       #FB7185;
 
   /* ---- Glow & shadow ---- */
-  --glow-accent: 0 0 0 1px rgba(100,44,143,0.40), 0 14px 34px -16px rgba(100,44,143,0.55);
-  --glow-soft:   0 0 60px -20px rgba(172,75,255,0.35);
+  --glow-accent: 0 0 0 1px rgba(107,33,168,0.40), 0 14px 34px -16px rgba(6,182,212,0.45);
+  --glow-soft:   0 0 60px -20px rgba(6,182,212,0.35);
   --shadow-card: 0 1px 0 rgba(255,255,255,0.04) inset, 0 18px 46px -28px rgba(0,0,0,0.70);
   --shadow-pop:  0 30px 80px -30px rgba(0,0,0,0.75);
 
   /* ---- Type ---- */
-  --font: "SF Pro Display", "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+  --font: "SF Pro Rounded", "SF Pro Display", "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
   --mono: "SF Mono", "JetBrains Mono", "Roboto Mono", ui-monospace, Menlo, Consolas, monospace;
 
-  /* ---- Radii ---- */
-  --r-sm: 10px;
-  --r:    14px;
-  --r-lg: 20px;
-  --r-xl: 28px;
+  /* ---- Radii (soft, modern, matching rounded wordmark) ---- */
+  --r-sm: 12px;
+  --r:    16px;
+  --r-lg: 22px;
+  --r-xl: 30px;
   --r-pill: 999px;
 
   /* ---- Motion ---- */
@@ -84,7 +90,7 @@ body {
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
 }
-::selection { background: rgba(100,44,143,0.45); color: #fff; }
+::selection { background: rgba(107,33,168,0.45); color: #fff; }
 a { color: inherit; text-decoration: none; }
 img, svg, canvas, video { max-width: 100%; display: block; }
 button, input, textarea, select { font: inherit; color: inherit; }
@@ -95,7 +101,7 @@ p { margin: 0; }
 ::-webkit-scrollbar { width: 11px; height: 11px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: #314158; border-radius: 99px; border: 3px solid var(--bg); }
-::-webkit-scrollbar-thumb:hover { background: #62748E; }
+::-webkit-scrollbar-thumb:hover { background: #6B7280; }
 
 /* ---- Display type scale (fluid) ---- */
 .t-display { font-size: clamp(2.6rem, 6.2vw, 5.2rem); font-weight: 680; letter-spacing: -0.04em; line-height: 0.98; }
@@ -140,14 +146,14 @@ p { margin: 0; }
   box-shadow: var(--glow-accent);
   font-weight: 600;
 }
-.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px rgba(100,44,143,0.50), 0 20px 44px -14px rgba(172,75,255,0.45); }
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px rgba(107,33,168,0.50), 0 20px 44px -14px rgba(6,182,212,0.45); }
 .btn-ghost {
   background: rgba(255,255,255,0.04); color: var(--ink);
   border-color: var(--line-2); backdrop-filter: blur(8px);
 }
-.btn-ghost:hover { background: rgba(255,255,255,0.08); border-color: rgba(172,75,255,.45); transform: translateY(-2px); }
+.btn-ghost:hover { background: rgba(255,255,255,0.08); border-color: rgba(6,182,212,.45); transform: translateY(-2px); }
 .btn-quiet { background: transparent; color: var(--ink-soft); }
-.btn-quiet:hover { color: var(--ink); background: rgba(100,44,143,0.18); }
+.btn-quiet:hover { color: var(--ink); background: rgba(107,33,168,0.18); }
 .btn-lg { --pad-y: 1.08em; --pad-x: 1.9em; font-size: 1.03rem; }
 .btn-sm { --pad-y: 0.6em; --pad-x: 1.05em; font-size: 0.85rem; }
 .btn[disabled] { opacity: 0.5; pointer-events: none; }
@@ -180,8 +186,8 @@ p { margin: 0; }
 .pill .dot.warn { background: var(--warn); box-shadow: 0 0 10px var(--warn); }
 .pill .dot.bad  { background: var(--bad);  box-shadow: 0 0 10px var(--bad); }
 .badge-gold {
-  background: linear-gradient(180deg, rgba(172,75,255,0.18), rgba(100,44,143,0.10));
-  border: 1px solid rgba(172,75,255,0.35); color: var(--gold);
+  background: linear-gradient(180deg, rgba(6,182,212,0.18), rgba(107,33,168,0.10));
+  border: 1px solid rgba(6,182,212,0.35); color: var(--gold);
 }
 
 /* ---- Inputs ---- */
@@ -194,8 +200,8 @@ p { margin: 0; }
   transition: border-color 0.25s, box-shadow 0.25s, background 0.25s;
 }
 .input:focus, .textarea:focus, .select:focus {
-  border-color: rgba(172,75,255,0.7);
-  box-shadow: 0 0 0 4px rgba(100,44,143,0.22);
+  border-color: rgba(6,182,212,0.7);
+  box-shadow: 0 0 0 4px rgba(107,33,168,0.22);
   background: var(--panel);
 }
 .textarea { resize: vertical; min-height: 96px; line-height: 1.5; }
@@ -207,11 +213,11 @@ p { margin: 0; }
   position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.5;
 }
 .atmos .g1 { width: 720px; height: 720px; top: -260px; left: 50%; transform: translateX(-50%);
-  background: radial-gradient(circle, rgba(100,44,143,0.35), transparent 62%); }
+  background: radial-gradient(circle, rgba(107,33,168,0.35), transparent 62%); }
 .atmos .g2 { width: 560px; height: 560px; top: 40%; left: -180px;
   background: radial-gradient(circle, rgba(29,41,61,0.55), transparent 65%); }
 .atmos .g3 { width: 620px; height: 620px; bottom: -260px; right: -160px;
-  background: radial-gradient(circle, rgba(172,75,255,0.18), transparent 65%); }
+  background: radial-gradient(circle, rgba(6,182,212,0.18), transparent 65%); }
 .grain::after {
   content: ""; position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0.04;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");

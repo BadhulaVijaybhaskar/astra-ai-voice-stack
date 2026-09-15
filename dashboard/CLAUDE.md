@@ -61,8 +61,10 @@ rapidx-voice-studio/
       marketing.js          # landing behavior, reveal, image guard, self-check (Marketing)
       app.css               # dashboard styles (Dashboard)
       app.js                # dashboard logic, hash routing, auth gate (Dashboard)
-      logo.svg              # Astra AI wordmark with voltage waveform glyph (Ops)
-      favicon.svg           # voltage waveform mark on an ink tile (Ops)
+      logo.png              # Official Astra AI lockup (Ops)
+      logo-mark.png         # Ribbon A mark for headers (Ops)
+      logo.svg              # Text-only astra AI wordmark (Ops)
+      favicon.png / .svg    # Mark favicon (Ops)
       og.svg                # 1200x630 social card with the one-rupee hook (Ops)
   data/
     .gitkeep                # keeps data/ tracked; its real contents are gitignored
@@ -167,8 +169,9 @@ Authed (401 if no valid session):
   progressive enhancement only, gated on `html.js`. `marketing.js` ends with a self-check that
   force-shows anything stuck at opacity 0 and a guard that swaps any broken image to a branded SVG.
 - Escape any user-supplied string (name, email, persona) before injecting it into the DOM.
-- The brand SVGs use the AstraNova purple gradient (`#AC4BFF`, `#642C8F`, `#4A1F6B`). Their waveform-bar gradients use `gradientUnits="userSpaceOnUse"` on purpose,
-  thin vertical lines lose an `objectBoundingBox` gradient in some renderers. Keep that.
+- The official brand mark is `public/assets/logo.png` (full lockup) and `logo-mark.png` (ribbon A).
+  Wordmark SVG `logo.svg` is text-only. Accent tokens are purple `#6B21A8` → cyan `#06B6D4`
+  (`--grad-volt` in `brand.css`). Prefer the PNG mark over inventing a new SVG glyph.
 - If dependencies are ever added (they should not be), rename `node_modules` to
   `node_modules.nosync` so iCloud does not try to sync them.
 

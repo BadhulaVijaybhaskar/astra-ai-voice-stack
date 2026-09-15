@@ -1,5 +1,6 @@
 <div align="center">
-  <img src="public/assets/logo.svg" alt="Astra AI" width="300" />
+  <img src="public/assets/logo.png" alt="astra AI" width="360" />
+  <p><em>exceed expectations</em></p>
 </div>
 
 # Astra AI
@@ -88,4 +89,4 @@ Runs anywhere Node runs. The natural home is the Hostinger VPS so the secret key
 
 The bundled JSON store is suitable for local evaluation, demos, and one Node process. Before accepting customer money or running multiple replicas, move wallets, payment intents, memberships, and audit events to transactional PostgreSQL and complete the unchecked items in [`SAAS-QA-CHECKLIST.md`](SAAS-QA-CHECKLIST.md).
 
-Built for AstraNova. MIT licensed. No em dashes anywhere in this codebase.
+Built for Astra AI. MIT licensed. No em dashes anywhere in this codebase.

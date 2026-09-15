@@ -34,7 +34,7 @@ behind a million-dollar-funded look.
 - **Marketing agent** owns: `public/index.html`, `public/assets/marketing.css`, `public/assets/marketing.js`.
 - **Dashboard agent** owns: `public/app.html`, `public/assets/app.css`, `public/assets/app.js`.
 - **Ops agent** owns: `package.json`, `setup.sh`, `README.md`, `.env.example`, `.gitignore`,
-  `CLAUDE.md`, `data/.gitkeep`, and brand SVGs `public/assets/logo.svg`, `favicon.svg`, `og.svg`.
+  `CLAUDE.md`, `data/.gitkeep`, and brand assets `public/assets/logo.png`, `logo-mark.png`, `logo.svg`, `favicon.svg`, `og.svg`.
 - Shared, already on disk: `public/assets/brand.css` (design tokens), `.env` (real keys), `SPEC.md`.
 
 ## 3. Multi-tenant data model (JSON in `data/`)
@@ -43,7 +43,7 @@ behind a million-dollar-funded look.
 ```
 {
   "tenants": [ { "id":"t_xxx", "name":"Acme Co", "slug":"acme", "createdAt":ISO,
-                 "branding": { "color":"#642C8F" },
+                 "branding": { "color":"#6B21A8" },
                  "providers": { "tts":"rumik", "llm":"gemini", "telephony":"voicelink" },
                  "plan":"studio" } ],
   "users":   [ { "id":"u_xxx", "tenantId":"t_xxx", "email":"a@b.com",

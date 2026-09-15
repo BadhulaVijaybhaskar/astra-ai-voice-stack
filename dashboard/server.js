@@ -184,7 +184,7 @@ async function boot() {
         name: DEMO_TENANT,
         slug: makeSlug(DEMO_TENANT, new Set(d.tenants.map((t) => t.slug))),
         createdAt: nowIso,
-        branding: { color: '#642C8F' },
+        branding: { color: '#6B21A8' },
         providers: { ...DEFAULT_PROVIDERS },
         plan: 'studio',
         status: 'active', privacyMode: 'standard',
@@ -324,7 +324,7 @@ async function apiSignup(req, res, body) {
     const taken = new Set(d.tenants.map((t) => t.slug));
     tenant = {
       id: tenantId, name: company, slug: makeSlug(company, taken), createdAt: nowIso,
-      branding: { color: '#642C8F' },
+      branding: { color: '#6B21A8' },
       providers: { ...DEFAULT_PROVIDERS },
       plan: 'studio',
       status: 'active', privacyMode: 'standard',
@@ -706,8 +706,8 @@ function publicDemoContext(token) {
   const tenant = database.tenants.find((item) => item.id === link.tenantId && item.status === 'active');
   const agent = database.agents.find((item) => item.id === link.agentId && item.tenantId === link.tenantId);
   if (!tenant || !agent) return null;
-  const color = String((tenant.branding || {}).color || '#642C8F');
-  return { link, tenant, agent, color: /^#[0-9A-Fa-f]{6}$/.test(color) ? color : '#642C8F' };
+  const color = String((tenant.branding || {}).color || '#6B21A8');
+  return { link, tenant, agent, color: /^#[0-9A-Fa-f]{6}$/.test(color) ? color : '#6B21A8' };
 }
 
 function apiPublicDemoMeta(req, res, token) {

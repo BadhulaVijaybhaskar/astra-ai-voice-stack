@@ -1,21 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-label="Astra AI">
   <title>Astra AI</title>
   <defs>
-    <!-- userSpaceOnUse so the gradient paints reliably on thin vertical bars -->
-    <linearGradient id="favVolt" x1="14" y1="13" x2="51" y2="51" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#AC4BFF"/>
-      <stop offset="0.45" stop-color="#642C8F"/>
-      <stop offset="1" stop-color="#4A1F6B"/>
+    <linearGradient id="favVolt" x1="12" y1="8" x2="52" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6B21A8"/>
+      <stop offset="0.5" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#06B6D4"/>
     </linearGradient>
   </defs>
-  <!-- Rounded ink tile -->
-  <rect x="0" y="0" width="64" height="64" rx="15" fill="#0A0A0A"/>
-  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="14.25" fill="none" stroke="url(#favVolt)" stroke-width="1.5" opacity="0.45"/>
-  <!-- Waveform bars -->
-  <g stroke="url(#favVolt)" stroke-width="5" stroke-linecap="round">
-    <line x1="19" y1="26" x2="19" y2="38"/>
-    <line x1="28" y1="18" x2="28" y2="46"/>
-    <line x1="37" y1="13" x2="37" y2="51"/>
-    <line x1="46" y1="22" x2="46" y2="42"/>
-  </g>
+  <rect x="0" y="0" width="64" height="64" rx="16" fill="#0A0A0A"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="15.25" fill="none" stroke="url(#favVolt)" stroke-width="1.5" opacity="0.5"/>
+  <!-- Simplified rounded A mark silhouette (not the official ribbon; prefer favicon.png) -->
+  <path d="M32 14 L46 50 H39.2 L36.4 42 H27.6 L24.8 50 H18 Z M29.4 37 H34.6 L32 29.2 Z"
+        fill="url(#favVolt)"/>
+  <circle cx="44" cy="18" r="2.2" fill="#6B21A8"/>
 </svg>

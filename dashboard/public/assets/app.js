@@ -150,20 +150,16 @@ function initials(name) {
   const parts = String(name || '?').trim().split(/\s+/).slice(0, 2);
   return parts.map((p) => p[0]).join('').toUpperCase() || '?';
 }
-function brandSVG(size) {
-  // Inline logo mark, gradient. Returns an <svg> node so we never depend on logo.svg loading.
-  const ns = 'http://www.w3.org/2000/svg';
-  const gid = 'lg' + Math.random().toString(36).slice(2, 7);
-  const svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('viewBox', '0 0 40 40');
-  svg.setAttribute('width', size || 30); svg.setAttribute('height', size || 30);
-  svg.innerHTML =
-    '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="1" y2="1">' +
-    '<stop offset="0" stop-color="#AC4BFF"/><stop offset="0.55" stop-color="#642C8F"/><stop offset="1" stop-color="#4A1F6B"/>' +
-    '</linearGradient></defs>' +
-    '<path d="M20 3 L34 11 V29 L20 37 L6 29 V11 Z" fill="none" stroke="url(#' + gid + ')" stroke-width="2"/>' +
-    '<path d="M14 20 h2 l2 -6 3 12 2 -8 2 4 h3" fill="none" stroke="url(#' + gid + ')" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
-  return svg;
+function brandMark(size) {
+  // Official ribbon-A mark from logo-mark.png (no invented SVG glyph).
+  const img = document.createElement('img');
+  img.src = '/assets/logo-mark.png';
+  img.alt = '';
+  img.width = size || 30;
+  img.height = size || 30;
+  img.className = 'lm';
+  img.decoding = 'async';
+  return img;
 }
 function fmtInr(n) {
   const v = Number(n || 0);
@@ -213,8 +209,8 @@ function renderAuth() {
 
     const card = el('div', { class: 'auth-card' }, [
       el('div', { class: 'auth-brand' }, [
-        (function () { const s = brandSVG(34); s.classList.add('lm'); return s; })(),
-        el('span', { class: 'nm' }, [document.createTextNode('Astra '), el('em', {}, 'AI')])
+        brandMark(34),
+        el('span', { class: 'nm' }, [document.createTextNode('astra '), el('em', {}, 'AI')])
       ]),
       el('h1', {}, mode === 'login' ? 'Welcome back' : 'Start building'),
       el('p', { class: 'sub' }, mode === 'login' ? 'Sign in to your voice agent console.' : 'Spin up a tenant and ship AI voice agents from ₹1/min for the AI layer. Telephony is separate.'),
@@ -330,8 +326,8 @@ function renderShell() {
 
   const side = el('aside', { class: 'side' }, [
     el('div', { class: 'side-brand' }, [
-      (function () { const s = brandSVG(30); s.classList.add('lm'); return s; })(),
-      el('span', { class: 'nm' }, [document.createTextNode('Astra '), el('em', {}, 'AI')])
+      brandMark(30),
+      el('span', { class: 'nm' }, [document.createTextNode('astra '), el('em', {}, 'AI')])
     ]),
     nav,
     el('div', { class: 'side-foot' }, [
@@ -567,8 +563,8 @@ function buildSpark(data) {
   svg.setAttribute('preserveAspectRatio', 'none');
   svg.innerHTML =
     '<defs>' +
-    '<linearGradient id="sparkline" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#AC4BFF"/><stop offset="0.6" stop-color="#642C8F"/><stop offset="1" stop-color="#4A1F6B"/></linearGradient>' +
-    '<linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#642C8F" stop-opacity="0.32"/><stop offset="1" stop-color="#642C8F" stop-opacity="0"/></linearGradient>' +
+    '<linearGradient id="sparkline" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6B21A8"/><stop offset="0.55" stop-color="#7C3AED"/><stop offset="1" stop-color="#06B6D4"/></linearGradient>' +
+    '<linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#06B6D4" stop-opacity="0.32"/><stop offset="1" stop-color="#6B21A8" stop-opacity="0"/></linearGradient>' +
     '</defs>';
   if (!data.length) {
     const txt = document.createElementNS(ns, 'text');
@@ -591,7 +587,7 @@ function buildSpark(data) {
   // last point dot
   const c = document.createElementNS(ns, 'circle');
   c.setAttribute('cx', x(n - 1)); c.setAttribute('cy', y(data[n - 1].v)); c.setAttribute('r', 3.2);
-  c.setAttribute('fill', '#4A1F6B'); c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', '1');
+  c.setAttribute('fill', '#6B21A8'); c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', '1');
   svg.appendChild(c);
   return svg;
 }
@@ -1047,7 +1043,7 @@ function drawWaveform(samples, canvas) {
   const bars = Math.max(40, Math.min(180, Math.floor(w / 4)));
   const block = Math.floor(samples.length / bars) || 1;
   const grad = ctx.createLinearGradient(0, 0, w, 0);
-  grad.addColorStop(0, '#AC4BFF'); grad.addColorStop(0.6, '#642C8F'); grad.addColorStop(1, '#4A1F6B');
+  grad.addColorStop(0, '#6B21A8'); grad.addColorStop(0.55, '#7C3AED'); grad.addColorStop(1, '#06B6D4');
   ctx.fillStyle = grad;
   const bw = w / bars;
   for (let b = 0; b < bars; b++) {
@@ -2320,7 +2316,7 @@ async function viewSettings(root) {
 
   const t = State.me.tenant;
   const nameI = el('input', { class: 'input', id: 'set_name', type: 'text', value: t.name || '' });
-  const colorVal = (t.branding && t.branding.color) || '#642C8F';
+  const colorVal = (t.branding && t.branding.color) || '#6B21A8';
   const colorI = el('input', { type: 'color', id: 'set_color', value: colorVal });
   const colorHex = el('input', { class: 'input', id: 'set_color_hex', value: colorVal, style: 'max-width:130px;font-family:var(--mono)' });
   colorI.addEventListener('input', () => { colorHex.value = colorI.value; });

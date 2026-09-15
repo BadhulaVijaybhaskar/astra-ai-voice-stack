@@ -3,38 +3,37 @@
   <defs>
     <!-- userSpaceOnUse so thin vertical waveform lines also receive the gradient -->
     <linearGradient id="ogVolt" x1="0" y1="0" x2="1200" y2="420" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#AC4BFF"/>
-      <stop offset="0.22" stop-color="#9B5CFF"/>
-      <stop offset="0.60" stop-color="#642C8F"/>
-      <stop offset="1" stop-color="#4A1F6B"/>
+      <stop offset="0" stop-color="#6B21A8"/>
+      <stop offset="0.35" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#06B6D4"/>
     </linearGradient>
     <!-- compact gradient for the small lockup glyph (local coords, the group is translated) -->
     <linearGradient id="ogOrb" x1="0" y1="0" x2="44" y2="44" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#AC4BFF"/>
-      <stop offset="0.5" stop-color="#642C8F"/>
-      <stop offset="1" stop-color="#4A1F6B"/>
+      <stop offset="0" stop-color="#6B21A8"/>
+      <stop offset="0.5" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#06B6D4"/>
     </linearGradient>
     <!-- gradient for the small "Voice" word in the lockup (local coords) -->
     <linearGradient id="ogWord" x1="132" y1="0" x2="240" y2="0" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#AC4BFF"/>
-      <stop offset="0.45" stop-color="#642C8F"/>
-      <stop offset="1" stop-color="#4A1F6B"/>
+      <stop offset="0" stop-color="#6B21A8"/>
+      <stop offset="0.45" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#06B6D4"/>
     </linearGradient>
     <radialGradient id="ogGlowTop" cx="0.5" cy="0" r="0.75">
-      <stop offset="0" stop-color="#642C8F" stop-opacity="0.40"/>
-      <stop offset="1" stop-color="#642C8F" stop-opacity="0"/>
+      <stop offset="0" stop-color="#6B21A8" stop-opacity="0.40"/>
+      <stop offset="1" stop-color="#6B21A8" stop-opacity="0"/>
     </radialGradient>
     <radialGradient id="ogGlowL" cx="0" cy="0.7" r="0.6">
-      <stop offset="0" stop-color="#AC4BFF" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#AC4BFF" stop-opacity="0"/>
+      <stop offset="0" stop-color="#06B6D4" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#06B6D4" stop-opacity="0"/>
     </radialGradient>
     <radialGradient id="ogGlowR" cx="1" cy="1" r="0.7">
-      <stop offset="0" stop-color="#4A1F6B" stop-opacity="0.26"/>
-      <stop offset="1" stop-color="#4A1F6B" stop-opacity="0"/>
+      <stop offset="0" stop-color="#581C87" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#581C87" stop-opacity="0"/>
     </radialGradient>
     <linearGradient id="ogGold" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#AC4BFF"/>
-      <stop offset="1" stop-color="#642C8F"/>
+      <stop offset="0" stop-color="#6B21A8"/>
+      <stop offset="1" stop-color="#06B6D4"/>
     </linearGradient>
   </defs>
 
@@ -71,7 +70,7 @@
       <line x1="33" y1="13" x2="33" y2="31"/>
     </g>
     <text x="58" y="32" font-family="SF Pro Display, Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
-          font-size="30" font-weight="640" letter-spacing="-1" fill="#EDEDED">Astra <tspan fill="url(#ogWord)">AI</tspan></text>
+          font-size="30" font-weight="640" letter-spacing="-1" fill="#EDEDED">astra <tspan fill="url(#ogWord)">AI</tspan></text>
   </g>
 
   <!-- Eyebrow -->
@@ -93,8 +92,8 @@
   <!-- Economics proof chips -->
   <g transform="translate(90, 556)" font-family="SF Pro Display, Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">
     <g>
-      <rect x="0" y="0" width="232" height="44" rx="22" fill="rgba(172,75,255,0.14)" stroke="#AC4BFF" stroke-opacity="0.32"/>
-      <text x="20" y="29" font-size="20" font-weight="560" fill="#AC4BFF">Astra AI  about Rs 1</text>
+      <rect x="0" y="0" width="232" height="44" rx="22" fill="rgba(6,182,212,0.14)" stroke="#06B6D4" stroke-opacity="0.32"/>
+      <text x="20" y="29" font-size="20" font-weight="560" fill="#06B6D4">Astra AI  about Rs 1</text>
     </g>
     <g transform="translate(252, 0)">
       <rect x="0" y="0" width="244" height="44" rx="22" fill="rgba(255,255,255,0.04)" stroke="#FFFFFF" stroke-opacity="0.12"/>
