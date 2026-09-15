@@ -42,10 +42,12 @@ const State = {
   telephony: null,
   wallet: null,
   presets: [],
+  agentTypes: [],
   tickets: [],
   demoLinks: [],
   activeAgentId: null, // for Talk-to-it
-  loaded: { agents: false, providers: false, usage: false, telephony: false, wallet: false, presets: false, tickets: false, demoLinks: false }
+  createDraft: null,   // { step, agentType, presetId } for deploy wizard
+  loaded: { agents: false, providers: false, usage: false, telephony: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false }
 };
 
 const VOICE_MODELS = ['mulberry', 'muga'];
@@ -269,9 +271,10 @@ function renderAuth() {
 }
 function resetData() {
   State.agents = []; State.providers = null; State.usage = null; State.telephony = null;
-  State.wallet = null; State.presets = []; State.tickets = [];
+  State.wallet = null; State.presets = []; State.agentTypes = []; State.tickets = [];
   State.demoLinks = [];
-  State.loaded = { agents: false, providers: false, usage: false, telephony: false, wallet: false, presets: false, tickets: false, demoLinks: false };
+  State.createDraft = null;
+  State.loaded = { agents: false, providers: false, usage: false, telephony: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false };
   State.activeAgentId = null;
 }
 
@@ -479,7 +482,8 @@ async function viewOverview(root) {
     el('div', { class: 'card qa-card', id: 'qaHost' }, [
       el('h3', {}, 'Quick actions'),
       el('div', { class: 'qa-row' }, [
-        el('button', { class: 'btn btn-primary', onclick: () => goto('agents') }, 'Build an agent'),
+        el('button', { class: 'btn btn-primary', onclick: () => startDeployWizard() }, 'Deploy from preset'),
+        el('button', { class: 'btn btn-ghost', onclick: () => goto('agents') }, 'Build an agent'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('studio') }, 'Open Voice Studio'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('talk') }, 'Talk to it'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('telephony') }, 'Telephony')
@@ -624,6 +628,36 @@ async function ensureAgents(force) {
   State.loaded.agents = true;
   return State.agents;
 }
+async function ensurePresets(force) {
+  if (State.loaded.presets && !force) return State.presets;
+  const res = await api('/api/presets');
+  State.presets = res.presets || [];
+  State.loaded.presets = true;
+  return State.presets;
+}
+async function ensureAgentTypes(force) {
+  if (State.loaded.agentTypes && !force) return State.agentTypes;
+  const res = await api('/api/agent-types');
+  State.agentTypes = res.agentTypes || [];
+  State.loaded.agentTypes = true;
+  return State.agentTypes;
+}
+function agentTypeMeta(id) {
+  return (State.agentTypes || []).find((t) => t.id === id) || null;
+}
+function directionLabel(dir) {
+  if (dir === 'inbound') return 'Inbound';
+  if (dir === 'outbound') return 'Outbound';
+  return 'Inbound & outbound';
+}
+function startDeployWizard(seed) {
+  State.createDraft = {
+    step: seed && seed.presetId ? 3 : (seed && seed.agentType ? 2 : 1),
+    agentType: (seed && seed.agentType) || '',
+    presetId: (seed && seed.presetId) || null,
+  };
+  goto('agents');
+}
 async function ensureTelephony(force) {
   if (State.loaded.telephony && !force) return State.telephony;
   const res = await api('/api/telephony/status');
@@ -636,22 +670,146 @@ async function ensureTelephony(force) {
    2. AGENTS
    =========================================================================== */
 async function viewAgents(root) {
-  root.appendChild(viewHead('Agents', 'Each agent is a persona plus a voice. Preview the voice, then assign a number and ship it.'));
+  root.appendChild(viewHead('Agents', 'Pick an agent type, choose a preset, then tweak name, voice, and greeting before you deploy.'));
 
-  const builder = buildAgentForm(null);
-  root.appendChild(builder);
+  const wizardHost = el('div', { id: 'agentWizard', class: 'card builder' }, skeleton('sk-card', 1));
+  root.appendChild(wizardHost);
 
   const gridHost = el('div', { id: 'agentsGrid', class: 'agents-grid', style: 'margin-top:22px' }, skeleton('sk-card', 3));
   root.appendChild(gridHost);
 
   try {
-    await Promise.all([ensureAgents(true), ensureTelephony().catch(() => null), ensureProviders().catch(() => null)]);
+    await Promise.all([
+      ensureAgents(true),
+      ensureAgentTypes().catch(() => []),
+      ensurePresets().catch(() => []),
+      ensureTelephony().catch(() => null),
+      ensureProviders().catch(() => null),
+    ]);
+    if (!State.createDraft) State.createDraft = { step: 1, agentType: '', presetId: null };
+    paintAgentWizard();
     refillDidOptions();
     paintAgents();
   } catch (e) {
+    wizardHost.innerHTML = '';
+    wizardHost.appendChild(el('div', { class: 'muted' }, 'Could not load the create flow. ' + esc(e.message)));
     gridHost.innerHTML = '';
     gridHost.appendChild(el('div', { class: 'empty muted' }, 'Could not load agents. ' + esc(e.message)));
   }
+}
+
+function paintAgentWizard() {
+  const host = $('#agentWizard'); if (!host) return;
+  const draft = State.createDraft || { step: 1, agentType: '', presetId: null };
+  const step = Math.max(1, Math.min(3, Number(draft.step) || 1));
+  draft.step = step;
+  State.createDraft = draft;
+  host.innerHTML = '';
+
+  host.appendChild(el('h3', {}, 'Deploy an agent'));
+  host.appendChild(el('p', { class: 'hint' }, 'No payment and no API keys required for Astra testing. Type first, then preset, then fine tune.'));
+  host.appendChild(el('div', { class: 'wizard-steps' }, [1, 2, 3].map((n) => {
+    const labels = { 1: 'Agent type', 2: 'Preset', 3: 'Configure' };
+    return el('div', { class: 'wizard-step' + (n === step ? ' on' : '') + (n < step ? ' done' : '') }, [
+      el('span', { class: 'wizard-num' }, String(n)),
+      el('span', {}, labels[n])
+    ]);
+  })));
+
+  if (step === 1) {
+    const grid = el('div', { class: 'type-pick-grid' });
+    (State.agentTypes || []).forEach((t) => {
+      const selected = draft.agentType === t.id;
+      grid.appendChild(el('button', {
+        type: 'button',
+        class: 'type-pick' + (selected ? ' on' : ''),
+        onclick: () => {
+          State.createDraft = { step: 2, agentType: t.id, presetId: null };
+          paintAgentWizard();
+        }
+      }, [
+        el('div', { class: 'type-pick-top' }, [
+          el('strong', {}, t.label),
+          el('span', { class: 'tag' }, directionLabel(t.direction))
+        ]),
+        el('p', { class: 'muted' }, t.description)
+      ]));
+    });
+    if (!(State.agentTypes || []).length) grid.appendChild(el('div', { class: 'muted' }, 'No agent types are available.'));
+    host.appendChild(grid);
+    return;
+  }
+
+  if (step === 2) {
+    const type = agentTypeMeta(draft.agentType);
+    const recommended = new Set((type && type.recommendedPresetIds) || []);
+    const filtered = (State.presets || []).filter((p) => {
+      if (draft.agentType === 'custom') return false;
+      return p.agentType === draft.agentType || recommended.has(p.id);
+    });
+    host.appendChild(el('div', { class: 'flex items-center justify-between gap-2', style: 'margin-bottom:14px' }, [
+      el('div', {}, [
+        el('div', { class: 'muted', style: 'font-size:.75rem;text-transform:uppercase;letter-spacing:.08em' }, 'Selected type'),
+        el('strong', {}, (type && type.label) || draft.agentType || 'Custom')
+      ]),
+      el('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: () => { State.createDraft = { step: 1, agentType: '', presetId: null }; paintAgentWizard(); } }, 'Change type')
+    ]));
+
+    const grid = el('div', { class: 'preset-pick-grid' });
+    if (draft.agentType === 'custom') {
+      grid.appendChild(el('button', {
+        type: 'button',
+        class: 'preset-pick on',
+        onclick: () => { State.createDraft = { step: 3, agentType: 'custom', presetId: null }; paintAgentWizard(); }
+      }, [
+        el('strong', {}, 'Blank custom agent'),
+        el('p', { class: 'muted' }, 'Start with an empty persona and greeting.')
+      ]));
+    } else {
+      filtered.forEach((p) => {
+        grid.appendChild(el('button', {
+          type: 'button',
+          class: 'preset-pick' + (draft.presetId === p.id ? ' on' : ''),
+          onclick: () => { State.createDraft = { step: 3, agentType: draft.agentType, presetId: p.id }; paintAgentWizard(); }
+        }, [
+          el('div', { class: 'type-pick-top' }, [
+            el('strong', {}, p.name),
+            el('span', { class: 'tag' }, directionLabel(p.direction))
+          ]),
+          el('p', { class: 'muted' }, p.description || 'Editable starting point.'),
+          recommended.has(p.id) ? el('span', { class: 'badge-ready' }, 'Recommended') : null
+        ]));
+      });
+      if (!filtered.length) grid.appendChild(el('div', { class: 'muted' }, 'No presets match this type yet.'));
+    }
+    host.appendChild(grid);
+    return;
+  }
+
+  const preset = (State.presets || []).find((p) => p.id === draft.presetId) || null;
+  const type = agentTypeMeta(draft.agentType) || agentTypeMeta(preset && preset.agentType);
+  host.appendChild(el('div', { class: 'flex items-center justify-between gap-2', style: 'margin-bottom:14px' }, [
+    el('div', {}, [
+      el('div', { class: 'muted', style: 'font-size:.75rem;text-transform:uppercase;letter-spacing:.08em' }, 'Creating'),
+      el('strong', {}, (preset && preset.name) || ((type && type.label) + ' agent') || 'Custom agent')
+    ]),
+    el('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: () => { State.createDraft = { step: 2, agentType: draft.agentType, presetId: draft.presetId }; paintAgentWizard(); } }, 'Back to presets')
+  ]));
+  const form = buildAgentForm(null, {
+    createMode: true,
+    agentType: draft.agentType || (preset && preset.agentType) || 'custom',
+    preset: preset,
+    onCreated: () => {
+      State.createDraft = { step: 1, agentType: '', presetId: null };
+      paintAgentWizard();
+      paintAgents();
+    }
+  });
+  form.style.boxShadow = 'none';
+  form.style.border = '0';
+  form.style.background = 'transparent';
+  form.style.padding = '0';
+  host.appendChild(form);
 }
 
 function dids() {
@@ -668,7 +826,10 @@ function refillDidOptions() {
   if (cur) sel.value = cur;
 }
 
-function buildAgentForm(existing) {
+function buildAgentForm(existing, options) {
+  const opts = options || {};
+  const preset = opts.preset || null;
+  const createMode = !!opts.createMode;
   const e = existing || {};
   const tts = e.tts || {};
   const card = el('div', { class: 'card builder' });
@@ -678,9 +839,15 @@ function buildAgentForm(existing) {
     f0: tts.f0_up_key != null ? tts.f0_up_key : 0
   };
 
-  const nameI = el('input', { class: 'input', id: 'f_name', type: 'text', value: e.name || '', placeholder: 'Front Desk', maxlength: 80 });
-  const personaI = el('textarea', { class: 'textarea', id: 'f_persona', rows: 4, placeholder: 'You are a warm, sharp receptionist. Answer in 1 to 2 short spoken sentences, qualify the lead, and book a callback.' }, e.persona || '');
-  const greetI = el('input', { class: 'input', id: 'f_greeting', type: 'text', value: e.greeting || '', placeholder: 'Hi, thanks for calling Astra AI. How can I help today.', maxlength: 240 });
+  const defaultName = e.name || (preset && preset.name) || '';
+  const defaultPersona = e.persona || (preset
+    ? (preset.name + '. Collect: ' + (preset.fields || []).join(', ') + '. Guardrails: ' + (preset.guardrails || []).join('; ') + '.')
+    : '');
+  const defaultGreeting = e.greeting || (preset && preset.greeting) || '';
+
+  const nameI = el('input', { class: 'input', id: 'f_name', type: 'text', value: defaultName, placeholder: 'Front Desk', maxlength: 80 });
+  const personaI = el('textarea', { class: 'textarea', id: 'f_persona', rows: 4, placeholder: 'You are a warm, sharp receptionist. Answer in 1 to 2 short spoken sentences, qualify the lead, and book a callback.' }, defaultPersona);
+  const greetI = el('input', { class: 'input', id: 'f_greeting', type: 'text', value: defaultGreeting, placeholder: 'Hi, thanks for calling Astra AI. How can I help today.', maxlength: 240 });
   const descI = el('input', { class: 'input', id: 'f_desc', type: 'text', value: (tts.description || ''), placeholder: 'Optional voice direction, e.g. calm and confident' });
 
   const modelSeg = el('div', { class: 'seg', id: 'f_model_seg' }, VOICE_MODELS.map((m) =>
@@ -720,8 +887,14 @@ function buildAgentForm(existing) {
     el('div', { class: 'flex gap-2', style: 'margin-top:18px;align-items:center' }, [submitBtn, existing ? el('button', { type: 'button', class: 'btn btn-ghost', onclick: () => modalClose() }, 'Cancel') : null])
   ]);
 
-  card.appendChild(el('h3', {}, existing ? 'Edit agent' : 'New agent'));
-  card.appendChild(el('p', { class: 'hint' }, existing ? 'Update the persona, voice, or assigned number.' : 'Describe the persona and pick a voice. You can preview it instantly before assigning a number.'));
+  if (!createMode) {
+    card.appendChild(el('h3', {}, existing ? 'Edit agent' : 'New agent'));
+    card.appendChild(el('p', { class: 'hint' }, existing ? 'Update the persona, voice, or assigned number.' : 'Describe the persona and pick a voice. You can preview it instantly before assigning a number.'));
+  } else if (preset && preset.dograhWorkflowId != null) {
+    card.appendChild(el('p', { class: 'hint' }, 'Bound to Dograh workflow ' + preset.dograhWorkflowId + ' for live inbound testing.'));
+  } else if (preset && preset.dograhWorkflowKey) {
+    card.appendChild(el('p', { class: 'hint' }, 'Workflow key "' + preset.dograhWorkflowKey + '" is reserved. Numeric Dograh id is still TBD.'));
+  }
   card.appendChild(form);
   syncVoice();
 
@@ -743,6 +916,10 @@ function buildAgentForm(existing) {
       did: didSel.value || '',
       tts: { model: state.model, speaker: state.speaker, f0_up_key: state.f0, description: descI.value.trim() }
     };
+    if (createMode) {
+      payload.agentType = opts.agentType || (preset && preset.agentType) || 'custom';
+      if (preset) payload.presetId = preset.id;
+    }
     try {
       if (existing) {
         payload.id = existing.id;
@@ -755,8 +932,10 @@ function buildAgentForm(existing) {
         const res = await api('/api/agents', { method: 'POST', body: payload });
         if (res.agent) State.agents.push(res.agent);
         toast('Agent created.', 'ok');
-        // reset the inline form
-        nameI.value = ''; personaI.value = ''; greetI.value = ''; descI.value = ''; didSel.value = '';
+        if (typeof opts.onCreated === 'function') opts.onCreated(res.agent);
+        else {
+          nameI.value = ''; personaI.value = ''; greetI.value = ''; descI.value = ''; didSel.value = '';
+        }
       }
       paintAgents();
     } catch (ex) {
@@ -787,6 +966,7 @@ function agentCard(a) {
   const tts = a.tts || {};
   const voiceLine = (tts.model || 'mulberry') + ' / ' + (tts.speaker || 'speaker') + (tts.f0_up_key ? ' / pitch ' + (tts.f0_up_key > 0 ? '+' : '') + tts.f0_up_key : '');
   const did = a.telephony && a.telephony.did ? a.telephony.did : null;
+  const type = agentTypeMeta(a.agentType);
 
   const previewBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Preview voice');
   previewBtn.addEventListener('click', () => previewAgentVoice(a, previewBtn));
@@ -802,7 +982,10 @@ function agentCard(a) {
     ]),
     el('div', { class: 'ac-persona' }, a.persona || 'No persona set.'),
     el('div', { class: 'ac-meta' }, [
+      el('span', { class: 'tag' }, (type && type.label) || a.agentType || 'custom'),
+      a.direction ? el('span', { class: 'tag' }, directionLabel(a.direction)) : null,
       did ? el('span', { class: 'tag' }, did) : el('span', { class: 'tag' }, 'no number'),
+      a.dograhWorkflowId != null ? el('span', { class: 'tag' }, 'workflow ' + a.dograhWorkflowId) : null,
       el('span', { class: 'tag' }, (tts.model || 'mulberry'))
     ]),
     el('div', { class: 'ac-actions' }, [
@@ -2103,49 +2286,75 @@ function onDial(numI, btn) {
    6. PRESETS, BILLING, SUPPORT, AND SUPER ADMIN
    =========================================================================== */
 async function viewPresets(root) {
-  root.appendChild(viewHead('Agent presets', 'Start with a production-minded intake flow, then customize the voice, instructions, calendar, and your own number.'));
-  const notice = el('div', { class: 'inbound-note', style: 'margin:0 0 18px' }, 'Presets are starting points. Personal Injury does not provide legal advice, and Dental does not diagnose. Review the workflow and consent language before using it live.');
-  const host = el('div', { class: 'preset-grid' }, skeleton('sk-card', 6));
+  root.appendChild(viewHead('Agent presets', 'Browse by agent type. Each preset is a deployable starting point with a clear direction and job to do.'));
+  const notice = el('div', { class: 'inbound-note', style: 'margin:0 0 18px' }, 'AstraNova English Receptionist maps to live Dograh workflow 8 (Astanova v2 ENG). Outbound Jerry still uses workflow key outbound_callback until its Dograh id is assigned. Industry presets stay editable and do not auto-bill.');
+  const host = el('div', { id: 'presetGroups', class: 'preset-groups' }, skeleton('sk-card', 4));
   root.appendChild(notice); root.appendChild(host);
   try {
-    const out = await api('/api/presets');
-    State.presets = out.presets || [];
+    await Promise.all([ensurePresets(true), ensureAgentTypes()]);
     host.innerHTML = '';
-    State.presets.forEach((p) => {
-      const privacy = p.recommendedPrivacyMode || p.privacyMode || 'standard';
-      host.appendChild(el('article', { class: 'card preset-card' }, [
-        el('div', { class: 'preset-icon' }, (p.name || '?').slice(0, 1)),
-        el('div', { class: 'flex items-center justify-between gap-2' }, [
-          el('h3', { class: 't-h3' }, p.name),
-          el('span', { class: 'badge-ready' }, privacy.replace(/_/g, ' '))
+    const types = State.agentTypes.length ? State.agentTypes : [{ id: 'custom', label: 'Other', description: '', direction: 'both' }];
+    const used = new Set();
+    types.forEach((type) => {
+      const presets = (State.presets || []).filter((p) => p.agentType === type.id);
+      presets.forEach((p) => used.add(p.id));
+      if (!presets.length && type.id === 'custom') return;
+      const section = el('section', { class: 'preset-type-section' });
+      section.appendChild(el('div', { class: 'preset-type-head' }, [
+        el('div', {}, [
+          el('h3', { class: 't-h3' }, type.label),
+          el('p', { class: 'muted' }, type.description || '')
         ]),
-        el('p', { class: 'muted' }, p.description || 'Editable voice-agent starting point.'),
-        el('div', { class: 'preset-meta' }, [
-          el('span', {}, p.category || 'Voice agent'),
-          el('span', {}, 'BYON ready')
-        ]),
-        el('button', { class: 'btn btn-primary', onclick: () => createFromPreset(p) }, 'Use this preset')
+        el('span', { class: 'tag' }, directionLabel(type.direction))
       ]));
+      const grid = el('div', { class: 'preset-grid' });
+      if (!presets.length) {
+        grid.appendChild(el('div', { class: 'empty muted' }, 'No presets in this type yet. Use Custom to start blank.'));
+      } else {
+        presets.forEach((p) => grid.appendChild(presetCard(p, type)));
+      }
+      section.appendChild(grid);
+      host.appendChild(section);
     });
+    const orphan = (State.presets || []).filter((p) => !used.has(p.id));
+    if (orphan.length) {
+      const section = el('section', { class: 'preset-type-section' });
+      section.appendChild(el('div', { class: 'preset-type-head' }, [el('h3', { class: 't-h3' }, 'Other presets')]));
+      const grid = el('div', { class: 'preset-grid' });
+      orphan.forEach((p) => grid.appendChild(presetCard(p, agentTypeMeta(p.agentType))));
+      section.appendChild(grid);
+      host.appendChild(section);
+    }
     if (!State.presets.length) host.appendChild(el('div', { class: 'empty muted' }, 'No presets are available.'));
   } catch (e) { host.innerHTML = ''; host.appendChild(el('div', { class: 'card card-pad muted' }, e.message)); }
 }
 
-function createFromPreset(preset) {
-  modal({
-    title: 'Create ' + preset.name,
-    body: el('div', {}, [
-      el('p', {}, 'This creates an editable agent in your workspace. No phone number is attached until you connect your own number.'),
-      field('Agent name', el('input', { class: 'input', id: 'preset_agent_name', value: preset.name }))
+function presetCard(p, type) {
+  const typeMeta = type || agentTypeMeta(p.agentType);
+  const typeLabel = (typeMeta && typeMeta.label) || p.agentType || 'custom';
+  const workflowBit = p.dograhWorkflowId != null
+    ? ('Workflow ' + p.dograhWorkflowId)
+    : (p.dograhWorkflowKey ? ('Key: ' + p.dograhWorkflowKey) : null);
+  return el('article', { class: 'card preset-card' }, [
+    el('div', { class: 'preset-icon' }, (p.name || '?').slice(0, 1)),
+    el('div', { class: 'flex items-center justify-between gap-2' }, [
+      el('h3', { class: 't-h3' }, p.name),
+      el('span', { class: 'badge-ready' }, typeLabel)
     ]),
-    confirmText: 'Create agent',
-    onConfirm: async () => {
-      const name = ($('#preset_agent_name').value || preset.name).trim();
-      await api('/api/agents', { method: 'POST', body: { presetId: preset.id, name: name } });
-      State.loaded.agents = false;
-      toast(name + ' created.', 'ok');
-      goto('agents');
-    }
+    el('p', { class: 'muted' }, p.description || 'Editable voice-agent starting point.'),
+    el('div', { class: 'preset-meta' }, [
+      el('span', {}, directionLabel(p.direction || (typeMeta && typeMeta.direction))),
+      el('span', {}, p.category || 'Voice agent'),
+      workflowBit ? el('span', {}, workflowBit) : null
+    ]),
+    el('button', { class: 'btn btn-primary', onclick: () => createFromPreset(p) }, 'Use this preset')
+  ]);
+}
+
+function createFromPreset(preset) {
+  startDeployWizard({
+    agentType: preset.agentType || 'custom',
+    presetId: preset.id,
   });
 }
 

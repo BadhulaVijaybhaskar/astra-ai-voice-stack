@@ -21,8 +21,9 @@ All endpoints use the existing `rxv_sess` HttpOnly cookie. Every customer resour
 - `POST /api/payment-intents` with `{packId,firstname,phone}` accepts server-owned packs `starter`, `growth`, or `scale`. It returns `{paymentIntent,checkoutReady,checkout,message}`. When PayU and a public HTTPS origin are configured, `checkout` contains the hosted-checkout URL and signed fields. Secrets and the intent token are never returned.
 - `POST /api/payu/callback` is a public form-urlencoded PayU success callback. It checks the reverse hash and persisted checkout snapshot, calls PayU `verify_payment`, then applies exactly one immutable `payment_credit` ledger entry.
 - `POST /api/payu/return` is a public form-urlencoded failure/browser return and always returns pending verification. It never credits the wallet.
-- `GET /api/presets` returns the system presets and tenant-owned presets.
-- `POST /api/agents` accepts the existing body plus optional `presetId`. Preset name, persona, and greeting are defaults and explicit request values win.
+- `GET /api/presets` returns the system presets and tenant-owned presets, including `agentType`, `direction`, and `dograhWorkflowId` / `dograhWorkflowKey` when set.
+- `GET /api/agent-types` returns the first-class agent type catalog (`inbound_receptionist`, `outbound_callback`, `lead_qualifier`, `support`, `custom`) with recommended preset ids.
+- `POST /api/agents` accepts the existing body plus optional `presetId` and `agentType`. Preset name, persona, greeting, type, and Dograh workflow binding are defaults. Explicit request values win for name, persona, and greeting.
 - `GET /api/privacy` returns `{mode}`.
 - `POST /api/privacy` with `{mode}` accepts `standard`, `metadata_only`, or `no_recording`. Owner required.
 - `GET /api/byon` returns `{connections}` without credentials.

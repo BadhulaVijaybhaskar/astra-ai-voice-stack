@@ -24,6 +24,7 @@ const providers = require('./lib/providers');
 const payu = require('./lib/payu');
 const demoLinks = require('./lib/demo-links');
 const callback = require('./lib/callback');
+const { AGENT_TYPES, seedPresets, publicPreset, applyPresetToAgent, normalizeAgentType } = require('./lib/agent-types');
 
 const PORT = parseInt(process.env.PORT || '8787', 10);
 const DEFAULT_PROVIDERS = Object.freeze({
@@ -60,65 +61,6 @@ function readForm(req, cap = 64 * 1024) {
     req.on('error', reject);
   });
 }
-
-const PRESET_LIBRARY = [
-  {
-    id: 'preset_personal_injury_v1', slug: 'personal-injury-intake', version: 1,
-    name: 'Personal Injury Intake', category: 'legal', isSystem: true,
-    greeting: 'Thank you for calling. I am an AI intake assistant and this call may be recorded. Are you in immediate danger or need emergency medical help?',
-    fields: ['caller_name', 'callback_number', 'adverse_parties', 'incident_date', 'incident_location', 'incident_type', 'injuries', 'treatment', 'insurance', 'represented', 'deadline_risk', 'preferred_appointment'],
-    guardrails: ['No legal advice', 'No case valuation', 'Escalate emergencies and deadline risk', 'Attorney decides case acceptance'],
-  },
-  {
-    id: 'preset_dental_receptionist_v1', slug: 'dental-receptionist', version: 1,
-    name: 'Dental Receptionist', category: 'healthcare', isSystem: true,
-    greeting: 'Thank you for calling. I am the practice AI receptionist and this call may be recorded. How can I help today?',
-    fields: ['caller_name', 'callback_number', 'new_or_existing_patient', 'reason', 'pain_level', 'emergency_signs', 'insurance', 'preferred_appointment'],
-    guardrails: ['No diagnosis', 'Escalate breathing, bleeding, trauma, or severe swelling', 'Confirm booking details'],
-  },
-  {
-    id: 'preset_real_estate_v1', slug: 'real-estate-lead', version: 1,
-    name: 'Real Estate Lead Qualifier', category: 'real_estate', isSystem: true,
-    greeting: 'Thanks for calling. I am the AI property assistant. Are you looking to buy, sell, rent, or schedule a viewing?',
-    fields: ['caller_name', 'callback_number', 'intent', 'location', 'budget', 'timeline', 'financing', 'property_type', 'preferred_appointment'],
-    guardrails: ['Do not promise availability or returns', 'Escalate fair housing questions', 'Confirm consent before follow-up'],
-  },
-  {
-    id: 'preset_restaurant_v1', slug: 'restaurant-reservations', version: 1,
-    name: 'Restaurant Reservations', category: 'hospitality', isSystem: true,
-    greeting: 'Thank you for calling. I can help with a reservation, opening hours, directions, or a general question.',
-    fields: ['caller_name', 'callback_number', 'party_size', 'date', 'time', 'dietary_needs', 'occasion', 'special_requests'],
-    guardrails: ['Never confirm unavailable inventory', 'Escalate allergy questions to staff', 'Read back reservation details'],
-  },
-  {
-    id: 'preset_appointment_v1', slug: 'appointment-booking', version: 1,
-    name: 'Appointment Booking', category: 'scheduling', isSystem: true,
-    greeting: 'Thanks for calling. I can help you schedule, move, or cancel an appointment.',
-    fields: ['caller_name', 'callback_number', 'appointment_type', 'preferred_date', 'preferred_time', 'timezone', 'notes'],
-    guardrails: ['Confirm timezone', 'Never invent calendar availability', 'Read back the final appointment'],
-  },
-  {
-    id: 'preset_customer_support_v1', slug: 'customer-support', version: 1,
-    name: 'Customer Support', category: 'support', isSystem: true,
-    greeting: 'Thanks for contacting support. I am an AI assistant. Tell me what happened and I will help or route you to the right person.',
-    fields: ['caller_name', 'callback_number', 'account_reference', 'issue_category', 'issue_summary', 'steps_tried', 'preferred_resolution'],
-    guardrails: ['Never request passwords or full payment credentials', 'Escalate security incidents', 'Do not promise refunds'],
-  },
-  {
-    id: 'preset_lead_qualification_v1', slug: 'lead-qualification', version: 1,
-    name: 'Lead Qualification', category: 'sales', isSystem: true,
-    greeting: 'Thanks for your interest. I am an AI assistant. I will ask a few quick questions and help you book the right next step.',
-    fields: ['caller_name', 'company', 'callback_number', 'email', 'need', 'budget', 'authority', 'timeline', 'preferred_appointment'],
-    guardrails: ['Disclose AI identity', 'Do not make unsupported product claims', 'Respect opt-out requests immediately'],
-  },
-  {
-    id: 'preset_receptionist_v1', slug: 'general-receptionist', version: 1,
-    name: 'AI Receptionist', category: 'reception', isSystem: true,
-    greeting: 'Thank you for calling. I am the AI receptionist. How may I direct your call today?',
-    fields: ['caller_name', 'callback_number', 'reason', 'department', 'urgency', 'message', 'preferred_follow_up'],
-    guardrails: ['Disclose AI identity', 'Escalate emergencies', 'Do not reveal private staff or customer information'],
-  },
-];
 
 function todayUtc() {
   return new Date().toISOString().slice(0, 10);
@@ -166,9 +108,7 @@ async function boot() {
   // Force a load so a missing/corrupt db.json resolves to a clean default.
   const existing = core.db();
   await core.mutate((d) => {
-    for (const preset of PRESET_LIBRARY) {
-      if (!d.presets.some((p) => p.id === preset.id)) d.presets.push({ ...preset, createdAt: new Date().toISOString() });
-    }
+    seedPresets(d);
   });
 
   const hasDemo = DEMO_EMAIL && existing.users.some((u) => u.email === DEMO_EMAIL);
@@ -245,7 +185,12 @@ function publicTenant(t) {
 function publicAgent(a) {
   return {
     id: a.id, name: a.name, persona: a.persona, tts: a.tts,
-    greeting: a.greeting, telephony: a.telephony, presetId: a.presetId || null, createdAt: a.createdAt,
+    greeting: a.greeting, telephony: a.telephony, presetId: a.presetId || null,
+    agentType: a.agentType || 'custom',
+    direction: a.direction || null,
+    dograhWorkflowId: a.dograhWorkflowId != null ? a.dograhWorkflowId : null,
+    dograhWorkflowKey: a.dograhWorkflowKey || null,
+    createdAt: a.createdAt,
   };
 }
 
@@ -470,17 +415,27 @@ async function apiAgentsCreate(req, res, ctx) {
   const speaker = providers.TTS_SPEAKERS.has(ttsIn.speaker) ? ttsIn.speaker : 'speaker_1';
   const f0 = Number.isFinite(ttsIn.f0_up_key) ? Math.max(-12, Math.min(12, ttsIn.f0_up_key | 0)) : 0;
 
-  const agent = {
+  const overrides = {
+    name: b.name != null ? b.name : undefined,
+    persona: b.persona != null ? b.persona : undefined,
+    greeting: b.greeting != null ? b.greeting : undefined,
+    agentType: b.agentType != null ? normalizeAgentType(b.agentType, preset ? preset.agentType : 'custom') : undefined,
+  };
+  if (Object.prototype.hasOwnProperty.call(b, 'dograhWorkflowId')) overrides.dograhWorkflowId = b.dograhWorkflowId;
+  if (Object.prototype.hasOwnProperty.call(b, 'dograhWorkflowKey')) overrides.dograhWorkflowKey = b.dograhWorkflowKey;
+
+  const agent = applyPresetToAgent({
     id: core.genId('ag_'),
     tenantId: ctx.tenant.id,
-    name: String(b.name || (preset && preset.name) || 'Untitled Agent').slice(0, 60),
-    persona: String(b.persona || (preset ? `${preset.name}. Collect: ${preset.fields.join(', ')}. Guardrails: ${preset.guardrails.join('; ')}.` : '')).slice(0, 1500),
     tts: { provider: providers.tts.id, model, speaker, f0_up_key: f0 },
-    greeting: String(b.greeting || (preset && preset.greeting) || '').slice(0, 300),
-    presetId: preset ? preset.id : null,
     telephony: { did: String(b.did || providers.telephony.did).replace(/[^0-9]/g, '') || providers.telephony.did },
     createdAt: new Date().toISOString(),
-  };
+  }, preset, overrides);
+
+  if (!agent.name) agent.name = 'Untitled Agent';
+  if (agent.persona == null) agent.persona = '';
+  if (agent.greeting == null) agent.greeting = '';
+
   await core.mutate((d) => { d.agents.push(agent); });
   core.sendJson(res, 200, { agent: publicAgent(agent) });
 }
@@ -927,8 +882,14 @@ function apiUsage(req, res, ctx) {
   core.sendJson(res, 200, { days, totals });
 }
 
+function apiAgentTypes(req, res) {
+  core.sendJson(res, 200, { agentTypes: AGENT_TYPES.map((t) => ({ ...t, recommendedPresetIds: [...t.recommendedPresetIds] })) });
+}
+
 function apiPresets(req, res, ctx) {
-  const presets = core.db().presets.filter((p) => p.isSystem || p.tenantId === ctx.tenant.id);
+  const presets = core.db().presets
+    .filter((p) => p.isSystem || p.tenantId === ctx.tenant.id)
+    .map(publicPreset);
   core.sendJson(res, 200, { presets });
 }
 
@@ -1265,6 +1226,7 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);
         if (route === '/api/telephony/status') return core.requireAuth(req, res, apiTelephonyStatus);
         if (route === '/api/presets') return core.requireAuth(req, res, apiPresets);
+        if (route === '/api/agent-types') return core.requireAuth(req, res, apiAgentTypes);
         if (route === '/api/wallet') return core.requireAuth(req, res, apiWallet);
         if (route === '/api/payment-intents') return core.requireAuth(req, res, apiPaymentIntents);
         if (route === '/api/support/tickets') return core.requireAuth(req, res, apiSupportList);

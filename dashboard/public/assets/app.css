@@ -518,11 +518,27 @@
    SAAS CONTROL PLANE
    ========================================================= */
 .preset-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:14px; }
+.preset-groups { display:flex; flex-direction:column; gap:28px; }
+.preset-type-section { display:flex; flex-direction:column; gap:14px; }
+.preset-type-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+.preset-type-head .muted { margin-top:4px; font-size:.84rem; max-width:52ch; }
 .preset-card { padding:18px; display:flex; flex-direction:column; gap:13px; min-height:260px; }
 .preset-card p { font-size:.84rem; line-height:1.55; flex:1; }
 .preset-icon { width:42px; height:42px; display:grid; place-items:center; border-radius:12px; color:#06B6D4; font-weight:720; font-size:1.1rem; background:rgba(6,182,212,.16); border:1px solid rgba(107,33,168,.35); }
 .preset-meta { display:flex; gap:7px; flex-wrap:wrap; }
 .preset-meta span { font-size:.7rem; color:var(--ink-dim); border:1px solid var(--line); border-radius:var(--r-pill); padding:4px 8px; }
+.wizard-steps { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 18px; }
+.wizard-step { display:flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--line); border-radius:999px; color:var(--ink-dim); font-size:.78rem; }
+.wizard-step.on { color:var(--ink); border-color:rgba(6,182,212,.45); background:rgba(6,182,212,.08); }
+.wizard-step.done { color:var(--ok); }
+.wizard-num { width:22px; height:22px; display:grid; place-items:center; border-radius:999px; background:var(--bg-2); border:1px solid var(--line); font-size:.72rem; font-weight:700; }
+.wizard-step.on .wizard-num { border-color:rgba(6,182,212,.5); color:#06B6D4; }
+.type-pick-grid, .preset-pick-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+.type-pick, .preset-pick { text-align:left; padding:16px; border:1px solid var(--line); border-radius:var(--r); background:var(--panel-2); color:inherit; cursor:pointer; display:flex; flex-direction:column; gap:10px; min-height:132px; }
+.type-pick:hover, .preset-pick:hover { border-color:rgba(6,182,212,.4); }
+.type-pick.on, .preset-pick.on { border-color:rgba(6,182,212,.55); background:rgba(6,182,212,.08); box-shadow:0 0 0 1px rgba(6,182,212,.2); }
+.type-pick-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.type-pick p, .preset-pick p { margin:0; font-size:.82rem; line-height:1.45; }
 .pack-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:18px; }
 .ledger-row { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:11px 0; border-bottom:1px solid var(--line); font-size:.84rem; }
 .ledger-row:last-child { border-bottom:0; }
