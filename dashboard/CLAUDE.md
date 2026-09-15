@@ -1,4 +1,4 @@
-# RapidX Voice. Repo guide for future sessions.
+# Astra AI. Repo guide for future sessions.
 
 Read `SPEC.md` first, it is the binding contract (data model, API routes, sections, edge
 cases). This file is the orientation layer. If anything here ever conflicts with `SPEC.md`,
@@ -8,7 +8,7 @@ No em dashes anywhere in this codebase (code, comments, copy). Use commas or per
 
 ## What it is
 
-A premium, multi-tenant, provider-agnostic AI voice agent platform, branded **RapidX Voice**.
+A premium, multi-tenant, provider-agnostic AI voice agent platform, branded **Astra AI**.
 The hook is price: production voice agents at roughly one rupee, powered by Rumik silk TTS
 (about 20x cheaper than ElevenLabs), with a swappable TTS, LLM, and telephony engine so we are
 never locked into one vendor. The voice engine (Rumik), the brain (Gemini), and telephony
@@ -37,7 +37,7 @@ Open `http://localhost:8787`. No `npm install`, ever.
 ```
 email:    demo@rapidx.ai
 password: rapidxvoice
-tenant:   RapidX Demo
+tenant:   Astra AI Demo
 ```
 
 On first boot, if `data/db.json` is missing, the server creates it and seeds this demo tenant
@@ -61,7 +61,7 @@ rapidx-voice-studio/
       marketing.js          # landing behavior, reveal, image guard, self-check (Marketing)
       app.css               # dashboard styles (Dashboard)
       app.js                # dashboard logic, hash routing, auth gate (Dashboard)
-      logo.svg              # RapidX Voice wordmark with voltage waveform glyph (Ops)
+      logo.svg              # Astra AI wordmark with voltage waveform glyph (Ops)
       favicon.svg           # voltage waveform mark on an ink tile (Ops)
       og.svg                # 1200x630 social card with the one-rupee hook (Ops)
   data/
@@ -70,7 +70,7 @@ rapidx-voice-studio/
   .env                      # real provider keys, gitignored, never reaches the browser
   .env.example              # template with placeholders + commented optional providers
   setup.sh                  # one command fresh-machine setup, idempotent
-  package.json              # name rapidx-voice, "start": "node server.js", no dependencies
+  package.json              # name astra-ai, "start": "node server.js", no dependencies
   .gitignore
   README.md
   CLAUDE.md                 # this file
@@ -167,8 +167,7 @@ Authed (401 if no valid session):
   progressive enhancement only, gated on `html.js`. `marketing.js` ends with a self-check that
   force-shows anything stuck at opacity 0 and a guard that swaps any broken image to a branded SVG.
 - Escape any user-supplied string (name, email, persona) before injecting it into the DOM.
-- The brand SVGs use the voltage gradient (cyan `#34E7E4`, sky `#22D3EE`, indigo `#6E7BFF`,
-  violet `#A855F7`). Their waveform-bar gradients use `gradientUnits="userSpaceOnUse"` on purpose,
+- The brand SVGs use the AstraNova purple gradient (`#AC4BFF`, `#642C8F`, `#4A1F6B`). Their waveform-bar gradients use `gradientUnits="userSpaceOnUse"` on purpose,
   thin vertical lines lose an `objectBoundingBox` gradient in some renderers. Keep that.
 - If dependencies are ever added (they should not be), rename `node_modules` to
   `node_modules.nosync` so iCloud does not try to sync them.

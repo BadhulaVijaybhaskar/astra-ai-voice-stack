@@ -1,5 +1,5 @@
 'use strict';
-/* RapidX Voice Studio , front-end. Talks only to our own /api/* (keys stay server-side). */
+/* Astra AI , front-end. Talks only to our own /api/* (keys stay server-side). */
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -160,7 +160,7 @@ let conversation = [];
 function addBubble(role, text) {
   const tr = $('#transcript'); const empty = tr.querySelector('.t-empty'); if (empty) empty.remove();
   const b = document.createElement('div'); b.className = 'bubble ' + (role === 'user' ? 'user' : 'bot');
-  b.innerHTML = `<span class="who">${role === 'user' ? 'you' : 'rapidx'}</span>${text}`;
+  b.innerHTML = `<span class="who">${role === 'user' ? 'you' : 'astra'}</span>${text}`;
   tr.appendChild(b); tr.scrollTop = tr.scrollHeight;
 }
 
@@ -310,7 +310,7 @@ $('#liveSpeaker').onchange = () => $('#latVoice').textContent = liveModel + ' ·
 
 refreshStudioUI();
 
-/* ===== RapidXAI promo popup + owner off-switch ===== */
+/* ===== AstraNova promo popup + owner off-switch ===== */
 (function promos() {
   const promo = $('#promo'), gear = $('#gear'), settings = $('#settings'), promoOff = $('#promoOff');
   if (!promo) return;

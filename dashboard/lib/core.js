@@ -1,5 +1,5 @@
 /**
- * RapidX Voice. Core runtime primitives. ZERO npm dependencies.
+ * Astra AI. Core runtime primitives. ZERO npm dependencies.
  *
  * One file, pure Node. It gives the rest of the server everything that is not
  * provider specific:

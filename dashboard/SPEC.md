@@ -1,4 +1,4 @@
-# RapidX Voice , Build Contract (single source of truth for the swarm)
+# Astra AI , Build Contract (single source of truth for the swarm)
 
 This file is the fixed contract. Backend, marketing, and dashboard agents all build
 against it. Do not invent routes, field names, or token names that conflict with this.
@@ -7,7 +7,7 @@ No em dashes anywhere in any file (code, comments, copy). Use commas or periods.
 ## 0. What we are building
 
 A premium, multi-tenant, provider-agnostic AI **voice agent platform**, branded
-**RapidX Voice**. The hook: production voice agents at roughly one rupee, powered by
+**Astra AI**. The hook: production voice agents at roughly one rupee, powered by
 Rumik silk TTS (about 20x cheaper than ElevenLabs), with a swappable engine so you are
 never locked into one TTS, LLM, or telephony vendor. Packaged as ONE portable folder,
 zero npm dependencies, runs with `node server.js`.
@@ -43,7 +43,7 @@ behind a million-dollar-funded look.
 ```
 {
   "tenants": [ { "id":"t_xxx", "name":"Acme Co", "slug":"acme", "createdAt":ISO,
-                 "branding": { "color":"#6E7BFF" },
+                 "branding": { "color":"#642C8F" },
                  "providers": { "tts":"rumik", "llm":"gemini", "telephony":"voicelink" },
                  "plan":"studio" } ],
   "users":   [ { "id":"u_xxx", "tenantId":"t_xxx", "email":"a@b.com",
@@ -61,7 +61,7 @@ behind a million-dollar-funded look.
   A user must never see or mutate another tenant's data. Mismatch returns 403.
 - Atomic writes: write to `data/db.json.tmp` then `fs.renameSync`. Guard concurrent writes with a simple in-process queue.
 - On boot: if `data/db.json` missing, create it and seed a demo tenant + owner
-  (email `demo@rapidx.ai`, password `rapidxvoice`, tenant `RapidX Demo`) and migrate any
+  (email `demo@rapidx.ai`, password `rapidxvoice`, tenant `Astra AI Demo`) and migrate any
   legacy `agents.json` agents into that tenant. Print the demo login to the console.
 
 ## 4. API contract (all JSON unless noted). Auth via `rxv_sess` cookie.

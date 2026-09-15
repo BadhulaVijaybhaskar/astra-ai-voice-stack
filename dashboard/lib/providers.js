@@ -1,5 +1,5 @@
 /**
- * RapidX Voice. Provider-agnostic engine.
+ * Astra AI. Provider-agnostic engine.
  *
  * Four registries, each a uniform set of implemented adapters:
  *   stt        : deepgram, intentionally fixed
@@ -174,7 +174,7 @@ const ttsRumik = {
    LLM LAYER. Speech recognition intentionally remains Deepgram only.
    ========================================================================== */
 
-const DEFAULT_SYSTEM = 'You are RapidX, a warm, concise voice assistant. Reply in 1 to 3 short spoken sentences. No markdown, no lists, no emojis. This will be read aloud.';
+const DEFAULT_SYSTEM = 'You are Astra AI, a warm, concise voice assistant. Reply in 1 to 3 short spoken sentences. No markdown, no lists, no emojis. This will be read aloud.';
 
 const sttDeepgram = {
   id: 'deepgram',
@@ -392,9 +392,9 @@ function upstreamMessage(data, fallback) {
 }
 
 function upstreamStatus(status) {
-  // An invalid Dograh service credential is not an expired RapidX user session.
+  // An invalid Dograh service credential is not an expired Astra AI user session.
   // Never forward 401/403, because the browser correctly treats those as a
-  // reason to sign the current RapidX user out.
+  // reason to sign the current Astra AI user out.
   if (status === 401 || status === 403) return 502;
   return status || 502;
 }

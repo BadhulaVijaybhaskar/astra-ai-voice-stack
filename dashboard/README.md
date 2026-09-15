@@ -1,8 +1,8 @@
 <div align="center">
-  <img src="public/assets/logo.svg" alt="RapidX Voice" width="300" />
+  <img src="public/assets/logo.svg" alt="Astra AI" width="300" />
 </div>
 
-# RapidX Voice
+# Astra AI
 
 **Production AI voice agents at roughly one rupee.** A premium, multi-tenant, provider-agnostic voice agent platform. Powered by Rumik silk TTS, about 20x cheaper than ElevenLabs, with a swappable engine so you are never locked into one TTS, LLM, or telephony vendor.
 
@@ -88,4 +88,4 @@ Runs anywhere Node runs. The natural home is the Hostinger VPS so the secret key
 
 The bundled JSON store is suitable for local evaluation, demos, and one Node process. Before accepting customer money or running multiple replicas, move wallets, payment intents, memberships, and audit events to transactional PostgreSQL and complete the unchecked items in [`SAAS-QA-CHECKLIST.md`](SAAS-QA-CHECKLIST.md).
 
-Built for RapidX AI. MIT licensed. No em dashes anywhere in this codebase.
+Built for AstraNova. MIT licensed. No em dashes anywhere in this codebase.

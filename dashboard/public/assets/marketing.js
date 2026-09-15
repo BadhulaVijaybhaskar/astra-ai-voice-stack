@@ -1,5 +1,5 @@
 /* ==========================================================================
-   RapidX Voice. Marketing landing behavior.
+   Astra AI. Marketing landing behavior.
    Pure vanilla JS, zero dependencies. Progressive enhancement only.
    Content is visible by default. JS only adds motion and safety nets.
    No em dashes anywhere. Use commas or periods.
@@ -15,7 +15,7 @@
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // Brand voltage stops, read from one place so we never refork colors.
-  var VOLT = ["#34E7E4", "#22D3EE", "#6E7BFF", "#A855F7"];
+  var VOLT = ["#AC4BFF", "#9B5CFF", "#642C8F", "#4A1F6B"];
 
   function ready(fn) {
     if (document.readyState === "loading") {
@@ -45,7 +45,7 @@
   function buildAvatars() {
     var nodes = document.querySelectorAll(".avatar[data-name]");
     Array.prototype.forEach.call(nodes, function (el) {
-      var name = el.getAttribute("data-name") || "RapidX";
+      var name = el.getAttribute("data-name") || "Astra AI";
       var h = hashStr(name);
       var c1 = VOLT[h % VOLT.length];
       var c2 = VOLT[(h >> 3) % VOLT.length];
@@ -60,13 +60,13 @@
   /* Branded SVG data-URI used by the image guard if any <img> fails.       */
   /* ---------------------------------------------------------------------- */
   function brandedDataUri(label) {
-    var txt = (label || "RapidX Voice").replace(/[<>&"]/g, " ");
+    var txt = (label || "Astra AI").replace(/[<>&"]/g, " ");
     var svg =
       "<svg xmlns='http://www.w3.org/2000/svg' width='640' height='400' viewBox='0 0 640 400'>" +
       "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>" +
-      "<stop offset='0' stop-color='#34E7E4'/><stop offset='0.55' stop-color='#6E7BFF'/>" +
-      "<stop offset='1' stop-color='#A855F7'/></linearGradient></defs>" +
-      "<rect width='640' height='400' fill='#0A0C12'/>" +
+      "<stop offset='0' stop-color='#AC4BFF'/><stop offset='0.55' stop-color='#642C8F'/>" +
+      "<stop offset='1' stop-color='#4A1F6B'/></linearGradient></defs>" +
+      "<rect width='640' height='400' fill='#0A0A0A'/>" +
       "<rect width='640' height='400' fill='url(#g)' opacity='0.16'/>" +
       "<circle cx='320' cy='168' r='54' fill='none' stroke='url(#g)' stroke-width='3'/>" +
       "<path d='M300 168h6l5-16 9 32 5-16h10' fill='none' stroke='url(#g)' stroke-width='3' " +
@@ -81,7 +81,7 @@
       function swap() {
         if (img.getAttribute("data-guarded") === "1") { return; }
         img.setAttribute("data-guarded", "1");
-        img.src = brandedDataUri(img.getAttribute("alt") || "RapidX Voice");
+        img.src = brandedDataUri(img.getAttribute("alt") || "Astra AI");
       }
       img.addEventListener("error", swap);
       // Already broken by the time we run (cached failure).
@@ -363,22 +363,22 @@
         forced++;
       }
     });
-    if (forced) { console.warn("[RapidX Voice] force-showed " + forced + " element(s) stuck at opacity 0."); }
+    if (forced) { console.warn("[Astra AI] force-showed " + forced + " element(s) stuck at opacity 0."); }
 
     // Warn on broken images.
     var broken = 0;
     Array.prototype.forEach.call(document.querySelectorAll("img"), function (img) {
       if (img.complete && img.naturalWidth === 0 && img.getAttribute("data-guarded") !== "1") {
         broken++;
-        console.warn("[RapidX Voice] broken image:", img.getAttribute("src"));
+        console.warn("[Astra AI] broken image:", img.getAttribute("src"));
       }
     });
-    if (broken) { console.warn("[RapidX Voice] " + broken + " broken image(s) detected."); }
+    if (broken) { console.warn("[Astra AI] " + broken + " broken image(s) detected."); }
 
     // Warn if the hero H1 is missing.
     var h1 = document.querySelector(".hero-h1, h1");
     if (!h1 || !h1.textContent.trim()) {
-      console.warn("[RapidX Voice] hero H1 missing or empty.");
+      console.warn("[Astra AI] hero H1 missing or empty.");
     }
   }
 

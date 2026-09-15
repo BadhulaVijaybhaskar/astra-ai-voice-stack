@@ -71,7 +71,7 @@ function resolvePack(packId, packs) {
     amount: canonicalAmount(pack.amount),
     currency: pack.currency || 'INR',
     credits: Number(pack.credits),
-    productinfo: requiredString(pack.productinfo || `RapidX Voice credits, ${packId}`, 'productinfo', 100),
+    productinfo: requiredString(pack.productinfo || `Astra AI credits, ${packId}`, 'productinfo', 100),
   });
 }
 

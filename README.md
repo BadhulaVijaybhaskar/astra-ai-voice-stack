@@ -1,4 +1,4 @@
-# RapidX Voice Agent Stack
+# Astra AI Agent Stack
 
 A self-hosted AI phone agent that answers and places real calls, for roughly
 **2 rupees a minute** against 15 to 20 on an ElevenLabs plus Twilio plus GPT stack.
@@ -27,7 +27,7 @@ Handing this to an AI coding agent instead? Paste
 | Speech to text | Deepgram `nova-3-general` | Multilingual, holds up to Hinglish on an 8k phone stream |
 | Brain | Groq `llama-3.3-70b-versatile` | Fast enough that the pause before a reply is not noticeable |
 | Voice | Rumik silk `mulberry` | Roughly 20x cheaper than ElevenLabs at promo rates |
-| Console | RapidX Voice Studio | Zero-dependency Node app, agent builder plus voice studio |
+| Console | Astra AI | Zero-dependency Node app, agent builder plus voice studio |
 
 Every layer is swappable. Dograh natively supports Twilio, Telnyx, Plivo, Vonage
 and Cloudonix for telephony, and the model pipeline takes any STT, LLM or TTS
@@ -82,7 +82,7 @@ docs/
   TROUBLESHOOTING.md        every real failure hit on this stack, with real fixes
   PRICING.md                measured per-minute cost and the defensible claim
 
-dashboard/                  RapidX Voice Studio, no build step and one dependency
+dashboard/                  Astra AI, no build step and one dependency
 ```
 
 ---
@@ -148,5 +148,5 @@ true all-in once carrier minutes are counted, so do not claim that.
 
 ---
 
-Built by [RapidX AI](https://rapidxai.com). MIT licensed. Dograh is separately
+Built by [AstraNova](https://www.astranovain.com). MIT licensed. Dograh is separately
 licensed by its authors.

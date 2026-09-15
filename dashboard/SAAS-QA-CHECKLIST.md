@@ -1,4 +1,4 @@
-# RapidX Voice SaaS Acceptance Checklist
+# Astra AI SaaS Acceptance Checklist
 
 ## Safety and deployment
 

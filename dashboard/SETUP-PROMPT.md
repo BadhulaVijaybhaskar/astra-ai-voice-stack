@@ -1,4 +1,4 @@
-# RapidX Voice, one-shot setup prompt
+# Astra AI, one-shot setup prompt
 
 Copy the block below and paste it into an AI coding agent (Claude Code, Cursor) or
 just follow it yourself in a terminal. It clones the repo, sets the four keys, and
@@ -9,7 +9,7 @@ starts the platform. No build step, no database, no npm install. Node 18+ only.
 ## THE ONE-SHOT PROMPT (copy everything between the lines)
 
 ```
-Set up RapidX Voice, a production AI voice-agent platform, on this machine and start it.
+Set up Astra AI, a production AI voice-agent platform, on this machine and start it.
 
 1. Clone and enter the repo:
    git clone https://github.com/toprmrproducer/rapidx-voice-studio.git

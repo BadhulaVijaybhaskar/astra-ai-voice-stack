@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>RapidX Agent Console</title>
+<title>Astra AI Agent Console</title>
 <link rel="stylesheet" href="/styles.css" />
 <style>
   .console-grid{display:grid;grid-template-columns:300px 1fr 320px;gap:18px;align-items:start}
@@ -32,7 +32,7 @@
 <div class="bg-orbs" aria-hidden="true"><span></span><span></span><span></span></div>
 
 <header class="topbar">
-  <div class="brand"><span class="mark">◆</span><span class="name">RapidX <em>Agent Console</em></span></div>
+  <div class="brand"><span class="mark">◆</span><span class="name">Astra AI <em>Agent Console</em></span></div>
   <div class="topbar-right">
     <span id="health" class="pill pill-muted">checking…</span>
     <a class="pill pill-ghost" href="/index.html" style="text-decoration:none">Studio →</a>
@@ -49,9 +49,9 @@
       <button id="newBtn" class="btn btn-ghost btn-sm" style="width:100%;margin-bottom:14px">+ New agent</button>
 
       <div id="newForm" hidden>
-        <div class="form-row"><label class="field-label">Name</label><input id="nName" class="input" value="RapidX Receptionist" /></div>
-        <div class="form-row"><label class="field-label">Persona</label><textarea id="nPersona" class="input" rows="3">You are a warm, sharp receptionist for RapidX AI. Answer in 1-2 short spoken sentences, book callbacks, qualify the lead.</textarea></div>
-        <div class="form-row"><label class="field-label">Greeting</label><input id="nGreeting" class="input" value="Hi, thanks for calling RapidX. How can I help you today?" /></div>
+        <div class="form-row"><label class="field-label">Name</label><input id="nName" class="input" value="Astra AI Receptionist" /></div>
+        <div class="form-row"><label class="field-label">Persona</label><textarea id="nPersona" class="input" rows="3">You are a warm, sharp receptionist for AstraNova. Answer in 1-2 short spoken sentences, book callbacks, qualify the lead.</textarea></div>
+        <div class="form-row"><label class="field-label">Greeting</label><input id="nGreeting" class="input" value="Hi, thanks for calling Astra AI. How can I help you today?" /></div>
         <div class="form-row" style="display:flex;gap:8px">
           <select id="nModel" class="select"><option value="mulberry">mulberry (expressive)</option><option value="muga">muga (fast)</option></select>
           <select id="nSpeaker" class="select"><option>speaker_1</option><option>speaker_2</option><option>speaker_3</option><option>speaker_4</option></select>
@@ -155,7 +155,7 @@ function renderDetail(){
 }
 
 $('#mintBtn').onclick=async()=>{
-  const demo={ name:'Demo Agent '+(agents.length+1), persona:'You are RapidX, a friendly demo voice agent. Reply in one or two short spoken sentences, upbeat and human.', greeting:'Hey! This is your RapidX demo agent, minted out of thin air. Ask me anything.', model:'mulberry', speaker:'speaker_'+(1+(agents.length%4)) };
+  const demo={ name:'Demo Agent '+(agents.length+1), persona:'You are Astra AI, a friendly demo voice agent. Reply in one or two short spoken sentences, upbeat and human.', greeting:'Hey! This is your Astra AI demo agent, minted out of thin air. Ask me anything.', model:'mulberry', speaker:'speaker_'+(1+(agents.length%4)) };
   const r=await(await fetch('/api/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(demo)})).json();
   await loadAgents(); selected=r.agent; renderAgents(); renderDetail();
 };

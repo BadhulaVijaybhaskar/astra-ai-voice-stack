@@ -1,5 +1,5 @@
 /**
- * RapidX Voice. Zero-dependency Node server (the product, multi-tenant).
+ * Astra AI. Zero-dependency Node server (the product, multi-tenant).
  *
  * Pure Node http/https/crypto/fs. No npm, no build step, no framework. Run with
  * `node server.js` and it serves the JSON API plus the static public/ site on
@@ -38,12 +38,12 @@ const DEFAULT_PROVIDERS = Object.freeze({
 
 const DEMO_EMAIL = String(process.env.TEST_USER_EMAIL || '').trim().toLowerCase();
 const DEMO_PASS = String(process.env.TEST_USER_PASSWORD || '');
-const DEMO_TENANT = String(process.env.TEST_USER_TENANT || 'RapidX Test');
+const DEMO_TENANT = String(process.env.TEST_USER_TENANT || 'Astra AI Test');
 const TRIAL_CREDIT_PAISE = 1000;
 const CREDIT_PACKS = Object.freeze({
-  starter: Object.freeze({ amount: '200.00', currency: 'INR', credits: 20000, productinfo: 'RapidX Voice Starter Credits' }),
-  growth: Object.freeze({ amount: '500.00', currency: 'INR', credits: 50000, productinfo: 'RapidX Voice Growth Credits' }),
-  scale: Object.freeze({ amount: '1000.00', currency: 'INR', credits: 100000, productinfo: 'RapidX Voice Scale Credits' }),
+  starter: Object.freeze({ amount: '200.00', currency: 'INR', credits: 20000, productinfo: 'Astra AI Starter Credits' }),
+  growth: Object.freeze({ amount: '500.00', currency: 'INR', credits: 50000, productinfo: 'Astra AI Growth Credits' }),
+  scale: Object.freeze({ amount: '1000.00', currency: 'INR', credits: 100000, productinfo: 'Astra AI Scale Credits' }),
 });
 
 function payuConfig() {
@@ -184,7 +184,7 @@ async function boot() {
         name: DEMO_TENANT,
         slug: makeSlug(DEMO_TENANT, new Set(d.tenants.map((t) => t.slug))),
         createdAt: nowIso,
-        branding: { color: '#6E7BFF' },
+        branding: { color: '#642C8F' },
         providers: { ...DEFAULT_PROVIDERS },
         plan: 'studio',
         status: 'active', privacyMode: 'standard',
@@ -193,7 +193,7 @@ async function boot() {
         id: userId,
         tenantId,
         email: DEMO_EMAIL,
-        name: 'RapidX Demo',
+        name: 'Astra AI Demo',
         passHash: core.hashPassword(DEMO_PASS),
         role: process.env.TEST_USER_SUPER_ADMIN === 'true' ? 'super_admin' : 'owner', status: 'active',
         createdAt: nowIso,
@@ -324,7 +324,7 @@ async function apiSignup(req, res, body) {
     const taken = new Set(d.tenants.map((t) => t.slug));
     tenant = {
       id: tenantId, name: company, slug: makeSlug(company, taken), createdAt: nowIso,
-      branding: { color: '#6E7BFF' },
+      branding: { color: '#642C8F' },
       providers: { ...DEFAULT_PROVIDERS },
       plan: 'studio',
       status: 'active', privacyMode: 'standard',
@@ -706,8 +706,8 @@ function publicDemoContext(token) {
   const tenant = database.tenants.find((item) => item.id === link.tenantId && item.status === 'active');
   const agent = database.agents.find((item) => item.id === link.agentId && item.tenantId === link.tenantId);
   if (!tenant || !agent) return null;
-  const color = String((tenant.branding || {}).color || '#B88A2D');
-  return { link, tenant, agent, color: /^#[0-9A-Fa-f]{6}$/.test(color) ? color : '#B88A2D' };
+  const color = String((tenant.branding || {}).color || '#642C8F');
+  return { link, tenant, agent, color: /^#[0-9A-Fa-f]{6}$/.test(color) ? color : '#642C8F' };
 }
 
 function apiPublicDemoMeta(req, res, token) {
@@ -1351,7 +1351,7 @@ boot().then(() => {
   server.listen(PORT, () => {
     const live = providers.describeProviders();
     const flag = (layer, id) => (live[layer].find((p) => p.id === id) || {}).live ? 'ok' : 'MISSING';
-    console.log('\n  RapidX Voice  ready');
+    console.log('\n  Astra AI  ready');
     console.log(`  Marketing : http://localhost:${PORT}/`);
     console.log(`  Console   : http://localhost:${PORT}/app.html`);
     if (DEMO_EMAIL) console.log(`  Test login: ${DEMO_EMAIL}`);

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   RapidX Voice. Marketing landing styles.
+   Astra AI. Marketing landing styles.
    Extends brand.css. Never reforks the token system. Dark, premium, editorial.
    No em dashes anywhere. Use commas or periods.
    ========================================================================== */
@@ -56,7 +56,7 @@ body { position: relative; }
 
 .nav-mobile { display: none; flex-direction: column; gap: 6px; padding: 16px var(--gutter) 22px; border-top: 1px solid var(--line); background: rgba(8,9,14,0.96); backdrop-filter: blur(18px); }
 .nav-mobile a { padding: 12px 4px; color: var(--ink-soft); font-weight: 500; border-bottom: 1px solid var(--line); }
-.nav-mobile a.btn { border-bottom: 0; margin-top: 8px; color: #08101e; justify-content: center; }
+.nav-mobile a.btn { border-bottom: 0; margin-top: 8px; color: #FFFFFF; justify-content: center; }
 
 /* ============================ HERO ============================ */
 .hero { padding-top: clamp(40px, 7vw, 84px); padding-bottom: 0; overflow: hidden; }

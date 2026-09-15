@@ -1,4 +1,4 @@
-# RapidX Voice Studio Interaction Contract
+# Astra AI Interaction Contract
 
 ## Visual system
 

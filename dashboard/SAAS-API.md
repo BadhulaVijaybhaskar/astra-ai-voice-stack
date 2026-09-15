@@ -1,4 +1,4 @@
-# RapidX Voice SaaS API
+# Astra AI SaaS API
 
 All endpoints use the existing `rxv_sess` HttpOnly cookie. Every customer resource is scoped from the authenticated session tenant. IDs in request bodies never select tenant scope. Money is represented as integer paise and wallets use INR.
 

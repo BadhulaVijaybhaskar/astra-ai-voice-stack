@@ -1,7 +1,7 @@
 {
-  "name": "rapidx-voice",
+  "name": "astra-ai",
   "version": "1.0.0",
-  "description": "RapidX Voice. A multi-tenant AI voice agent Studio using Deepgram live transcription, Groq reasoning, Rumik streaming speech, and VoBiz through Dograh.",
+  "description": "Astra AI. A multi-tenant AI voice agent Studio using Deepgram live transcription, Groq reasoning, Rumik streaming speech, and VoBiz through Dograh.",
   "private": true,
   "type": "commonjs",
   "main": "server.js",
