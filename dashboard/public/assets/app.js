@@ -346,7 +346,7 @@ function renderShell() {
     el('div', { class: 'flex items-center gap-2', style: 'min-width:0' }, [
       el('button', { class: 'menu-btn', 'aria-label': 'Menu', onclick: () => $('.shell').classList.toggle('nav-open'), html: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>' }),
       el('div', { class: 'top-route' }, [
-        el('span', { class: 'crumb' }, 'Astra AI / Console'),
+        el('span', { class: 'crumb' }, 'Astra AI'),
         el('span', { class: 'ttl', id: 'routeTitle' }, 'Overview')
       ])
     ]),
