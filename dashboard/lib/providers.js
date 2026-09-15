@@ -493,11 +493,22 @@ const telVobiz = {
     if (num.length !== 10) {
       throw new ProviderError('need a 10-digit Indian mobile (national format)', 422, 'bad_number');
     }
+    return this.initiateCall('+91' + num, options);
+  },
+
+  // Outbound initiate-call with an E.164 destination. Used by the callback
+  // webhook and by dial() after national-number normalization.
+  async initiateCall(phoneE164, options = {}) {
+    if (!hasEnv(this.needs)) throw notConfigured(this.label, this.needs);
+    const phone = String(phoneE164 || '').trim();
+    if (!/^\+[1-9]\d{6,14}$/.test(phone)) {
+      throw new ProviderError('phone must be E.164 (+ and 7 to 15 digits)', 422, 'bad_number');
+    }
     const result = await this.request('POST', '/api/v1/telephony/initiate-call', {
       workflow_id: Number.isInteger(options.workflowId) && options.workflowId > 0 ? options.workflowId : positiveIntEnv('DOGRAH_WORKFLOW_ID'),
       telephony_configuration_id: positiveIntEnv('DOGRAH_TELEPHONY_CONFIG_ID'),
       from_phone_number_id: positiveIntEnv('DOGRAH_PHONE_NUMBER_ID'),
-      phone_number: '+91' + num,
+      phone_number: phone,
     });
     if (result.up.status < 200 || result.up.status >= 300) {
       throw new ProviderError('Dograh could not initiate the VoBiz call', upstreamStatus(result.up.status),
@@ -516,7 +527,7 @@ const requiredMethods = {
   stt: ['transcribe', 'mintToken'],
   tts: ['synthesize', 'wsConnect'],
   llm: ['chat'],
-  telephony: ['status', 'dial'],
+  telephony: ['status', 'dial', 'initiateCall'],
 };
 
 function registerProvider(layer, adapter, options = {}) {

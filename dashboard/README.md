@@ -80,6 +80,24 @@ The whole pitch is the price. Rumik silk bills per character at promo rates that
 - Strict tenant isolation: every read and write is scoped to the session's tenant. A cross-tenant access returns 403.
 - Any user-supplied string (name, email, persona) is escaped before it is rendered into the DOM.
 - Outbound phone calls are guarded. A real, paid call only goes out with an explicit confirm, never automatically.
+- The outbound callback webhook (`POST /api/callback`) is separate: it uses a shared `CALLBACK_SECRET` header, not a browser session, so CRM or "call me anytime" triggers can dial without logging into the console.
+
+## Outbound "call me anytime" webhook
+
+When someone asks to be called back, post to the secured webhook. The dashboard places a Dograh outbound call using the same `DOGRAH_*` env as telephony.
+
+Set a long random `CALLBACK_SECRET` in `.env`, then:
+
+```sh
+curl -sS -X POST "http://localhost:8787/api/callback" \
+  -H "Content-Type: application/json" \
+  -H "X-Callback-Secret: $CALLBACK_SECRET" \
+  -d '{"phone":"+9198XXXXXXXX","when":"now","name":"Vijay","note":"asked for a callback","source":"curl"}'
+```
+
+Alias path: `/api/outbound/callback`. Body fields: `phone` (required E.164), `when` (`"now"` or omit for immediate, or an ISO8601 future time), optional `name`, `note`, `source`. Never send Dograh or provider API keys in the body.
+
+Immediate calls return `{ "ok": true, "call_id": "...", "dograh": { ... } }`. Future `when` values are stored in `data/db.json` (`callbackJobs`) and fired by a small in-process poller every 15 seconds while `node server.js` is running. For multi-replica production, replace that poller with an external cron that hits the same webhook with `when: "now"`, or a shared job runner.
 
 ## Deploy
 

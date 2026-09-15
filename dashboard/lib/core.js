@@ -166,6 +166,7 @@ function defaultDb() {
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
     hvacJobs: [], hvacSettings: [], paymentEvents: [], demoLinks: [],
+    callbackJobs: [],
   };
 }
 
@@ -173,6 +174,7 @@ const COLLECTIONS = [
   'tenants', 'users', 'agents', 'usage', 'sessions', 'wallets', 'ledger',
   'paymentIntents', 'supportTickets', 'supportMessages', 'auditEvents',
   'presets', 'byonConnections', 'hvacJobs', 'hvacSettings', 'paymentEvents', 'demoLinks',
+  'callbackJobs',
 ];
 
 function migrateDb(parsed) {

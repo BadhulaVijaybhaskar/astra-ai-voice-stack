@@ -23,6 +23,7 @@ core.loadEnv();
 const providers = require('./lib/providers');
 const payu = require('./lib/payu');
 const demoLinks = require('./lib/demo-links');
+const callback = require('./lib/callback');
 
 const PORT = parseInt(process.env.PORT || '8787', 10);
 const DEFAULT_PROVIDERS = Object.freeze({
@@ -790,6 +791,117 @@ async function apiTelephonyDial(req, res, ctx) {
   }
 }
 
+// POST /api/callback (alias /api/outbound/callback). Shared-secret outbound trigger.
+// Body: { phone, when?, name?, note?, source? }. Never accepts provider API keys.
+async function apiOutboundCallback(req, res, body) {
+  const auth = callback.authorizeCallback(req.headers['x-callback-secret'], process.env.CALLBACK_SECRET);
+  if (!auth.ok) {
+    return core.sendJson(res, auth.status, { ok: false, error: auth.error, code: auth.code });
+  }
+  const parsed = callback.parseCallbackRequest(body);
+  if (!parsed.ok) {
+    return core.sendJson(res, parsed.status, { ok: false, error: parsed.error, code: parsed.code });
+  }
+
+  if (parsed.whenInfo.mode === 'scheduled') {
+    const job = {
+      id: core.genId('cbjob_'),
+      phone: parsed.phone,
+      when: parsed.whenInfo.when,
+      name: parsed.name || '',
+      note: parsed.note || '',
+      source: parsed.source || '',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      call_id: null,
+      error: null,
+    };
+    await core.mutate((d) => {
+      d.callbackJobs.push(job);
+    });
+    return core.sendJson(res, 202, {
+      ok: true,
+      scheduled: true,
+      job_id: job.id,
+      when: job.when,
+      phone: job.phone,
+    });
+  }
+
+  try {
+    const r = await providers.telephony.initiateCall(parsed.phone);
+    const summary = callback.summarizeCallResult(r.data);
+    return core.sendJson(res, 200, {
+      ok: true,
+      scheduled: false,
+      call_id: summary.call_id,
+      dograh: summary,
+      phone: parsed.phone,
+      name: parsed.name || undefined,
+      source: parsed.source || undefined,
+    });
+  } catch (e) {
+    if (e instanceof providers.ProviderError) {
+      return core.sendJson(res, e.status || 502, {
+        ok: false,
+        error: e.message,
+        code: e.code || 'provider_error',
+        detail: e.detail,
+      });
+    }
+    return core.sendJson(res, 502, { ok: false, error: String((e && e.message) || e), code: 'upstream' });
+  }
+}
+
+const CALLBACK_POLL_MS = 15000;
+let _callbackPollBusy = false;
+
+async function processDueCallbackJobs(nowMs = Date.now()) {
+  if (_callbackPollBusy) return;
+  _callbackPollBusy = true;
+  try {
+    const due = (core.db().callbackJobs || []).filter((job) => (
+      job.status === 'pending' && Date.parse(job.when) <= nowMs
+    ));
+    for (const job of due) {
+      try {
+        const r = await providers.telephony.initiateCall(job.phone);
+        const summary = callback.summarizeCallResult(r.data);
+        await core.mutate((d) => {
+          const row = d.callbackJobs.find((j) => j.id === job.id);
+          if (!row || row.status !== 'pending') return;
+          row.status = 'completed';
+          row.call_id = summary.call_id;
+          row.updatedAt = new Date().toISOString();
+          row.error = null;
+        });
+      } catch (e) {
+        const message = e instanceof providers.ProviderError
+          ? e.message
+          : String((e && e.message) || e);
+        await core.mutate((d) => {
+          const row = d.callbackJobs.find((j) => j.id === job.id);
+          if (!row || row.status !== 'pending') return;
+          row.status = 'failed';
+          row.error = message.slice(0, 300);
+          row.updatedAt = new Date().toISOString();
+        });
+      }
+    }
+  } finally {
+    _callbackPollBusy = false;
+  }
+}
+
+function startCallbackJobPoller() {
+  setInterval(() => {
+    processDueCallbackJobs().catch((err) => {
+      console.error('  callback job poller:', err && err.message ? err.message : err);
+    });
+  }, CALLBACK_POLL_MS);
+}
+
 // GET /api/usage -> tenant scoped daily rows + totals, with a rough INR cost.
 function apiUsage(req, res, ctx) {
   const rows = core.db().usage
@@ -1194,6 +1306,9 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/auth/login') return apiLogin(req, res, body);
       if (route === '/api/auth/logout') return apiLogout(req, res);
       if (route === '/api/auth/impersonation/exit') return core.requireAuth(req, res, apiImpersonationExit, body);
+      if (route === '/api/callback' || route === '/api/outbound/callback') {
+        return apiOutboundCallback(req, res, body);
+      }
       if (route.startsWith('/api/public/demo/') && route.endsWith('/session')) {
         const token = decodeURIComponent(route.slice('/api/public/demo/'.length, -'/session'.length));
         if (token.includes('/') || !core.rateOk(`demo-start:${ip}`, 5, 5)) return core.sendJson(res, token.includes('/') ? 404 : 429, { error: token.includes('/') ? 'demo link not found' : 'too many demo starts, try again shortly', code: token.includes('/') ? 'not_found' : 'demo_rate' });
@@ -1356,6 +1471,7 @@ boot().then(() => {
     console.log(`  Console   : http://localhost:${PORT}/app.html`);
     if (DEMO_EMAIL) console.log(`  Test login: ${DEMO_EMAIL}`);
     console.log(`  Providers : deepgram ${flag('stt', 'deepgram')}  groq ${flag('llm', 'groq')}  rumik ${flag('tts', 'rumik')}  vobiz ${flag('telephony', 'vobiz')}\n`);
+    startCallbackJobPoller();
   });
 }).catch((e) => {
   console.error('  boot failed:', e.message);

@@ -12,7 +12,7 @@ test('schema migration is additive and normalizes roles', () => {
   assert.equal(migrated.users[0].role, 'member');
   assert.equal(migrated.tenants[0].status, 'active');
   assert.equal(migrated.tenants[0].privacyMode, 'standard');
-  for (const key of ['wallets', 'ledger', 'paymentIntents', 'paymentEvents', 'supportTickets', 'supportMessages', 'auditEvents', 'presets', 'byonConnections', 'hvacJobs', 'hvacSettings', 'demoLinks']) assert.ok(Array.isArray(migrated[key]));
+  for (const key of ['wallets', 'ledger', 'paymentIntents', 'paymentEvents', 'supportTickets', 'supportMessages', 'auditEvents', 'presets', 'byonConnections', 'hvacJobs', 'hvacSettings', 'demoLinks', 'callbackJobs']) assert.ok(Array.isArray(migrated[key]));
 });
 
 test('password hashes verify and role hierarchy is enforced', () => {
