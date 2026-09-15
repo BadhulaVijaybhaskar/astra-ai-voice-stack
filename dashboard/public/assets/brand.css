@@ -8,21 +8,21 @@
    ========================================================================== */
 
 :root {
-  /* ---- Canvas & surfaces, deep professional navy / near-black ---- */
-  --bg:        #0A0A0A;
-  --bg-2:      #111318;
-  --panel:     #171717;
-  --panel-2:   #1A1D24;
-  --raised:    #1D293D;
-  --line:      rgba(255,255,255,0.08);
-  --line-2:    rgba(255,255,255,0.14);
-  --line-strong: rgba(255,255,255,0.24);
+  /* ---- Canvas & surfaces, deep charcoal with layered elevation ---- */
+  --bg:        #08090C;
+  --bg-2:      #0D0F14;
+  --panel:     #12141A;
+  --panel-2:   #161922;
+  --raised:    #1A1E28;
+  --line:      rgba(255,255,255,0.06);
+  --line-2:    rgba(255,255,255,0.10);
+  --line-strong: rgba(255,255,255,0.18);
 
   /* ---- Text, clean whites and slate ---- */
-  --ink:       #EDEDED;
-  --ink-soft:  #D1D5DC;
-  --ink-dim:   #A1A1A1;
-  --ink-faint: #6B7280;
+  --ink:       #F4F4F5;
+  --ink-soft:  #D4D4D8;
+  --ink-dim:   #A1A1AA;
+  --ink-faint: #71717A;
 
   /* ---- Light-canvas text (marketing lockups, print-like surfaces) ---- */
   --ink-dark:  #111827;
@@ -33,12 +33,12 @@
   --a-cyan:    #06B6D4;
   --a-sky:     #22D3EE;
   --a-indigo:  #6B21A8;
-  --a-violet:  #581C87;
+  --a-violet:  #642C8F;
   --accent:    #6B21A8;
   --accent-2:  #06B6D4;
   --accent-ink:#FFFFFF;
-  --grad-volt: linear-gradient(115deg, #6B21A8 0%, #7C3AED 42%, #06B6D4 100%);
-  --grad-volt-soft: linear-gradient(115deg, rgba(107,33,168,0.28), rgba(6,182,212,0.12));
+  --grad-volt: linear-gradient(115deg, #6B21A8 0%, #642C8F 28%, #7C3AED 55%, #06B6D4 100%);
+  --grad-volt-soft: linear-gradient(115deg, rgba(107,33,168,0.22), rgba(6,182,212,0.10));
 
   /* ---- Value/economics signal (kept as --gold alias for existing class names) ---- */
   --gold:      #06B6D4;
@@ -49,21 +49,21 @@
   --warn:      #FBBF24;
   --bad:       #FB7185;
 
-  /* ---- Glow & shadow ---- */
-  --glow-accent: 0 0 0 1px rgba(107,33,168,0.40), 0 14px 34px -16px rgba(6,182,212,0.45);
-  --glow-soft:   0 0 60px -20px rgba(6,182,212,0.35);
-  --shadow-card: 0 1px 0 rgba(255,255,255,0.04) inset, 0 18px 46px -28px rgba(0,0,0,0.70);
-  --shadow-pop:  0 30px 80px -30px rgba(0,0,0,0.75);
+  /* ---- Glow & shadow (subtle depth, not neon wash) ---- */
+  --glow-accent: 0 0 0 1px rgba(107,33,168,0.35), 0 10px 28px -12px rgba(6,182,212,0.40);
+  --glow-soft:   0 0 48px -18px rgba(6,182,212,0.28);
+  --shadow-card: 0 1px 0 rgba(255,255,255,0.045) inset, 0 1px 2px rgba(0,0,0,0.24), 0 12px 32px -20px rgba(0,0,0,0.65);
+  --shadow-pop:  0 24px 64px -28px rgba(0,0,0,0.78);
 
-  /* ---- Type ---- */
-  --font: "SF Pro Rounded", "SF Pro Display", "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
-  --mono: "SF Mono", "JetBrains Mono", "Roboto Mono", ui-monospace, Menlo, Consolas, monospace;
+  /* ---- Type (geometric sans, rounded terminals like the wordmark) ---- */
+  --font: "Avenir Next", "Segoe UI Variable Text", "SF Pro Rounded", "SF Pro Display", "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 
-  /* ---- Radii (soft, modern, matching rounded wordmark) ---- */
-  --r-sm: 12px;
-  --r:    16px;
-  --r-lg: 22px;
-  --r-xl: 30px;
+  /* ---- Radii (soft but denser than marketing hero pills) ---- */
+  --r-sm: 8px;
+  --r:    12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
   --r-pill: 999px;
 
   /* ---- Motion ---- */
@@ -73,7 +73,8 @@
 
   /* ---- Layout ---- */
   --maxw: 1200px;
-  --gutter: clamp(20px, 5vw, 40px);
+  --gutter: clamp(20px, 4vw, 36px);
+  --side-w: 248px;
 }
 
 * { box-sizing: border-box; }
@@ -130,14 +131,13 @@ p { margin: 0; }
 
 /* ---- Buttons ---- */
 .btn {
-  --pad-y: 0.92em; --pad-x: 1.5em;
-  display: inline-flex; align-items: center; justify-content: center; gap: 0.55em;
+  --pad-y: 0.72em; --pad-x: 1.15em;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5em;
   padding: var(--pad-y) var(--pad-x);
-  border-radius: var(--r-pill);
-  font-weight: 560; font-size: 0.97rem; letter-spacing: -0.01em;
+  border-radius: var(--r);
+  font-weight: 560; font-size: 0.9rem; letter-spacing: -0.012em;
   border: 1px solid transparent; cursor: pointer;
-  transition: transform 0.25s var(--ease), box-shadow 0.3s var(--ease), background 0.3s, border-color 0.3s, color 0.3s;
-  will-change: transform;
+  transition: transform 0.2s var(--ease), box-shadow 0.25s var(--ease), background 0.25s, border-color 0.25s, color 0.25s;
   position: relative; isolation: isolate;
 }
 .btn:active { transform: translateY(1px) scale(0.99); }
@@ -146,27 +146,27 @@ p { margin: 0; }
   box-shadow: var(--glow-accent);
   font-weight: 600;
 }
-.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px rgba(107,33,168,0.50), 0 20px 44px -14px rgba(6,182,212,0.45); }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(107,33,168,0.45), 0 14px 32px -12px rgba(6,182,212,0.42); }
 .btn-ghost {
-  background: rgba(255,255,255,0.04); color: var(--ink);
-  border-color: var(--line-2); backdrop-filter: blur(8px);
+  background: rgba(255,255,255,0.03); color: var(--ink);
+  border-color: var(--line-2);
 }
-.btn-ghost:hover { background: rgba(255,255,255,0.08); border-color: rgba(6,182,212,.45); transform: translateY(-2px); }
+.btn-ghost:hover { background: rgba(255,255,255,0.06); border-color: rgba(6,182,212,0.40); transform: translateY(-1px); }
 .btn-quiet { background: transparent; color: var(--ink-soft); }
-.btn-quiet:hover { color: var(--ink); background: rgba(107,33,168,0.18); }
-.btn-lg { --pad-y: 1.08em; --pad-x: 1.9em; font-size: 1.03rem; }
-.btn-sm { --pad-y: 0.6em; --pad-x: 1.05em; font-size: 0.85rem; }
+.btn-quiet:hover { color: var(--ink); background: rgba(107,33,168,0.14); }
+.btn-lg { --pad-y: 0.88em; --pad-x: 1.45em; font-size: 0.97rem; }
+.btn-sm { --pad-y: 0.5em; --pad-x: 0.9em; font-size: 0.82rem; }
 .btn[disabled] { opacity: 0.5; pointer-events: none; }
 
-/* ---- Glass cards ---- */
+/* ---- Elevated panels ---- */
 .card {
-  background: linear-gradient(180deg, #1A1D24, #14161C);
+  background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent 48%), var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-card);
   position: relative;
 }
-.card-pad { padding: clamp(20px, 2.6vw, 34px); }
+.card-pad { padding: clamp(18px, 2.2vw, 26px); }
 .card-glow::before {
   content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px;
   background: var(--grad-volt); opacity: 0; transition: opacity 0.4s var(--ease);
@@ -212,12 +212,12 @@ p { margin: 0; }
 .atmos .glow {
   position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.5;
 }
-.atmos .g1 { width: 720px; height: 720px; top: -260px; left: 50%; transform: translateX(-50%);
-  background: radial-gradient(circle, rgba(107,33,168,0.35), transparent 62%); }
-.atmos .g2 { width: 560px; height: 560px; top: 40%; left: -180px;
-  background: radial-gradient(circle, rgba(29,41,61,0.55), transparent 65%); }
-.atmos .g3 { width: 620px; height: 620px; bottom: -260px; right: -160px;
-  background: radial-gradient(circle, rgba(6,182,212,0.18), transparent 65%); }
+.atmos .g1 { width: 640px; height: 640px; top: -280px; left: 42%; transform: translateX(-50%);
+  background: radial-gradient(circle, rgba(107,33,168,0.22), transparent 64%); }
+.atmos .g2 { width: 480px; height: 480px; top: 48%; left: -200px;
+  background: radial-gradient(circle, rgba(26,30,40,0.55), transparent 65%); }
+.atmos .g3 { width: 520px; height: 520px; bottom: -280px; right: -180px;
+  background: radial-gradient(circle, rgba(6,182,212,0.12), transparent 65%); }
 .grain::after {
   content: ""; position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0.04;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
