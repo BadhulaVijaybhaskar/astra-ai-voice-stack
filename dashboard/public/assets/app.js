@@ -40,6 +40,8 @@ const State = {
   providers: null,
   usage: null,
   telephony: null,
+  phoneNumbers: null,
+  availableNumbers: null,
   wallet: null,
   presets: [],
   agentTypes: [],
@@ -47,7 +49,7 @@ const State = {
   demoLinks: [],
   activeAgentId: null, // for Talk-to-it
   createDraft: null,   // { step, agentType, presetId } for deploy wizard
-  loaded: { agents: false, providers: false, usage: false, telephony: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false }
+  loaded: { agents: false, providers: false, usage: false, telephony: false, phoneNumbers: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false }
 };
 
 const VOICE_MODELS = ['mulberry', 'muga'];
@@ -271,10 +273,11 @@ function renderAuth() {
 }
 function resetData() {
   State.agents = []; State.providers = null; State.usage = null; State.telephony = null;
+  State.phoneNumbers = null; State.availableNumbers = null;
   State.wallet = null; State.presets = []; State.agentTypes = []; State.tickets = [];
   State.demoLinks = [];
   State.createDraft = null;
-  State.loaded = { agents: false, providers: false, usage: false, telephony: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false };
+  State.loaded = { agents: false, providers: false, usage: false, telephony: false, phoneNumbers: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false };
   State.activeAgentId = null;
 }
 
@@ -288,7 +291,7 @@ const ROUTES = [
   { id: 'studio', label: 'Voice Studio', icon: 'wave' },
   { id: 'demos', label: 'Demo links', icon: 'link', ownerOnly: true },
   { id: 'talk', label: 'Talk to it', icon: 'mic' },
-  { id: 'telephony', label: 'Telephony', icon: 'phone' },
+  { id: 'numbers', label: 'Phone Numbers', icon: 'phone' },
   { id: 'billing', label: 'Billing', icon: 'wallet' },
   { id: 'support', label: 'Support', icon: 'support' },
   { id: 'admin', label: 'Admin', icon: 'shield', adminOnly: true },
@@ -452,7 +455,7 @@ function onRoute() {
   view.appendChild(wrap);
   ({
     overview: viewOverview, agents: viewAgents, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
-    talk: viewTalk, telephony: viewTelephony, billing: viewBilling,
+    talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, billing: viewBilling,
     support: viewSupport, admin: viewAdmin, settings: viewSettings
   }[id] || viewOverview)(wrap);
 }
@@ -486,7 +489,7 @@ async function viewOverview(root) {
         el('button', { class: 'btn btn-ghost', onclick: () => goto('agents') }, 'Build an agent'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('studio') }, 'Open Voice Studio'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('talk') }, 'Talk to it'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('telephony') }, 'Telephony')
+        el('button', { class: 'btn btn-ghost', onclick: () => goto('numbers') }, 'Phone Numbers')
       ]),
       el('div', { class: 'qa-foot', id: 'provMini' }, 'Checking providers...')
     ])
@@ -2167,71 +2170,178 @@ function blobToBase64(blob) {
 }
 
 /* ===========================================================================
-   5. TELEPHONY
+   5. PHONE NUMBERS (Astra-first inventory + assign)
    =========================================================================== */
-async function viewTelephony(root) {
-  root.appendChild(viewHead('Telephony', 'Your VoBiz numbers and call routing, connected through Dograh. Outbound calls require an explicit confirmation.'));
+async function ensurePhoneNumbers(force) {
+  if (State.loaded.phoneNumbers && !force) {
+    return { numbers: State.phoneNumbers || [], available: State.availableNumbers || [] };
+  }
+  const [mine, avail, agentsRes] = await Promise.all([
+    api('/api/phone-numbers'),
+    api('/api/phone-numbers/available'),
+    State.loaded.agents ? Promise.resolve({ agents: State.agents }) : api('/api/agents'),
+  ]);
+  State.phoneNumbers = mine.numbers || [];
+  State.availableNumbers = avail.numbers || [];
+  State.agents = agentsRes.agents || State.agents || [];
+  State.loaded.agents = true;
+  State.loaded.phoneNumbers = true;
+  return { numbers: State.phoneNumbers, available: State.availableNumbers };
+}
 
-  const statusHost = el('div', { class: 'card card-pad', id: 'telStatus' }, skeleton('sk-line', 5));
+async function viewPhoneNumbers(root) {
+  root.appendChild(viewHead(
+    'Phone Numbers',
+    'Assign Astra numbers to your agents. Inbound and outbound stay under your control.'
+  ));
+
+  const assignedHost = el('div', { class: 'card card-pad', id: 'pnAssigned' }, skeleton('sk-line', 4));
+  const availableHost = el('div', { class: 'card card-pad', id: 'pnAvailable' }, skeleton('sk-line', 3));
   const dialHost = el('div', { class: 'card card-pad' }, dialForm());
-  root.appendChild(el('div', { class: 'tel-grid' }, [statusHost, dialHost]));
+  root.appendChild(el('div', { class: 'tel-grid' }, [assignedHost, availableHost]));
+  root.appendChild(el('div', { style: 'margin-top:18px' }, dialHost));
 
   try {
-    const s = await ensureTelephony(true);
-    paintTelephony(statusHost, s);
-    refreshDialNumbers(s);
+    const data = await ensurePhoneNumbers(true);
+    paintAssignedNumbers(assignedHost, data.numbers);
+    paintAvailableNumbers(availableHost, data.available);
   } catch (e) {
-    statusHost.innerHTML = '';
-    statusHost.appendChild(el('div', { class: 'muted' }, 'Could not reach VoBiz through Dograh. ' + esc(e.message)));
+    assignedHost.innerHTML = '';
+    assignedHost.appendChild(el('div', { class: 'muted' }, 'Could not load phone numbers. ' + esc(e.message)));
+    availableHost.innerHTML = '';
   }
 }
 
-function paintTelephony(host, s) {
+function paintAssignedNumbers(host, numbers) {
   host.innerHTML = '';
-  const connected = s.connected === true && s.provider === 'vobiz' && s.orchestrator === 'dograh';
-  const config = s.configuration || {};
-  const didList = Array.isArray(s.dids) ? s.dids : (s.did ? [{ number: s.did, status: 'active' }] : []);
-
   host.appendChild(el('div', { class: 'flex items-center justify-between', style: 'margin-bottom:14px' }, [
-    el('h3', { class: 't-h3' }, 'VoBiz via Dograh'),
+    el('h3', { class: 't-h3' }, 'Your numbers'),
     el('span', { class: 'pill' }, [
-      el('span', { class: 'dot' + (connected ? '' : ' bad') }),
-      connected ? 'connected' : 'unavailable'
+      el('span', { class: 'dot' }),
+      String((numbers || []).length) + ' assigned'
     ])
   ]));
 
-  if (didList.length) {
-    host.appendChild(el('div', { class: 'muted', style: 'font-size:.8rem;margin-bottom:8px' }, 'VoBiz numbers'));
-    didList.forEach((d) => {
-      const num = typeof d === 'string' ? d : (d.did_number || d.number || d.did || '');
-      const status = d.user_status_label || d.status || 'active';
-      const exp = d.expiry_date || d.expiry || d.expires || d.expiresAt;
-      const route = d.inboundWorkflowName || (d.inboundWorkflowId ? 'Workflow ' + d.inboundWorkflowId : 'No inbound workflow');
-      host.appendChild(el('div', { class: 'did-row' }, [
-        el('div', {}, [
-          el('div', { class: 'num' }, num),
-          el('div', { class: 'exp' }, exp ? 'Expires ' + exp : route)
-        ]),
-        el('span', { class: 'pill' }, [el('span', { class: 'dot' + (status !== 'active' ? ' warn' : '') }), status])
-      ]));
-    });
+  if (!numbers || !numbers.length) {
+    host.appendChild(el('div', { class: 'empty', style: 'padding:28px 12px' }, [
+      el('div', { class: 'ttl' }, 'No numbers assigned yet'),
+      el('p', {}, 'Pick a number from available inventory and assign it to an agent.')
+    ]));
+    return;
   }
 
-  host.appendChild(el('div', { class: 'divider', style: 'margin:14px 0' }));
-  host.appendChild(el('div', { class: 'status-line' }, [
-    el('span', { class: 'k' }, 'Configuration'),
-    el('span', { class: 'v' }, config.name || ('VoBiz config ' + (config.id || '')))
-  ]));
-  host.appendChild(el('div', { class: 'status-line' }, [
-    el('span', { class: 'k' }, 'Outbound workflow'),
-    el('span', { class: 'v' }, s.workflowId ? 'Workflow ' + s.workflowId : 'not configured')
-  ]));
-  if (s.dashboard) host.appendChild(el('div', { class: 'status-line' }, [
-    el('span', { class: 'k' }, 'Dograh'),
-    el('a', { class: 'v', href: s.dashboard, target: '_blank', rel: 'noopener', style: 'color:var(--accent)' }, 'Open console')
-  ]));
+  numbers.forEach((n) => {
+    const inbound = el('label', { class: 'streamtoggle pn-toggle' }, [
+      el('input', { type: 'checkbox', checked: n.inboundEnabled !== false ? 'checked' : null }),
+      document.createTextNode('Inbound')
+    ]);
+    const outbound = el('label', { class: 'streamtoggle pn-toggle' }, [
+      el('input', { type: 'checkbox', checked: n.outboundEnabled !== false ? 'checked' : null }),
+      document.createTextNode('Outbound')
+    ]);
+    inbound.querySelector('input').onchange = async (ev) => {
+      try {
+        await api('/api/phone-numbers/' + encodeURIComponent(n.id), {
+          method: 'PATCH', body: { inboundEnabled: ev.target.checked }
+        });
+        State.loaded.phoneNumbers = false;
+        toast('Inbound ' + (ev.target.checked ? 'enabled' : 'disabled') + '.', 'ok');
+      } catch (ex) {
+        ev.target.checked = !ev.target.checked;
+        toast(ex.message || 'Update failed.', 'err');
+      }
+    };
+    outbound.querySelector('input').onchange = async (ev) => {
+      try {
+        await api('/api/phone-numbers/' + encodeURIComponent(n.id), {
+          method: 'PATCH', body: { outboundEnabled: ev.target.checked }
+        });
+        State.loaded.phoneNumbers = false;
+        toast('Outbound ' + (ev.target.checked ? 'enabled' : 'disabled') + '.', 'ok');
+      } catch (ex) {
+        ev.target.checked = !ev.target.checked;
+        toast(ex.message || 'Update failed.', 'err');
+      }
+    };
 
-  host.appendChild(el('div', { class: 'inbound-note' }, 'Outbound calls are initiated by Dograh using the active VoBiz configuration. Inbound calls follow the workflow assigned to each VoBiz number.'));
+    const unassignBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Unassign');
+    unassignBtn.onclick = () => {
+      modal({
+        title: 'Unassign number',
+        body: el('p', {}, ['Release ', el('b', {}, n.e164), ' back to platform inventory?']),
+        confirmText: 'Unassign', confirmKind: 'danger',
+        onConfirm: async () => {
+          await api('/api/phone-numbers/' + encodeURIComponent(n.id) + '/unassign', { method: 'POST', body: {} });
+          State.loaded.phoneNumbers = false;
+          toast('Number unassigned.', 'ok');
+          goto('numbers');
+        }
+      });
+    };
+
+    host.appendChild(el('div', { class: 'did-row pn-row' }, [
+      el('div', {}, [
+        el('div', { class: 'num' }, n.e164),
+        el('div', { class: 'exp' }, (n.label || 'Astra number') + (n.assignedAgentName ? ' · ' + n.assignedAgentName : ''))
+      ]),
+      el('div', { class: 'pn-actions' }, [inbound, outbound, unassignBtn])
+    ]));
+  });
+}
+
+function paintAvailableNumbers(host, numbers) {
+  host.innerHTML = '';
+  host.appendChild(el('div', { class: 'flex items-center justify-between', style: 'margin-bottom:14px' }, [
+    el('h3', { class: 't-h3' }, 'Available to assign'),
+    el('span', { class: 'pill' }, [
+      el('span', { class: 'dot' }),
+      'test inventory'
+    ])
+  ]));
+  host.appendChild(el('p', { class: 'muted', style: 'font-size:.84rem;margin:0 0 12px;line-height:1.5' },
+    'Platform-owned numbers for testing. Purchase is not available yet.'));
+
+  if (!numbers || !numbers.length) {
+    host.appendChild(el('div', { class: 'empty', style: 'padding:28px 12px' }, [
+      el('div', { class: 'ttl' }, 'No inventory right now'),
+      el('p', {}, 'All test numbers are assigned. Unassign one to free it for another agent.')
+    ]));
+    return;
+  }
+
+  numbers.forEach((n) => {
+    const agentSel = el('select', { class: 'select' }, [
+      el('option', { value: '' }, 'Select agent')
+    ].concat((State.agents || []).map((a) => el('option', { value: a.id }, a.name))));
+    const assignBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Assign');
+    assignBtn.onclick = async () => {
+      const agentId = agentSel.value;
+      if (!agentId) { toast('Choose an agent first.', 'err'); return; }
+      assignBtn.disabled = true;
+      try {
+        await api('/api/phone-numbers/' + encodeURIComponent(n.id) + '/assign', {
+          method: 'POST',
+          body: { agentId, inboundEnabled: true, outboundEnabled: true }
+        });
+        State.loaded.phoneNumbers = false;
+        State.loaded.agents = false;
+        toast('Assigned ' + n.e164 + ' to agent.', 'ok');
+        goto('numbers');
+      } catch (ex) {
+        toast(ex.message || 'Assign failed.', 'err');
+      } finally {
+        assignBtn.disabled = false;
+      }
+    };
+
+    host.appendChild(el('div', { class: 'did-row pn-row' }, [
+      el('div', {}, [
+        el('div', { class: 'num' }, n.e164),
+        el('div', { class: 'exp' }, n.label || 'Available Astra number')
+      ]),
+      el('div', { class: 'pn-assign' }, [agentSel, assignBtn])
+    ]));
+  });
 }
 
 function dialForm() {
@@ -2240,12 +2350,12 @@ function dialForm() {
   const btn = el('button', { class: 'btn btn-primary' }, 'Place call');
   const form = el('form', { class: 'dial-form', onsubmit: (e) => { e.preventDefault(); onDial(numI, btn); } }, [
     el('h3', { class: 't-h3' }, 'Outbound call'),
-    el('p', { class: 'muted', style: 'font-size:.85rem' }, 'Enter a 10 digit Indian mobile number. Dograh dials it through your VoBiz number.'),
+    el('p', { class: 'muted', style: 'font-size:.85rem' }, 'Enter a 10 digit Indian mobile number. Astra dials it through your assigned number.'),
     el('div', { class: 'field' }, [
       el('label', {}, 'Number'),
       el('div', { class: 'dial-input-row' }, [el('span', { class: 'prefix' }, '+91'), numI])
     ]),
-    el('div', { class: 'cost-warn' }, ['This places a ', el('b', {}, 'real paid VoBiz call'), ' and charges your telephony account.']),
+    el('div', { class: 'cost-warn' }, ['This places a ', el('b', {}, 'real paid call'), ' on your telephony account.']),
     btn
   ]);
   return form;
@@ -2261,16 +2371,16 @@ function onDial(numI, btn) {
       el('p', {}, ['You are about to place a real outbound call to ', el('b', {}, '+91 ' + num), '.']),
       el('div', { class: 'danger-note' }, [
         el('b', {}, 'This is a live, paid call. '),
-        document.createTextNode('Dograh will initiate it through your VoBiz configuration and charge your telephony account. Only continue if you intend to ring this number now.')
+        document.createTextNode('Only continue if you intend to ring this number now.')
       ])
     ]),
     confirmText: 'Yes, place the call', confirmKind: 'danger',
     onConfirm: async () => {
       btn.disabled = true; btn.textContent = 'Dialing...';
       try {
-        const res = await api('/api/telephony/dial', { method: 'POST', body: { number: num, confirm: true } });
+        await api('/api/telephony/dial', { method: 'POST', body: { number: num, confirm: true } });
         toast('Call placed to +91 ' + num + '.', 'ok');
-        State.loaded.telephony = false; // refresh wallet next view
+        State.loaded.telephony = false;
       } catch (ex) {
         if (ex.status === 400 && ex.data && ex.data.code === 'needs_confirm') toast('Confirmation required. Please retry.', 'err');
         else toast(ex.message || 'Dial failed.', 'err');

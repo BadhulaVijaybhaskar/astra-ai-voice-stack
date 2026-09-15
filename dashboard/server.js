@@ -24,7 +24,11 @@ const providers = require('./lib/providers');
 const payu = require('./lib/payu');
 const demoLinks = require('./lib/demo-links');
 const callback = require('./lib/callback');
+const phoneNumbers = require('./lib/phone-numbers');
+const { createDefaultTelephonyProvider, TelephonyProviderError } = require('./lib/telephony-provider');
 const { AGENT_TYPES, seedPresets, publicPreset, applyPresetToAgent, normalizeAgentType } = require('./lib/agent-types');
+
+const telephonyProvider = createDefaultTelephonyProvider(core);
 
 const PORT = parseInt(process.env.PORT || '8787', 10);
 const DEFAULT_PROVIDERS = Object.freeze({
@@ -109,6 +113,7 @@ async function boot() {
   const existing = core.db();
   await core.mutate((d) => {
     seedPresets(d);
+    phoneNumbers.seedPlatformInventory(d);
   });
 
   const hasDemo = DEMO_EMAIL && existing.users.some((u) => u.email === DEMO_EMAIL);
@@ -737,13 +742,128 @@ async function apiTelephonyDial(req, res, ctx) {
     }
   }
   try {
-    const r = await providers.telephony.dial(b.number, { workflowId });
+    const r = await telephonyProvider.createOutboundCall(ctx.tenant.id, b.number, { workflowId });
     // Count the dial attempt against today's usage.
     bumpUsage(ctx.tenant.id, 'calls', 1).catch(() => {});
     core.sendJson(res, r.status, r.data);
   } catch (e) {
     handleProviderError(res, e);
   }
+}
+
+/* ==========================================================================
+   Phone Numbers control plane (Astra-first resources, tenant scoped)
+   ========================================================================== */
+
+function agentsMapForTenant(tenantId) {
+  return new Map(
+    core.db().agents.filter((a) => a.tenantId === tenantId).map((a) => [a.id, a]),
+  );
+}
+
+function apiPhoneNumbersList(req, res, ctx) {
+  const agentsById = agentsMapForTenant(ctx.tenant.id);
+  const numbers = phoneNumbers.listTenantNumbers(core.db(), ctx.tenant.id)
+    .map((n) => phoneNumbers.publicPhoneNumber(n, agentsById));
+  core.sendJson(res, 200, { numbers });
+}
+
+async function apiPhoneNumbersAvailable(req, res, ctx) {
+  try {
+    const numbers = await telephonyProvider.listInventory(ctx.tenant.id);
+    core.sendJson(res, 200, { numbers });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiPhoneNumbersAssign(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const agentId = String(b.agentId || '').trim();
+  if (!agentId) {
+    return core.sendJson(res, 422, { error: 'agentId is required', code: 'validation' });
+  }
+  try {
+    const number = await telephonyProvider.assignNumber(ctx.params.id, ctx.tenant.id, {
+      agentId,
+      inboundEnabled: b.inboundEnabled,
+      outboundEnabled: b.outboundEnabled,
+    });
+    await core.mutate((d) => {
+      addAudit(d, ctx, 'phone_number.assigned', 'phone_number', number.id, {
+        agentId, e164: number.e164,
+      });
+    });
+    core.sendJson(res, 200, { number });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiPhoneNumbersUnassign(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  try {
+    const number = await telephonyProvider.unassignNumber(ctx.params.id, ctx.tenant.id);
+    await core.mutate((d) => {
+      addAudit(d, ctx, 'phone_number.unassigned', 'phone_number', number.id, {
+        e164: number.e164,
+      });
+    });
+    core.sendJson(res, 200, { number });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiPhoneNumbersPatch(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  let result;
+  try {
+    await core.mutate((d) => {
+      result = phoneNumbers.patchNumber(d, {
+        numberId: ctx.params.id,
+        tenantId: ctx.tenant.id,
+        inboundEnabled: b.inboundEnabled,
+        outboundEnabled: b.outboundEnabled,
+      });
+      if (result.ok) {
+        addAudit(d, ctx, 'phone_number.updated', 'phone_number', result.number.id, {
+          inboundEnabled: result.number.inboundEnabled,
+          outboundEnabled: result.number.outboundEnabled,
+        });
+      }
+    });
+  } catch (e) {
+    return handleProviderError(res, e);
+  }
+  if (!result.ok) {
+    return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  }
+  const agentsById = agentsMapForTenant(ctx.tenant.id);
+  core.sendJson(res, 200, { number: phoneNumbers.publicPhoneNumber(result.number, agentsById) });
+}
+
+async function apiPhoneNumbersPurchase(req, res) {
+  try {
+    await telephonyProvider.purchaseNumber();
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+function matchPhoneNumberRoute(route) {
+  if (route === '/api/phone-numbers') return { action: 'list' };
+  if (route === '/api/phone-numbers/available') return { action: 'available' };
+  if (route === '/api/phone-numbers/purchase') return { action: 'purchase' };
+  const assign = route.match(/^\/api\/phone-numbers\/([^/]+)\/assign$/);
+  if (assign) return { action: 'assign', id: decodeURIComponent(assign[1]) };
+  const unassign = route.match(/^\/api\/phone-numbers\/([^/]+)\/unassign$/);
+  if (unassign) return { action: 'unassign', id: decodeURIComponent(unassign[1]) };
+  const one = route.match(/^\/api\/phone-numbers\/([^/]+)$/);
+  if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
+  return null;
 }
 
 // POST /api/callback (alias /api/outbound/callback). Shared-secret outbound trigger.
@@ -1181,7 +1301,7 @@ function apiHealth(req, res) {
    Map a ProviderError (or anything) to a clean JSON HTTP response.
    ========================================================================== */
 function handleProviderError(res, e) {
-  if (e instanceof providers.ProviderError) {
+  if (e instanceof providers.ProviderError || e instanceof TelephonyProviderError) {
     return core.sendJson(res, e.status || 502, {
       error: e.message,
       code: e.code || 'provider_error',
@@ -1221,6 +1341,12 @@ const server = http.createServer(async (req, res) => {
 
       // ---- Authed GET routes ----
       if (req.method === 'GET') {
+        const pnGet = matchPhoneNumberRoute(route);
+        if (pnGet) {
+          if (pnGet.action === 'list') return core.requireAuth(req, res, apiPhoneNumbersList);
+          if (pnGet.action === 'available') return core.requireAuth(req, res, apiPhoneNumbersAvailable);
+          return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+        }
         if (route === '/api/me') return core.requireAuth(req, res, apiMe);
         if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsList);
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);
@@ -1246,6 +1372,21 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/hvac/event-types') return core.requireAuth(req, res, apiHvacEventTypes);
         if (route === '/api/hvac/slots') return core.requireAuth(req, res, apiHvacSlots);
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+      }
+
+      // ---- PATCH phone number toggles ----
+      if (req.method === 'PATCH') {
+        const pnPatch = matchPhoneNumberRoute(route);
+        if (pnPatch && pnPatch.action === 'one') {
+          let body;
+          try { body = await core.readBody(req); }
+          catch (e) {
+            const tooBig = /too large/.test(String(e.message));
+            return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersPatch(rq, rs, { ...ctx, params: { id: pnPatch.id } }), body);
+        }
+        return core.sendJson(res, 405, { error: 'method not allowed', code: 'method' });
       }
 
       if (req.method !== 'POST') {
@@ -1278,6 +1419,19 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Authed POST routes (tenant scoped through requireAuth).
+      const pnPost = matchPhoneNumberRoute(route);
+      if (pnPost) {
+        if (pnPost.action === 'assign') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersAssign(rq, rs, { ...ctx, params: { id: pnPost.id } }), body);
+        }
+        if (pnPost.action === 'unassign') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersUnassign(rq, rs, { ...ctx, params: { id: pnPost.id } }), body);
+        }
+        if (pnPost.action === 'purchase') {
+          return core.requireAuth(req, res, apiPhoneNumbersPurchase, body);
+        }
+        return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+      }
       if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsCreate, body);
       if (route === '/api/agents/update') return core.requireAuth(req, res, apiAgentsUpdate, body);
       if (route === '/api/agents/delete') return core.requireAuth(req, res, apiAgentsDelete, body);
