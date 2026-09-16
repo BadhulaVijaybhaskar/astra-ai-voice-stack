@@ -30,6 +30,8 @@ const { AGENT_TYPES, seedPresets, publicPreset, applyPresetToAgent, normalizeAge
 const org = require('./lib/org');
 const knowledge = require('./lib/knowledge');
 const integrations = require('./lib/integrations');
+const campaigns = require('./lib/campaigns');
+const analytics = require('./lib/analytics');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
 
@@ -1386,6 +1388,76 @@ async function apiIntegrationsLeadCreated(req, res, ctx) {
   core.sendJson(res, 202, { ok: true, queued, lead, message: 'lead.created queued to matching webhooks (stub delivery).' });
 }
 
+/* ==========================================================================
+   Campaigns + Analytics (Sprint 5)
+   ========================================================================== */
+
+function apiCampaignsList(req, res, ctx) {
+  core.sendJson(res, 200, { campaigns: campaigns.listCampaigns(core.db(), ctx.tenant.id) });
+}
+
+async function apiCampaignsCreate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = campaigns.createCampaign(d, ctx.tenant.id, ctx.body || {}, ctx.user.id);
+    if (result.ok) addAudit(d, ctx, 'campaign.created', 'campaign', result.campaign.id, { name: result.campaign.name });
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 201, { campaign: campaigns.publicCampaign(result.campaign, campaigns.countLeads(core.db(), result.campaign.id)) });
+}
+
+async function apiCampaignsAddLeads(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const id = String(b.campaignId || b.id || '');
+  let result;
+  await core.mutate((d) => {
+    result = campaigns.addLeads(d, ctx.tenant.id, id, b.leads != null ? b.leads : b.text);
+    if (result.ok) addAudit(d, ctx, 'campaign.leads.added', 'campaign', id, { added: result.added });
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result);
+}
+
+async function apiCampaignsStatus(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const id = String(b.campaignId || b.id || '');
+  let result;
+  await core.mutate((d) => {
+    result = campaigns.setCampaignStatus(d, ctx.tenant.id, id, String(b.status || ''));
+    if (result.ok) addAudit(d, ctx, 'campaign.status', 'campaign', id, { status: result.campaign.status });
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { campaign: campaigns.publicCampaign(result.campaign, campaigns.countLeads(core.db(), result.campaign.id)) });
+}
+
+async function apiCampaignsEnqueue(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const id = String(b.campaignId || b.id || '');
+  let result;
+  await core.mutate((d) => {
+    result = campaigns.enqueueCampaign(d, ctx.tenant.id, id, { confirm: b.confirm === true });
+    if (result.ok) addAudit(d, ctx, 'campaign.enqueued', 'campaign', id, { enqueued: result.enqueued, confirm: true });
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result);
+}
+
+function apiCampaignsLeads(req, res, ctx) {
+  const url = new URL(req.url, 'http://localhost');
+  const id = String(url.searchParams.get('campaignId') || '');
+  const result = campaigns.listLeads(core.db(), ctx.tenant.id, id);
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result);
+}
+
+function apiAnalytics(req, res, ctx) {
+  core.sendJson(res, 200, { analytics: analytics.buildDashboard(core.db(), ctx.tenant.id) });
+}
+
 async function apiMemberRole(req, res, ctx) {
   const b = ctx.body || {};
   const role = String(b.role || '');
@@ -1630,6 +1702,9 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/knowledge') return core.requireAuth(req, res, apiKnowledgeList);
         if (route === '/api/knowledge/retrieve') return core.requireAuth(req, res, apiKnowledgeRetrieve);
         if (route === '/api/integrations') return core.requireAuth(req, res, apiIntegrationsList);
+        if (route === '/api/campaigns') return core.requireAuth(req, res, apiCampaignsList);
+        if (route === '/api/campaigns/leads') return core.requireAuth(req, res, apiCampaignsLeads);
+        if (route === '/api/analytics') return core.requireAuth(req, res, apiAnalytics);
         if (route === '/api/hvac/desk') return core.requireAuth(req, res, apiHvacDesk);
         if (route === '/api/hvac/event-types') return core.requireAuth(req, res, apiHvacEventTypes);
         if (route === '/api/hvac/slots') return core.requireAuth(req, res, apiHvacSlots);
@@ -1721,6 +1796,10 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/integrations/webhooks/update') return core.requireRole(req, res, 'owner', apiIntegrationsWebhookUpdate, body);
       if (route === '/api/integrations/webhooks/delete') return core.requireRole(req, res, 'owner', apiIntegrationsWebhookDelete, body);
       if (route === '/api/integrations/lead-created') return core.requireAuth(req, res, apiIntegrationsLeadCreated, body);
+      if (route === '/api/campaigns') return core.requireAuth(req, res, apiCampaignsCreate, body);
+      if (route === '/api/campaigns/leads') return core.requireAuth(req, res, apiCampaignsAddLeads, body);
+      if (route === '/api/campaigns/status') return core.requireAuth(req, res, apiCampaignsStatus, body);
+      if (route === '/api/campaigns/enqueue') return core.requireAuth(req, res, apiCampaignsEnqueue, body);
       if (route === '/api/byon') return core.requireRole(req, res, 'owner', apiByonSave, body);
       if (route === '/api/privacy') return core.requireRole(req, res, 'owner', apiPrivacyMode, body);
       if (route === '/api/members/role') return core.requireRole(req, res, 'owner', apiMemberRole, body);

@@ -295,6 +295,8 @@ const ROUTES = [
   { id: 'calls', label: 'Calls', icon: 'calls' },
   { id: 'knowledge', label: 'Knowledge', icon: 'book' },
   { id: 'integrations', label: 'Integrations', icon: 'plug' },
+  { id: 'campaigns', label: 'Campaigns', icon: 'megaphone' },
+  { id: 'analytics', label: 'Analytics', icon: 'chart' },
   { id: 'billing', label: 'Billing', icon: 'wallet' },
   { id: 'support', label: 'Support', icon: 'support' },
   { id: 'admin', label: 'Admin', icon: 'shield', adminOnly: true },
@@ -311,6 +313,8 @@ function navIcon(name) {
     calls: '<path d="M4 5h10v10H4z"/><path d="M8 15v4l4-2 4 2v-4"/><path d="M10 8h2M10 11h4"/>',
     book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 5.5V21.5"/><path d="M8 7h8M8 11h6"/>',
     plug: '<path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0V8z"/><path d="M12 16v5"/>',
+    megaphone: '<path d="M4 10v4l8 3V7L4 10z"/><path d="M12 8.5c2 .8 4 2 6 2.5v2c-2 .5-4 1.7-6 2.5"/><path d="M7 14.5v3.2l2 .8"/>',
+    chart: '<path d="M4 19h16"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-6"/>',
     gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M21.5 12h-2.6M5.1 12H2.5M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3 5.5 5.5"/>',
     template: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>',
     wallet: '<path d="M4 6.5h14a2 2 0 0 1 2 2v9H4a2 2 0 0 1-2-2v-11a2 2 0 0 0 2 2z"/><path d="M15 11h7v4h-7a2 2 0 0 1 0-4z"/>',
@@ -462,7 +466,7 @@ function onRoute() {
   ({
     overview: viewOverview, agents: viewAgents, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
     talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, calls: viewCalls,
-    knowledge: viewKnowledge, integrations: viewIntegrations, billing: viewBilling,
+    knowledge: viewKnowledge, integrations: viewIntegrations, campaigns: viewCampaigns, analytics: viewAnalytics, billing: viewBilling,
     support: viewSupport, admin: viewAdmin, settings: viewSettings
   }[id] || viewOverview)(wrap);
 }
@@ -2740,6 +2744,106 @@ function createFromPreset(preset) {
     agentType: preset.agentType || 'custom',
     presetId: preset.id,
   });
+}
+
+async function viewCampaigns(root) {
+  root.appendChild(viewHead('Campaigns', 'Outbound lead lists with rate limits. Enqueue requires an explicit confirm flag. No accidental mass dial.'));
+  await ensureAgents();
+  const name = el('input', { class: 'input', placeholder: 'March callbacks' });
+  const agent = el('select', { class: 'select' }, [el('option', { value: '' }, 'No agent linked')].concat((State.agents || []).map((a) => el('option', { value: a.id }, a.name))));
+  const leads = el('textarea', { class: 'input textarea', placeholder: '+9198XXXXXXXX, Name\n+9199XXXXXXXX, Name' });
+  const list = el('div', { class: 'ticket-list' }, skeleton('sk-card', 2));
+  const create = el('button', { class: 'btn btn-primary' }, 'Create campaign');
+  create.onclick = async () => {
+    create.disabled = true;
+    try {
+      const out = await api('/api/campaigns', { method: 'POST', body: { name: name.value.trim(), agentId: agent.value || null } });
+      if (leads.value.trim()) {
+        await api('/api/campaigns/leads', { method: 'POST', body: { campaignId: out.campaign.id, text: leads.value } });
+      }
+      name.value = ''; leads.value = ''; toast('Campaign created.', 'ok'); await loadCampaigns(list);
+    } catch (e) { toast(e.message, 'err'); } finally { create.disabled = false; }
+  };
+  root.appendChild(el('div', { class: 'support-layout' }, [
+    el('section', { class: 'card card-pad support-compose' }, [
+      el('h3', { class: 't-h3' }, 'New campaign'),
+      field('Name', name), field('Outbound agent', agent), field('Lead list (phone, name)', leads), create
+    ]),
+    list
+  ]));
+  await loadCampaigns(list);
+}
+
+async function loadCampaigns(host) {
+  try {
+    const out = await api('/api/campaigns');
+    host.innerHTML = '';
+    (out.campaigns || []).forEach((c) => {
+      const pause = el('button', { class: 'btn btn-ghost' }, c.status === 'paused' ? 'Resume' : 'Pause');
+      pause.onclick = async () => {
+        try {
+          await api('/api/campaigns/status', { method: 'POST', body: { campaignId: c.id, status: c.status === 'paused' ? 'running' : 'paused' } });
+          await loadCampaigns(host);
+        } catch (e) { toast(e.message, 'err'); }
+      };
+      const enqueue = el('button', { class: 'btn btn-primary' }, 'Enqueue batch');
+      enqueue.onclick = () => {
+        modal({
+          title: 'Confirm outbound enqueue',
+          body: el('div', {}, [
+            el('p', {}, 'This queues up to ' + (c.ratePerMinute || 10) + ' dials for "' + c.name + '". Live mass dial is stubbed in V1, but confirm is still required.')
+          ]),
+          confirmText: 'Confirm enqueue',
+          onConfirm: async () => {
+            const res = await api('/api/campaigns/enqueue', { method: 'POST', body: { campaignId: c.id, confirm: true } });
+            toast('Enqueued ' + (res.enqueued || 0) + ' lead(s).', 'ok');
+            await loadCampaigns(host);
+          }
+        });
+      };
+      host.appendChild(el('article', { class: 'card ticket-card' }, [
+        el('div', { class: 'flex items-center justify-between gap-2' }, [el('h3', { class: 't-h3' }, c.name), el('span', { class: 'pill' }, c.status)]),
+        el('p', { class: 'muted' }, (c.leadCount || 0) + ' leads · ' + (c.dialedCount || 0) + ' dialed · rate ' + (c.ratePerMinute || 10) + '/min'),
+        el('div', { class: 'flex gap-2' }, [enqueue, pause])
+      ]));
+    });
+    if (!(out.campaigns || []).length) host.appendChild(el('div', { class: 'card card-pad muted' }, 'No campaigns yet.'));
+  } catch (e) { host.innerHTML = ''; host.appendChild(el('div', { class: 'card card-pad muted' }, e.message)); }
+}
+
+async function viewAnalytics(root) {
+  root.appendChild(viewHead('Analytics', 'Call outcomes, direction, agent mix, and conversion-ish metrics from extracted data.'));
+  const stats = el('div', { class: 'grid grid-3' }, skeleton('sk-stat', 4));
+  const tables = el('div', { class: 'grid grid-12', style: 'margin-top:14px' });
+  root.appendChild(stats);
+  root.appendChild(tables);
+  try {
+    const out = await api('/api/analytics');
+    const a = out.analytics || {};
+    const calls = a.calls || {};
+    const totals = calls.totals || {};
+    stats.innerHTML = '';
+    [
+      ['Calls', totals.calls || 0, 'Tenant scoped'],
+      ['Converted', totals.converted || 0, (totals.conversionRatePct || 0) + '% rate'],
+      ['Avg duration', (totals.avgDurationSec || 0) + 's', 'Completed samples'],
+      ['Campaign leads', (a.campaigns && a.campaigns.leads) || 0, String((a.campaigns && a.campaigns.campaigns) || 0) + ' campaigns']
+    ].forEach((row) => stats.appendChild(statCard(row[0], String(row[1]), row[2])));
+    tables.innerHTML = '';
+    function tableCard(title, map) {
+      const card = el('section', { class: 'card card-pad' }, [el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, title)]);
+      const entries = Object.entries(map || {});
+      if (!entries.length) card.appendChild(el('div', { class: 'muted' }, 'No data yet.'));
+      entries.sort((x, y) => y[1] - x[1]).forEach(([k, v]) => {
+        card.appendChild(el('div', { class: 'ledger-row' }, [el('div', {}, k), el('b', {}, String(v))]));
+      });
+      return card;
+    }
+    tables.appendChild(tableCard('By outcome', calls.byOutcome));
+    tables.appendChild(tableCard('By direction', calls.byDirection));
+    tables.appendChild(tableCard('By agent', calls.byAgent));
+    tables.appendChild(tableCard('Campaign status', (a.campaigns && a.campaigns.byStatus) || {}));
+  } catch (e) { stats.innerHTML = ''; stats.appendChild(el('div', { class: 'card card-pad muted' }, e.message)); }
 }
 
 async function viewBilling(root) {

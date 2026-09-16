@@ -110,6 +110,14 @@ See `docs/CALLS.md` for sync candidates, field notes, and deferred items.
 
 Schema version 6 adds `knowledgeEntries`, `integrationWebhooks`, `campaigns`, and `campaignLeads`.
 
+## Campaigns and Analytics (Sprint 5)
+
+- `GET /api/campaigns` lists tenant campaigns with lead counts.
+- `POST /api/campaigns` creates a draft campaign linked to an optional agent.
+- `POST /api/campaigns/leads` uploads/pastes leads (`phone`, `name`, `meta`).
+- `POST /api/campaigns/enqueue` requires `confirm:true` and rate-limits each batch.
+- `GET /api/analytics` returns call and campaign aggregates for the tenant.
+
 ## Persistence collections
 
 Schema version 6 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, and `campaignLeads`. Startup migration is additive. Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
