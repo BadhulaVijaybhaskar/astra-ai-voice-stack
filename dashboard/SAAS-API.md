@@ -98,9 +98,21 @@ Calls are first-class Astra resources. Customers never see Dograh or VoBiz brand
 
 See `docs/CALLS.md` for sync candidates, field notes, and deferred items.
 
+## Knowledge and Integrations (Sprint 4)
+
+- `GET /api/knowledge` returns tenant knowledge entries.
+- `POST /api/knowledge` creates `{title,content|sourceUrl,status,tags?}`.
+- `POST /api/knowledge/update` and `/api/knowledge/delete` mutate by id.
+- `GET /api/knowledge/retrieve?q=` returns keyword retrieval hits for published entries.
+- `GET /api/integrations` returns webhooks (secretConfigured only), CRM placeholders, and supported events.
+- `POST /api/integrations/webhooks` owner required. Returns `secretOnce` once.
+- `POST /api/integrations/lead-created` queues a stub `lead.created` delivery.
+
+Schema version 6 adds `knowledgeEntries`, `integrationWebhooks`, `campaigns`, and `campaignLeads`.
+
 ## Persistence collections
 
-Schema version 5 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, and `calls`. Startup migration is additive. Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
+Schema version 6 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, and `campaignLeads`. Startup migration is additive. Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
 
 The JSON store remains suitable for a single-process demo. Production must move these contracts to transactional PostgreSQL before accepting money. PayU success redirects must never credit a wallet. Only a verified, idempotent server callback may convert a payment intent into a ledger credit.
 

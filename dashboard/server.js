@@ -28,6 +28,8 @@ const phoneNumbers = require('./lib/phone-numbers');
 const { createDefaultTelephonyProvider, TelephonyProviderError } = require('./lib/telephony-provider');
 const { AGENT_TYPES, seedPresets, publicPreset, applyPresetToAgent, normalizeAgentType } = require('./lib/agent-types');
 const org = require('./lib/org');
+const knowledge = require('./lib/knowledge');
+const integrations = require('./lib/integrations');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
 
@@ -1254,6 +1256,136 @@ function apiAdminProviderHealth(req, res) {
   core.sendJson(res, 200, { providers: health });
 }
 
+/* ==========================================================================
+   Knowledge Base + Integrations (Sprint 4)
+   ========================================================================== */
+
+function apiKnowledgeList(req, res, ctx) {
+  const entries = knowledge.listTenantEntries(core.db(), ctx.tenant.id).map(knowledge.publicKnowledgeEntry);
+  core.sendJson(res, 200, { entries });
+}
+
+async function apiKnowledgeCreate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = knowledge.createEntry(d, ctx.tenant.id, ctx.body || {}, ctx.user.id);
+    if (result.ok) addAudit(d, ctx, 'knowledge.created', 'knowledge_entry', result.entry.id, { title: result.entry.title });
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 201, { entry: knowledge.publicKnowledgeEntry(result.entry) });
+}
+
+async function apiKnowledgeUpdate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const id = String((ctx.body && ctx.body.id) || ctx.params && ctx.params.id || '');
+  let result;
+  await core.mutate((d) => {
+    result = knowledge.updateEntry(d, ctx.tenant.id, id, ctx.body || {});
+    if (result.ok) addAudit(d, ctx, 'knowledge.updated', 'knowledge_entry', result.entry.id, { status: result.entry.status });
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { entry: knowledge.publicKnowledgeEntry(result.entry) });
+}
+
+async function apiKnowledgeDelete(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const id = String((ctx.body && ctx.body.id) || '');
+  let result;
+  await core.mutate((d) => {
+    result = knowledge.deleteEntry(d, ctx.tenant.id, id);
+    if (result.ok) addAudit(d, ctx, 'knowledge.deleted', 'knowledge_entry', id);
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { ok: true });
+}
+
+function apiKnowledgeRetrieve(req, res, ctx) {
+  const url = new URL(req.url, 'http://localhost');
+  const q = String(url.searchParams.get('q') || (ctx.body && ctx.body.q) || '').trim();
+  const limit = Number(url.searchParams.get('limit') || (ctx.body && ctx.body.limit) || 5);
+  const hits = knowledge.retrieveForQuery(core.db(), ctx.tenant.id, q, limit);
+  core.sendJson(res, 200, { hits, query: q });
+}
+
+function apiIntegrationsList(req, res, ctx) {
+  const webhooks = integrations.listWebhooks(core.db(), ctx.tenant.id).map(integrations.publicWebhook);
+  core.sendJson(res, 200, {
+    webhooks,
+    crm: integrations.listCrmConnectors(),
+    events: [...integrations.WEBHOOK_EVENTS],
+  });
+}
+
+async function apiIntegrationsWebhookCreate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = integrations.createWebhook(d, ctx.tenant.id, ctx.body || {}, ctx.user.id);
+    if (result.ok) addAudit(d, ctx, 'integrations.webhook.created', 'webhook', result.webhook.id, { events: result.webhook.events });
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 201, {
+    webhook: integrations.publicWebhook(result.webhook),
+    secretOnce: result.secretOnce,
+    message: 'Copy the secret now. Only its hash is stored.',
+  });
+}
+
+async function apiIntegrationsWebhookUpdate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const id = String((ctx.body && ctx.body.id) || '');
+  let result;
+  await core.mutate((d) => {
+    result = integrations.updateWebhook(d, ctx.tenant.id, id, ctx.body || {});
+    if (result.ok) addAudit(d, ctx, 'integrations.webhook.updated', 'webhook', result.webhook.id);
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, {
+    webhook: integrations.publicWebhook(result.webhook),
+    secretOnce: result.secretOnce,
+  });
+}
+
+async function apiIntegrationsWebhookDelete(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const id = String((ctx.body && ctx.body.id) || '');
+  let result;
+  await core.mutate((d) => {
+    result = integrations.deleteWebhook(d, ctx.tenant.id, id);
+    if (result.ok) addAudit(d, ctx, 'integrations.webhook.deleted', 'webhook', id);
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { ok: true });
+}
+
+async function apiIntegrationsLeadCreated(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const lead = {
+    name: String(b.name || '').trim().slice(0, 120),
+    phone: String(b.phone || '').trim().slice(0, 32),
+    email: String(b.email || '').trim().slice(0, 160),
+    meta: b.meta && typeof b.meta === 'object' ? b.meta : {},
+  };
+  if (!lead.phone && !lead.email) {
+    return core.sendJson(res, 422, { error: 'phone or email required', code: 'bad_lead' });
+  }
+  let queued = 0;
+  await core.mutate((d) => {
+    const targets = integrations.listWebhooks(d, ctx.tenant.id)
+      .filter((w) => w.status === 'active' && (w.events || []).includes('lead.created'));
+    queued = targets.length;
+    const ts = new Date().toISOString();
+    for (const wh of targets) {
+      wh.lastDeliveryAt = ts;
+      wh.lastDeliveryStatus = 'stub_queued';
+    }
+    addAudit(d, ctx, 'integrations.lead.created', 'lead', lead.phone || lead.email, { webhookCount: queued });
+  });
+  core.sendJson(res, 202, { ok: true, queued, lead, message: 'lead.created queued to matching webhooks (stub delivery).' });
+}
+
 async function apiMemberRole(req, res, ctx) {
   const b = ctx.body || {};
   const role = String(b.role || '');
@@ -1495,6 +1627,9 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/admin/tenant-detail') return core.requireRole(req, res, 'super_admin', apiAdminTenantDetail);
         if (route === '/api/admin/payment-events') return core.requireRole(req, res, 'admin', apiAdminPaymentEvents);
         if (route === '/api/admin/providers') return core.requireRole(req, res, 'admin', apiAdminProviderHealth);
+        if (route === '/api/knowledge') return core.requireAuth(req, res, apiKnowledgeList);
+        if (route === '/api/knowledge/retrieve') return core.requireAuth(req, res, apiKnowledgeRetrieve);
+        if (route === '/api/integrations') return core.requireAuth(req, res, apiIntegrationsList);
         if (route === '/api/hvac/desk') return core.requireAuth(req, res, apiHvacDesk);
         if (route === '/api/hvac/event-types') return core.requireAuth(req, res, apiHvacEventTypes);
         if (route === '/api/hvac/slots') return core.requireAuth(req, res, apiHvacSlots);
@@ -1578,6 +1713,14 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/support/tickets') return core.requireAuth(req, res, apiSupportCreate, body);
       if (route === '/api/support/tickets/reply') return core.requireAuth(req, res, apiSupportReply, body);
       if (route === '/api/tenant/update') return core.requireRole(req, res, 'owner', apiTenantUpdate, body);
+      if (route === '/api/knowledge') return core.requireAuth(req, res, apiKnowledgeCreate, body);
+      if (route === '/api/knowledge/update') return core.requireAuth(req, res, apiKnowledgeUpdate, body);
+      if (route === '/api/knowledge/delete') return core.requireAuth(req, res, apiKnowledgeDelete, body);
+      if (route === '/api/knowledge/retrieve') return core.requireAuth(req, res, apiKnowledgeRetrieve, body);
+      if (route === '/api/integrations/webhooks') return core.requireRole(req, res, 'owner', apiIntegrationsWebhookCreate, body);
+      if (route === '/api/integrations/webhooks/update') return core.requireRole(req, res, 'owner', apiIntegrationsWebhookUpdate, body);
+      if (route === '/api/integrations/webhooks/delete') return core.requireRole(req, res, 'owner', apiIntegrationsWebhookDelete, body);
+      if (route === '/api/integrations/lead-created') return core.requireAuth(req, res, apiIntegrationsLeadCreated, body);
       if (route === '/api/byon') return core.requireRole(req, res, 'owner', apiByonSave, body);
       if (route === '/api/privacy') return core.requireRole(req, res, 'owner', apiPrivacyMode, body);
       if (route === '/api/members/role') return core.requireRole(req, res, 'owner', apiMemberRole, body);

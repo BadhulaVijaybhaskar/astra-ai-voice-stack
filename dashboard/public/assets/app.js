@@ -293,6 +293,8 @@ const ROUTES = [
   { id: 'talk', label: 'Talk to it', icon: 'mic' },
   { id: 'numbers', label: 'Phone Numbers', icon: 'phone' },
   { id: 'calls', label: 'Calls', icon: 'calls' },
+  { id: 'knowledge', label: 'Knowledge', icon: 'book' },
+  { id: 'integrations', label: 'Integrations', icon: 'plug' },
   { id: 'billing', label: 'Billing', icon: 'wallet' },
   { id: 'support', label: 'Support', icon: 'support' },
   { id: 'admin', label: 'Admin', icon: 'shield', adminOnly: true },
@@ -307,6 +309,8 @@ function navIcon(name) {
     mic: '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/><path d="M8.5 21h7"/>',
     phone: '<path d="M5 3.5h3l1.5 4.5-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4.5 1.5v3a1.5 1.5 0 0 1-1.6 1.5A16.5 16.5 0 0 1 3.5 5.1 1.5 1.5 0 0 1 5 3.5z"/>',
     calls: '<path d="M4 5h10v10H4z"/><path d="M8 15v4l4-2 4 2v-4"/><path d="M10 8h2M10 11h4"/>',
+    book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 5.5V21.5"/><path d="M8 7h8M8 11h6"/>',
+    plug: '<path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0V8z"/><path d="M12 16v5"/>',
     gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M21.5 12h-2.6M5.1 12H2.5M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3 5.5 5.5"/>',
     template: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>',
     wallet: '<path d="M4 6.5h14a2 2 0 0 1 2 2v9H4a2 2 0 0 1-2-2v-11a2 2 0 0 0 2 2z"/><path d="M15 11h7v4h-7a2 2 0 0 1 0-4z"/>',
@@ -457,7 +461,8 @@ function onRoute() {
   view.appendChild(wrap);
   ({
     overview: viewOverview, agents: viewAgents, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
-    talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, calls: viewCalls, billing: viewBilling,
+    talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, calls: viewCalls,
+    knowledge: viewKnowledge, integrations: viewIntegrations, billing: viewBilling,
     support: viewSupport, admin: viewAdmin, settings: viewSettings
   }[id] || viewOverview)(wrap);
 }
@@ -2761,6 +2766,157 @@ async function viewBilling(root) {
     ])));
     if (!rows.length) ledger.appendChild(el('div', { class: 'muted' }, 'No wallet activity yet.'));
   } catch (e) { host.innerHTML = ''; host.appendChild(el('div', { class: 'card card-pad muted' }, e.message)); }
+}
+
+async function viewKnowledge(root) {
+  root.appendChild(viewHead('Knowledge', 'Tenant FAQ and docs for agent context. Portable JSON store, simple keyword retrieval.'));
+  const title = el('input', { class: 'input', placeholder: 'Office hours FAQ' });
+  const content = el('textarea', { class: 'input textarea', placeholder: 'Paste FAQ text or article body.' });
+  const sourceUrl = el('input', { class: 'input', placeholder: 'https://example.com/faq (optional)' });
+  const status = el('select', { class: 'select' }, ['draft', 'published', 'archived'].map((s) => el('option', { value: s }, s)));
+  const list = el('div', { class: 'ticket-list' }, skeleton('sk-card', 2));
+  const query = el('input', { class: 'input', placeholder: 'Try retrieval: office hours' });
+  const hits = el('div', { class: 'card card-pad muted' }, 'Retrieval results appear here.');
+  const save = el('button', { class: 'btn btn-primary' }, 'Add entry');
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      await api('/api/knowledge', { method: 'POST', body: { title: title.value.trim(), content: content.value.trim(), sourceUrl: sourceUrl.value.trim(), status: status.value } });
+      title.value = ''; content.value = ''; sourceUrl.value = ''; toast('Knowledge entry saved.', 'ok'); await loadKnowledge(list);
+    } catch (e) { toast(e.message, 'err'); } finally { save.disabled = false; }
+  };
+  const retrieve = el('button', { class: 'btn btn-ghost' }, 'Retrieve');
+  retrieve.onclick = async () => {
+    try {
+      const out = await api('/api/knowledge/retrieve?q=' + encodeURIComponent(query.value.trim()));
+      hits.innerHTML = '';
+      hits.className = 'card card-pad';
+      (out.hits || []).forEach((h) => hits.appendChild(el('div', { class: 'ledger-row' }, [
+        el('div', {}, [el('b', {}, h.title), el('small', { class: 'muted' }, h.excerpt || '')]),
+        el('span', { class: 'pill' }, 'score ' + h.score)
+      ])));
+      if (!(out.hits || []).length) hits.appendChild(el('div', { class: 'muted' }, 'No published matches.'));
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  root.appendChild(el('div', { class: 'support-layout' }, [
+    el('section', { class: 'card card-pad support-compose' }, [
+      el('h3', { class: 't-h3' }, 'New entry'),
+      field('Title', title), field('Content', content), field('Source URL', sourceUrl), field('Status', status), save
+    ]),
+    list
+  ]));
+  root.appendChild(el('section', { class: 'card card-pad', style: 'margin-top:14px' }, [
+    el('h3', { class: 't-h3' }, 'Retrieval stub'),
+    el('div', { class: 'flex gap-2', style: 'margin:12px 0' }, [query, retrieve]),
+    hits
+  ]));
+  await loadKnowledge(list);
+}
+
+async function loadKnowledge(host) {
+  try {
+    const out = await api('/api/knowledge');
+    host.innerHTML = '';
+    (out.entries || []).forEach((e) => {
+      const del = el('button', { class: 'btn btn-ghost' }, 'Delete');
+      del.onclick = async () => {
+        try { await api('/api/knowledge/delete', { method: 'POST', body: { id: e.id } }); toast('Deleted.', 'ok'); await loadKnowledge(host); }
+        catch (err) { toast(err.message, 'err'); }
+      };
+      const pub = el('button', { class: 'btn btn-ghost' }, e.status === 'published' ? 'Archive' : 'Publish');
+      pub.onclick = async () => {
+        try {
+          await api('/api/knowledge/update', { method: 'POST', body: { id: e.id, title: e.title, content: e.content, sourceUrl: e.sourceUrl, status: e.status === 'published' ? 'archived' : 'published', tags: e.tags } });
+          toast('Updated.', 'ok'); await loadKnowledge(host);
+        } catch (err) { toast(err.message, 'err'); }
+      };
+      host.appendChild(el('article', { class: 'card ticket-card' }, [
+        el('div', { class: 'flex items-center justify-between gap-2' }, [el('h3', { class: 't-h3' }, e.title), el('span', { class: 'pill' }, e.status)]),
+        el('p', { class: 'muted' }, (e.content || e.sourceUrl || '').slice(0, 220)),
+        el('div', { class: 'flex gap-2' }, [pub, del])
+      ]));
+    });
+    if (!(out.entries || []).length) host.appendChild(el('div', { class: 'card card-pad muted' }, 'No knowledge entries yet.'));
+  } catch (e) { host.innerHTML = ''; host.appendChild(el('div', { class: 'card card-pad muted' }, e.message)); }
+}
+
+async function viewIntegrations(root) {
+  const isOwner = State.me && ['super_admin', 'admin', 'owner'].includes(State.me.user.role);
+  root.appendChild(viewHead('Integrations', 'Webhook endpoints and CRM connectors. Secrets are hashed. CRM vendors are coming soon.'));
+  const list = el('div', { class: 'ticket-list' }, skeleton('sk-card', 1));
+  const crmHost = el('div', { class: 'grid grid-3', style: 'margin-top:14px' });
+  root.appendChild(list);
+  root.appendChild(crmHost);
+  if (isOwner) {
+    const name = el('input', { class: 'input', placeholder: 'CRM sync webhook' });
+    const url = el('input', { class: 'input', placeholder: 'https://hooks.example.com/astra' });
+    const secret = el('input', { class: 'input', type: 'password', placeholder: 'Shared secret, min 12 chars' });
+    const events = el('select', { class: 'select', multiple: 'multiple', style: 'min-height:90px' }, [
+      el('option', { value: 'lead.created', selected: 'selected' }, 'lead.created'),
+      el('option', { value: 'call.completed' }, 'call.completed'),
+      el('option', { value: 'campaign.started' }, 'campaign.started'),
+      el('option', { value: 'campaign.completed' }, 'campaign.completed')
+    ]);
+    const create = el('button', { class: 'btn btn-primary' }, 'Add webhook');
+    create.onclick = async () => {
+      const selected = Array.from(events.selectedOptions || []).map((o) => o.value);
+      create.disabled = true;
+      try {
+        const out = await api('/api/integrations/webhooks', { method: 'POST', body: { name: name.value.trim(), url: url.value.trim(), secret: secret.value, events: selected } });
+        modal({
+          title: 'Webhook secret (shown once)',
+          body: el('div', {}, [el('p', {}, 'Store this secret now. Only its hash is saved.'), el('code', {}, out.secretOnce || '')]),
+          confirmText: 'I saved it',
+          onConfirm: async () => {}
+        });
+        name.value = ''; url.value = ''; secret.value = '';
+        await loadIntegrations(list, crmHost);
+      } catch (e) { toast(e.message, 'err'); } finally { create.disabled = false; }
+    };
+    const leadPhone = el('input', { class: 'input', placeholder: '+9198XXXXXXXX' });
+    const leadName = el('input', { class: 'input', placeholder: 'Lead name' });
+    const fireLead = el('button', { class: 'btn btn-ghost' }, 'Stub lead.created');
+    fireLead.onclick = async () => {
+      try {
+        const out = await api('/api/integrations/lead-created', { method: 'POST', body: { phone: leadPhone.value.trim(), name: leadName.value.trim() } });
+        toast('Queued to ' + (out.queued || 0) + ' webhook(s).', 'ok');
+        await loadIntegrations(list, crmHost);
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    root.prepend(el('section', { class: 'card card-pad', style: 'margin-bottom:14px' }, [
+      el('h3', { class: 't-h3' }, 'Register webhook'),
+      field('Name', name), field('HTTPS URL', url), field('Secret', secret), field('Events', events), create,
+      el('h3', { class: 't-h3', style: 'margin-top:18px' }, 'Outbound stub'),
+      field('Lead phone', leadPhone), field('Lead name', leadName), fireLead
+    ]));
+  }
+  await loadIntegrations(list, crmHost);
+}
+
+async function loadIntegrations(list, crmHost) {
+  try {
+    const out = await api('/api/integrations');
+    list.innerHTML = '';
+    list.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, 'Webhooks'));
+    (out.webhooks || []).forEach((w) => {
+      const del = el('button', { class: 'btn btn-ghost' }, 'Delete');
+      del.onclick = async () => {
+        try { await api('/api/integrations/webhooks/delete', { method: 'POST', body: { id: w.id } }); toast('Webhook removed.', 'ok'); await loadIntegrations(list, crmHost); }
+        catch (e) { toast(e.message, 'err'); }
+      };
+      list.appendChild(el('div', { class: 'admin-row' }, [
+        el('div', {}, [el('b', {}, w.name), el('small', { class: 'muted' }, w.url + ' · ' + (w.events || []).join(', '))]),
+        el('div', { class: 'flex gap-2' }, [el('span', { class: 'pill' }, w.secretConfigured ? 'secret set' : 'no secret'), del])
+      ]));
+    });
+    if (!(out.webhooks || []).length) list.appendChild(el('div', { class: 'muted' }, 'No webhooks yet.'));
+    crmHost.innerHTML = '';
+    (out.crm || []).forEach((c) => crmHost.appendChild(el('div', { class: 'card card-pad' }, [
+      el('h3', { class: 't-h3' }, c.label),
+      el('p', { class: 'muted' }, 'Native ' + c.label + ' connector is coming soon. Use lead.created webhooks for now.'),
+      el('span', { class: 'pill' }, c.status || 'coming_soon')
+    ])));
+  } catch (e) { list.innerHTML = ''; list.appendChild(el('div', { class: 'muted' }, e.message)); }
 }
 
 async function startRecharge(packId) {
