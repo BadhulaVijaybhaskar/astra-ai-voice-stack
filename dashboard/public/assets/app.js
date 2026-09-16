@@ -542,15 +542,25 @@ async function viewOverview(root) {
     statsRow.appendChild(el('div', { class: 'card card-pad muted' }, 'Could not load usage. ' + esc(e.message)));
   }
 
-  // provider mini summary
+  // provider mini summary (customer-facing labels only)
   ensureProviders().then(() => {
     const pm = $('#provMini'); if (!pm) return;
     const reg = State.providers || {};
     const live = [];
+    const friendly = {
+      rumik: 'Rumik Silk',
+      groq: 'Groq',
+      gemini: 'Gemini',
+      deepgram: 'Deepgram',
+      vobiz: 'Telephony'
+    };
     ['tts', 'llm', 'telephony'].forEach((layer) => {
-      (reg[layer] || []).forEach((p) => { if (p.live) live.push(p.label); });
+      (reg[layer] || []).forEach((p) => {
+        if (!p.live) return;
+        live.push(friendly[p.id] || String(p.label || p.id).replace(/\s*via\s*Dograh/i, '').replace(/VoBiz/i, 'Telephony'));
+      });
     });
-    pm.textContent = live.length ? ('Active providers: ' + live.join(', ') + '.') : 'No live providers detected.';
+    pm.textContent = live.length ? ('Active stack: ' + live.join(', ') + '.') : 'No live providers detected.';
   }).catch(() => {});
 }
 
