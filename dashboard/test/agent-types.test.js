@@ -107,9 +107,9 @@ test('applyPresetToAgent copies type and Dograh workflow binding', () => {
   const pub = publicPreset(eng);
   assert.equal(pub.agentType, 'inbound_receptionist');
   assert.equal(pub.direction, 'inbound');
-  assert.equal(pub.dograhWorkflowId, 8);
+  assert.equal(Object.prototype.hasOwnProperty.call(pub, 'dograhWorkflowId'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(publicPreset(jerry), 'dograhWorkflowId'), false);
-  assert.equal(publicPreset(jerry).dograhWorkflowKey, 'outbound_callback');
+  assert.equal(publicPreset(jerry).workflowKey, 'outbound_callback');
 });
 
 test('GET /api/agent-types and preset create copy fields through the live server', async (t) => {
@@ -199,7 +199,7 @@ test('GET /api/agent-types and preset create copy fields through the live server
           agent: {
             id: agent.id, name: agent.name, persona: agent.persona, greeting: agent.greeting,
             presetId: agent.presetId, agentType: agent.agentType, direction: agent.direction,
-            dograhWorkflowId: agent.dograhWorkflowId, dograhWorkflowKey: agent.dograhWorkflowKey,
+            workflowKey: agent.dograhWorkflowKey || null,
           },
         });
       }, body)).catch((err) => core.sendJson(res, 400, { error: err.message }));
@@ -250,7 +250,7 @@ test('GET /api/agent-types and preset create copy fields through the live server
   const eng = presetsRes.body.presets.find((p) => p.id === 'preset_astranova_eng_receptionist_v1');
   assert.equal(eng.agentType, 'inbound_receptionist');
   assert.equal(eng.direction, 'inbound');
-  assert.equal(eng.dograhWorkflowId, 8);
+  assert.equal(Object.prototype.hasOwnProperty.call(eng, 'dograhWorkflowId'), false);
 
   const created = await request('POST', '/api/agents', {
     presetId: 'preset_astranova_eng_receptionist_v1',
@@ -258,6 +258,9 @@ test('GET /api/agent-types and preset create copy fields through the live server
   });
   assert.equal(created.status, 200);
   assert.equal(created.body.agent.agentType, 'inbound_receptionist');
-  assert.equal(created.body.agent.dograhWorkflowId, 8);
+  assert.equal(Object.prototype.hasOwnProperty.call(created.body.agent, 'dograhWorkflowId'), false);
   assert.equal(created.body.agent.presetId, 'preset_astranova_eng_receptionist_v1');
+  // Server-side binding still lands on the stored agent row.
+  const stored = core.db().agents.find((a) => a.id === created.body.agent.id);
+  assert.equal(stored.dograhWorkflowId, 8);
 });

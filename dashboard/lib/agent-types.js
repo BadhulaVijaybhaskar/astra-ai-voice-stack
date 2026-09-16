@@ -75,7 +75,7 @@ const PRESET_LIBRARY = Object.freeze([
     dograhWorkflowId: 8,
     dograhWorkflowKey: null,
     isSystem: true,
-    description: 'Live inbound English receptionist aligned with Dograh workflow 8 (Astanova v2 ENG).',
+    description: 'Live inbound English receptionist aligned with AstraNova Receptionist workflow.',
     greeting: 'Thank you for calling AstraNova. I am the AI receptionist. How may I help you today?',
     fields: ['caller_name', 'callback_number', 'reason', 'department', 'urgency', 'message', 'preferred_follow_up'],
     guardrails: ['Disclose AI identity', 'Escalate emergencies', 'Do not reveal private staff or customer information', 'Confirm callback details before ending'],
@@ -91,7 +91,7 @@ const PRESET_LIBRARY = Object.freeze([
     dograhWorkflowId: null,
     dograhWorkflowKey: 'outbound_callback',
     isSystem: true,
-    description: 'Outbound permission check, discovery questions, then reschedule. Dograh workflow id still TBD.',
+    description: 'Outbound permission check, discovery questions, then reschedule.',
     greeting: 'Hi, this is Jerry calling from AstraNova. Is now still a good time to talk for a minute?',
     fields: ['permission_to_continue', 'caller_name', 'callback_number', 'reason_for_callback', 'discovery_notes', 'preferred_reschedule'],
     guardrails: ['Get permission before continuing', 'Respect opt-out immediately', 'Never invent availability', 'Confirm any reschedule details aloud'],
@@ -253,8 +253,9 @@ function publicPreset(preset) {
     tenantId: preset.tenantId || null,
     createdAt: preset.createdAt || null,
   };
-  if (preset.dograhWorkflowId != null) out.dograhWorkflowId = preset.dograhWorkflowId;
-  if (preset.dograhWorkflowKey) out.dograhWorkflowKey = preset.dograhWorkflowKey;
+  // Dograh workflow ids stay server-side. Opaque keys may appear for outbound
+  // presets that do not yet have a numeric provider id.
+  if (preset.dograhWorkflowKey) out.workflowKey = preset.dograhWorkflowKey;
   if (preset.recommendedPrivacyMode) out.recommendedPrivacyMode = preset.recommendedPrivacyMode;
   return out;
 }

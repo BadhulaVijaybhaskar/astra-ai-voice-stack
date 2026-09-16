@@ -33,8 +33,11 @@ const integrations = require('./lib/integrations');
 const campaigns = require('./lib/campaigns');
 const analytics = require('./lib/analytics');
 const plans = require('./lib/plans');
+const workflows = require('./lib/workflows');
+const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
+const workflowProvider = createDefaultWorkflowProvider({ core, telephony: providers.telephony });
 
 const PORT = parseInt(process.env.PORT || '8787', 10);
 const DEFAULT_PROVIDERS = Object.freeze({
@@ -120,6 +123,7 @@ async function boot() {
   await core.mutate((d) => {
     seedPresets(d);
     phoneNumbers.seedPlatformInventory(d);
+    workflows.seedAllTenants(d);
   });
 
   const hasDemo = DEMO_EMAIL && existing.users.some((u) => u.email === DEMO_EMAIL);
@@ -155,6 +159,7 @@ async function boot() {
       plans.grantPlanCredits(d, tenantId, 'starter', userId, addLedgerEntry);
       // Migrate any legacy agents into the demo tenant.
       for (const la of legacy) d.agents.push(migrateLegacyAgent(la, tenantId));
+      workflows.seedTenantReceptionist(d, tenantId, userId);
     });
 
     console.log(`  Seeded env-configured test tenant "${DEMO_TENANT}" with ${legacy.length} migrated agent(s).`);
@@ -197,8 +202,8 @@ function publicAgent(a) {
     greeting: a.greeting, telephony: a.telephony, presetId: a.presetId || null,
     agentType: a.agentType || 'custom',
     direction: a.direction || null,
-    dograhWorkflowId: a.dograhWorkflowId != null ? a.dograhWorkflowId : null,
-    dograhWorkflowKey: a.dograhWorkflowKey || null,
+    // Dograh workflow ids stay server-side. Opaque keys may surface for outbound.
+    workflowKey: a.dograhWorkflowKey || null,
     createdAt: a.createdAt,
   };
 }
@@ -293,6 +298,7 @@ async function apiSignup(req, res, body) {
     d.wallets.push({ id: core.genId('wal_'), tenantId, currency: 'INR', balancePaise: 0, createdAt: nowIso, updatedAt: nowIso });
     addLedgerEntry(d, tenantId, TRIAL_CREDIT_PAISE, 'trial_grant', `trial:${tenantId}`, userId, { amountInr: 10 });
     plans.grantPlanCredits(d, tenantId, 'starter', userId, addLedgerEntry);
+    workflows.seedTenantReceptionist(d, tenantId, userId);
     addAudit(d, { tenant, user }, 'auth.signup', 'tenant', tenantId);
   });
 
@@ -772,10 +778,29 @@ function agentsMapForTenant(tenantId) {
   );
 }
 
+function workflowsMapForTenant(tenantId) {
+  return new Map(
+    (core.db().workflows || []).filter((w) => w.tenantId === tenantId).map((w) => [w.id, w]),
+  );
+}
+
+function includeWorkflowProvider(ctx) {
+  return !!(ctx && ctx.user && ctx.user.role === 'super_admin');
+}
+
+function serializeWorkflow(row, ctx) {
+  return workflows.publicWorkflow(row, {
+    includeProvider: includeWorkflowProvider(ctx),
+    agentsById: agentsMapForTenant(ctx.tenant.id),
+    assignedNumber: workflows.assignedNumberForWorkflow(core.db(), row),
+  });
+}
+
 function apiPhoneNumbersList(req, res, ctx) {
   const agentsById = agentsMapForTenant(ctx.tenant.id);
+  const workflowsById = workflowsMapForTenant(ctx.tenant.id);
   const numbers = phoneNumbers.listTenantNumbers(core.db(), ctx.tenant.id)
-    .map((n) => phoneNumbers.publicPhoneNumber(n, agentsById));
+    .map((n) => phoneNumbers.publicPhoneNumber(n, agentsById, workflowsById));
   core.sendJson(res, 200, { numbers });
 }
 
@@ -800,10 +825,14 @@ async function apiPhoneNumbersAssign(req, res, ctx) {
       agentId,
       inboundEnabled: b.inboundEnabled,
       outboundEnabled: b.outboundEnabled,
+      inboundWorkflowId: b.inboundWorkflowId,
+      outboundWorkflowId: b.outboundWorkflowId,
     });
     await core.mutate((d) => {
       addAudit(d, ctx, 'phone_number.assigned', 'phone_number', number.id, {
         agentId, e164: number.e164,
+        inboundWorkflowId: number.inboundWorkflowId || null,
+        outboundWorkflowId: number.outboundWorkflowId || null,
       });
     });
     core.sendJson(res, 200, { number });
@@ -838,11 +867,16 @@ async function apiPhoneNumbersPatch(req, res, ctx) {
         tenantId: ctx.tenant.id,
         inboundEnabled: b.inboundEnabled,
         outboundEnabled: b.outboundEnabled,
+        inboundWorkflowId: b.inboundWorkflowId,
+        outboundWorkflowId: b.outboundWorkflowId,
+        resolveProviderWorkflowId: workflows.resolveProviderWorkflowId,
       });
       if (result.ok) {
         addAudit(d, ctx, 'phone_number.updated', 'phone_number', result.number.id, {
           inboundEnabled: result.number.inboundEnabled,
           outboundEnabled: result.number.outboundEnabled,
+          inboundWorkflowId: result.number.inboundWorkflowId || null,
+          outboundWorkflowId: result.number.outboundWorkflowId || null,
         });
       }
     });
@@ -853,7 +887,8 @@ async function apiPhoneNumbersPatch(req, res, ctx) {
     return core.sendJson(res, result.status, { error: result.error, code: result.code });
   }
   const agentsById = agentsMapForTenant(ctx.tenant.id);
-  core.sendJson(res, 200, { number: phoneNumbers.publicPhoneNumber(result.number, agentsById) });
+  const workflowsById = workflowsMapForTenant(ctx.tenant.id);
+  core.sendJson(res, 200, { number: phoneNumbers.publicPhoneNumber(result.number, agentsById, workflowsById) });
 }
 
 async function apiPhoneNumbersPurchase(req, res) {
@@ -959,6 +994,150 @@ async function apiCallsRecording(req, res, ctx) {
   } catch (e) {
     handleProviderError(res, e);
   }
+}
+
+/* ==========================================================================
+   Workflows control plane (Astra-first, Dograh execution mapping)
+   ========================================================================== */
+
+function matchWorkflowRoute(route) {
+  if (route === '/api/workflow-templates') return { action: 'templates' };
+  if (route === '/api/workflows') return { action: 'list_or_create' };
+  if (route === '/api/workflows/import') return { action: 'import' };
+  const publish = route.match(/^\/api\/workflows\/([^/]+)\/publish$/);
+  if (publish) return { action: 'publish', id: decodeURIComponent(publish[1]) };
+  const one = route.match(/^\/api\/workflows\/([^/]+)$/);
+  if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
+  return null;
+}
+
+function apiWorkflowTemplates(req, res) {
+  core.sendJson(res, 200, { templates: workflows.listTemplates() });
+}
+
+async function apiWorkflowsList(req, res, ctx) {
+  await core.mutate((d) => { workflows.seedTenantReceptionist(d, ctx.tenant.id, ctx.user.id); });
+  core.sendJson(res, 200, {
+    workflows: workflows.listWorkflows(core.db(), ctx.tenant.id).map((w) => serializeWorkflow(w, ctx)),
+  });
+}
+
+async function apiWorkflowsGet(req, res, ctx) {
+  await core.mutate((d) => { workflows.seedTenantReceptionist(d, ctx.tenant.id, ctx.user.id); });
+  const row = workflows.findWorkflow(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!row) return core.sendJson(res, 404, { error: 'workflow not found', code: 'not_found' });
+  core.sendJson(res, 200, { workflow: serializeWorkflow(row, ctx) });
+}
+
+async function apiWorkflowsCreate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = workflows.createWorkflow(d, ctx.tenant.id, ctx.body || {}, ctx.user.id);
+    if (result.ok) {
+      addAudit(d, ctx, 'workflow.created', 'workflow', result.workflow.id, {
+        name: result.workflow.name,
+        templateKey: result.workflow.templateKey,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 201, { workflow: serializeWorkflow(result.workflow, ctx) });
+}
+
+async function apiWorkflowsPatch(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = workflows.updateWorkflow(d, ctx.tenant.id, ctx.params.id, ctx.body || {});
+    if (result.ok) {
+      addAudit(d, ctx, 'workflow.updated', 'workflow', result.workflow.id, {
+        name: result.workflow.name,
+        status: result.workflow.status,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { workflow: serializeWorkflow(result.workflow, ctx) });
+}
+
+async function apiWorkflowsPublish(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  try {
+    // Ensure the row exists before provider publish.
+    const existing = workflows.findWorkflow(core.db(), ctx.tenant.id, ctx.params.id);
+    if (!existing) return core.sendJson(res, 404, { error: 'workflow not found', code: 'not_found' });
+
+    const result = await workflowProvider.publishWorkflow(ctx.tenant.id, ctx.params.id, {
+      providerWorkflowId: b.providerWorkflowId,
+    });
+    await core.mutate((d) => {
+      addAudit(d, ctx, 'workflow.published', 'workflow', ctx.params.id, {
+        syncStatus: result.syncStatus,
+        providerWorkflowId: includeWorkflowProvider(ctx) ? result.providerWorkflowId : undefined,
+      });
+    });
+    const row = workflows.findWorkflow(core.db(), ctx.tenant.id, ctx.params.id);
+    core.sendJson(res, 200, {
+      workflow: serializeWorkflow(row, ctx),
+      syncStatus: result.syncStatus,
+      syncError: includeWorkflowProvider(ctx) ? result.syncError : (result.syncError ? 'Provider sync reported an issue. Ask a Super Admin for details.' : null),
+    });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiWorkflowsImport(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  if (!core.hasRole(ctx.user, 'owner')) {
+    return core.sendJson(res, 403, { error: 'owner or admin required to import workflows', code: 'forbidden' });
+  }
+  const b = ctx.body || {};
+  const providerWorkflowId = String(b.providerWorkflowId || '').trim();
+  if (!providerWorkflowId) {
+    return core.sendJson(res, 422, { error: 'providerWorkflowId is required', code: 'validation' });
+  }
+
+  // Best-effort fetch remote definition for graph seed.
+  let remoteGraph = null;
+  let remoteName = null;
+  try {
+    const remote = await workflowProvider.getWorkflow(providerWorkflowId);
+    if (remote && remote.workflow) {
+      remoteName = remote.workflow.name || remote.workflow.title || null;
+      if (remote.workflow.definition || remote.workflow.graph || remote.workflow.nodes) {
+        remoteGraph = remote.workflow.definition || remote.workflow.graph
+          || { nodes: remote.workflow.nodes, edges: remote.workflow.edges || [] };
+      }
+    }
+  } catch (_) { /* soft */ }
+
+  let result;
+  await core.mutate((d) => {
+    result = workflows.importFromProvider(d, ctx.tenant.id, {
+      providerWorkflowId,
+      name: b.name || remoteName || undefined,
+      description: b.description,
+      templateKey: b.templateKey || 'receptionist',
+      direction: b.direction,
+      graphJson: b.graphJson || remoteGraph || undefined,
+      agentId: b.agentId,
+      syncStatus: 'imported',
+    }, ctx.user.id);
+    if (result.ok) {
+      addAudit(d, ctx, 'workflow.imported', 'workflow', result.workflow.id, {
+        providerWorkflowId: includeWorkflowProvider(ctx) ? providerWorkflowId : undefined,
+        created: result.created,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, result.created ? 201 : 200, {
+    workflow: serializeWorkflow(result.workflow, ctx),
+    created: result.created,
+  });
 }
 
 // POST /api/callback (alias /api/outbound/callback). Shared-secret outbound trigger.
@@ -1661,7 +1840,7 @@ function apiHealth(req, res) {
    Map a ProviderError (or anything) to a clean JSON HTTP response.
    ========================================================================== */
 function handleProviderError(res, e) {
-  if (e instanceof providers.ProviderError || e instanceof TelephonyProviderError) {
+  if (e instanceof providers.ProviderError || e instanceof TelephonyProviderError || e instanceof WorkflowProviderError) {
     return core.sendJson(res, e.status || 502, {
       error: e.message,
       code: e.code || 'provider_error',
@@ -1718,6 +1897,15 @@ const server = http.createServer(async (req, res) => {
           }
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
+        const wfGet = matchWorkflowRoute(route);
+        if (wfGet) {
+          if (wfGet.action === 'templates') return core.requireAuth(req, res, apiWorkflowTemplates);
+          if (wfGet.action === 'list_or_create') return core.requireAuth(req, res, apiWorkflowsList);
+          if (wfGet.action === 'one') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiWorkflowsGet(rq, rs, { ...ctx, params: { id: wfGet.id } }));
+          }
+          return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+        }
         if (route === '/api/me') return core.requireAuth(req, res, apiMe);
         if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsList);
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);
@@ -1753,7 +1941,7 @@ const server = http.createServer(async (req, res) => {
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }
 
-      // ---- PATCH phone number toggles ----
+      // ---- PATCH phone number toggles / workflow drafts ----
       if (req.method === 'PATCH') {
         const pnPatch = matchPhoneNumberRoute(route);
         if (pnPatch && pnPatch.action === 'one') {
@@ -1764,6 +1952,16 @@ const server = http.createServer(async (req, res) => {
             return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
           }
           return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersPatch(rq, rs, { ...ctx, params: { id: pnPatch.id } }), body);
+        }
+        const wfPatch = matchWorkflowRoute(route);
+        if (wfPatch && wfPatch.action === 'one') {
+          let body;
+          try { body = await core.readBody(req, 256 * 1024); }
+          catch (e) {
+            const tooBig = /too large/.test(String(e.message));
+            return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiWorkflowsPatch(rq, rs, { ...ctx, params: { id: wfPatch.id } }), body);
         }
         return core.sendJson(res, 405, { error: 'method not allowed', code: 'method' });
       }
@@ -1801,6 +1999,19 @@ const server = http.createServer(async (req, res) => {
       const callsPost = matchCallsRoute(route);
       if (callsPost && callsPost.action === 'sync') {
         return core.requireAuth(req, res, apiCallsSync, body);
+      }
+      const wfPost = matchWorkflowRoute(route);
+      if (wfPost) {
+        if (wfPost.action === 'list_or_create') {
+          return core.requireAuth(req, res, apiWorkflowsCreate, body);
+        }
+        if (wfPost.action === 'import') {
+          return core.requireRole(req, res, 'owner', apiWorkflowsImport, body);
+        }
+        if (wfPost.action === 'publish') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiWorkflowsPublish(rq, rs, { ...ctx, params: { id: wfPost.id } }), body);
+        }
+        return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }
       const pnPost = matchPhoneNumberRoute(route);
       if (pnPost) {

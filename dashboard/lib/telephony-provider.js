@@ -165,6 +165,7 @@ class DograhVobizProvider extends TelephonyProvider {
 
   async assignNumber(numberId, tenantId, opts = {}) {
     if (!this.core) throw new TelephonyProviderError('core store is required', 500, 'misconfigured');
+    const workflows = require('./workflows');
     let result;
     await this.core.mutate((db) => {
       result = phoneNumbers.assignNumber(db, {
@@ -173,17 +174,26 @@ class DograhVobizProvider extends TelephonyProvider {
         agentId: opts.agentId,
         inboundEnabled: opts.inboundEnabled,
         outboundEnabled: opts.outboundEnabled,
+        inboundWorkflowId: opts.inboundWorkflowId,
+        outboundWorkflowId: opts.outboundWorkflowId,
+        resolveProviderWorkflowId: workflows.resolveProviderWorkflowId,
       });
     });
     if (!result.ok) {
       throw new TelephonyProviderError(result.error, result.status, result.code);
     }
+    const db = this.core.db();
     const agentsById = new Map(
-      (this.core.db().agents || [])
+      (db.agents || [])
         .filter((a) => a.tenantId === tenantId)
         .map((a) => [a.id, a]),
     );
-    return phoneNumbers.publicPhoneNumber(result.number, agentsById);
+    const workflowsById = new Map(
+      (db.workflows || [])
+        .filter((w) => w.tenantId === tenantId)
+        .map((w) => [w.id, w]),
+    );
+    return phoneNumbers.publicPhoneNumber(result.number, agentsById, workflowsById);
   }
 
   async unassignNumber(numberId, tenantId) {
@@ -212,6 +222,7 @@ class DograhVobizProvider extends TelephonyProvider {
       if (ctx) {
         if (ctx.dograhTelephonyConfigId) dialOpts.telephonyConfigId = ctx.dograhTelephonyConfigId;
         if (ctx.dograhPhoneNumberId) dialOpts.fromPhoneNumberId = ctx.dograhPhoneNumberId;
+        if (!dialOpts.workflowId && ctx.workflowId) dialOpts.workflowId = ctx.workflowId;
       }
     }
 

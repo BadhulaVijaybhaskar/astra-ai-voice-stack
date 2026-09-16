@@ -276,8 +276,9 @@ function resetData() {
   State.phoneNumbers = null; State.availableNumbers = null;
   State.wallet = null; State.presets = []; State.agentTypes = []; State.tickets = [];
   State.demoLinks = [];
+  State.workflows = null; State.workflowTemplates = null;
   State.createDraft = null;
-  State.loaded = { agents: false, providers: false, usage: false, telephony: false, phoneNumbers: false, calls: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false };
+  State.loaded = { agents: false, providers: false, usage: false, telephony: false, phoneNumbers: false, calls: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false, workflows: false, workflowTemplates: false };
   State.activeAgentId = null;
 }
 
@@ -285,22 +286,23 @@ function resetData() {
    CONSOLE SHELL
    =========================================================================== */
 const ROUTES = [
-  { id: 'overview', label: 'Overview', icon: 'grid' },
-  { id: 'agents', label: 'Agents', icon: 'users' },
-  { id: 'presets', label: 'Presets', icon: 'template' },
-  { id: 'studio', label: 'Voice Studio', icon: 'wave' },
-  { id: 'demos', label: 'Demo links', icon: 'link', ownerOnly: true },
-  { id: 'talk', label: 'Talk to it', icon: 'mic' },
-  { id: 'numbers', label: 'Phone Numbers', icon: 'phone' },
-  { id: 'calls', label: 'Calls', icon: 'calls' },
-  { id: 'knowledge', label: 'Knowledge', icon: 'book' },
-  { id: 'integrations', label: 'Integrations', icon: 'plug' },
-  { id: 'campaigns', label: 'Campaigns', icon: 'megaphone' },
-  { id: 'analytics', label: 'Analytics', icon: 'chart' },
-  { id: 'billing', label: 'Billing', icon: 'wallet' },
-  { id: 'support', label: 'Support', icon: 'support' },
-  { id: 'admin', label: 'Admin', icon: 'shield', adminOnly: true },
-  { id: 'settings', label: 'Settings', icon: 'gear' }
+  { id: 'overview', label: 'Overview', icon: 'grid', group: 'HOME' },
+  { id: 'agents', label: 'Agents', icon: 'users', group: 'BUILD' },
+  { id: 'workflows', label: 'Workflows', icon: 'flow', group: 'BUILD' },
+  { id: 'presets', label: 'Presets', icon: 'template', group: 'BUILD' },
+  { id: 'studio', label: 'Voice Studio', icon: 'wave', group: 'BUILD' },
+  { id: 'demos', label: 'Demo links', icon: 'link', ownerOnly: true, group: 'BUILD' },
+  { id: 'talk', label: 'Talk to it', icon: 'mic', group: 'BUILD' },
+  { id: 'numbers', label: 'Phone Numbers', icon: 'phone', group: 'OPERATE' },
+  { id: 'calls', label: 'Calls', icon: 'calls', group: 'OPERATE' },
+  { id: 'knowledge', label: 'Knowledge', icon: 'book', group: 'OPERATE' },
+  { id: 'integrations', label: 'Integrations', icon: 'plug', group: 'OPERATE' },
+  { id: 'campaigns', label: 'Campaigns', icon: 'megaphone', group: 'OPERATE' },
+  { id: 'analytics', label: 'Analytics', icon: 'chart', group: 'OPERATE' },
+  { id: 'billing', label: 'Billing', icon: 'wallet', group: 'ACCOUNT' },
+  { id: 'support', label: 'Support', icon: 'support', group: 'ACCOUNT' },
+  { id: 'admin', label: 'Admin', icon: 'shield', adminOnly: true, group: 'ACCOUNT' },
+  { id: 'settings', label: 'Settings', icon: 'gear', group: 'ACCOUNT' }
 ];
 
 function navIcon(name) {
@@ -317,6 +319,7 @@ function navIcon(name) {
     chart: '<path d="M4 19h16"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-6"/>',
     gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M21.5 12h-2.6M5.1 12H2.5M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3 5.5 5.5"/>',
     template: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    flow: '<circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><path d="M8 6h8M7.2 7.8 10.8 16M16.8 7.8 13.2 16"/>',
     wallet: '<path d="M4 6.5h14a2 2 0 0 1 2 2v9H4a2 2 0 0 1-2-2v-11a2 2 0 0 0 2 2z"/><path d="M15 11h7v4h-7a2 2 0 0 1 0-4z"/>',
     support: '<path d="M4 13a8 8 0 0 1 16 0v5a2 2 0 0 1-2 2h-3"/><path d="M4 13v4H2v-4h2M20 13v4h2v-4h-2"/>',
     shield: '<path d="M12 3 20 6v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6l8-3z"/><path d="m9 12 2 2 4-5"/>',
@@ -336,9 +339,17 @@ function renderShell() {
     if (r.ownerOnly && !['super_admin', 'admin', 'owner'].includes(u.role)) return false;
     return true;
   });
-  const nav = el('nav', { class: 'nav' }, visibleRoutes.map((r) =>
-    el('a', { href: '#/' + r.id, 'data-route': r.id, html: navIcon(r.icon) + '<span>' + esc(r.label) + '</span>' })
-  ));
+  const groupOrder = ['HOME', 'BUILD', 'OPERATE', 'ACCOUNT'];
+  const navChildren = [];
+  groupOrder.forEach((group) => {
+    const items = visibleRoutes.filter((r) => (r.group || 'HOME') === group);
+    if (!items.length) return;
+    if (group !== 'HOME') navChildren.push(el('div', { class: 'nav-group' }, group));
+    items.forEach((r) => {
+      navChildren.push(el('a', { href: '#/' + r.id, 'data-route': r.id, html: navIcon(r.icon) + '<span>' + esc(r.label) + '</span>' }));
+    });
+  });
+  const nav = el('nav', { class: 'nav' }, navChildren);
 
   const side = el('aside', { class: 'side' }, [
     el('div', { class: 'side-brand' }, [
@@ -464,7 +475,7 @@ function onRoute() {
   const wrap = el('div', { class: 'view' });
   view.appendChild(wrap);
   ({
-    overview: viewOverview, agents: viewAgents, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
+    overview: viewOverview, agents: viewAgents, workflows: viewWorkflows, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
     talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, calls: viewCalls,
     knowledge: viewKnowledge, integrations: viewIntegrations, campaigns: viewCampaigns, analytics: viewAnalytics, billing: viewBilling,
     support: viewSupport, admin: viewAdmin, settings: viewSettings
@@ -905,10 +916,10 @@ function buildAgentForm(existing, options) {
   if (!createMode) {
     card.appendChild(el('h3', {}, existing ? 'Edit agent' : 'New agent'));
     card.appendChild(el('p', { class: 'hint' }, existing ? 'Update the persona, voice, or assigned number.' : 'Describe the persona and pick a voice. You can preview it instantly before assigning a number.'));
-  } else if (preset && preset.dograhWorkflowId != null) {
-    card.appendChild(el('p', { class: 'hint' }, 'Bound to Dograh workflow ' + preset.dograhWorkflowId + ' for live inbound testing.'));
-  } else if (preset && preset.dograhWorkflowKey) {
-    card.appendChild(el('p', { class: 'hint' }, 'Workflow key "' + preset.dograhWorkflowKey + '" is reserved. Numeric Dograh id is still TBD.'));
+  } else if (preset && (preset.direction === 'inbound' || preset.agentType === 'inbound_receptionist')) {
+    card.appendChild(el('p', { class: 'hint' }, 'Starts from the inbound receptionist pattern. Bind an Astra workflow after create.'));
+  } else if (preset && (preset.workflowKey || preset.dograhWorkflowKey)) {
+    card.appendChild(el('p', { class: 'hint' }, 'Outbound callback pattern: permission, discovery, then reschedule.'));
   }
   card.appendChild(form);
   syncVoice();
@@ -1000,7 +1011,6 @@ function agentCard(a) {
       el('span', { class: 'tag' }, (type && type.label) || a.agentType || 'custom'),
       a.direction ? el('span', { class: 'tag' }, directionLabel(a.direction)) : null,
       did ? el('span', { class: 'tag' }, did) : el('span', { class: 'tag' }, 'no number'),
-      a.dograhWorkflowId != null ? el('span', { class: 'tag' }, 'workflow ' + a.dograhWorkflowId) : null,
       el('span', { class: 'tag' }, (tts.model || 'mulberry'))
     ]),
     el('div', { class: 'ac-actions' }, [
@@ -1466,7 +1476,7 @@ async function viewDemoLinks(root) {
    5. TALK TO IT
    =========================================================================== */
 async function viewTalk(root) {
-  root.appendChild(viewHead('Talk to your agent', 'A direct realtime voice call through the same Dograh workflow runtime used on the phone.'));
+  root.appendChild(viewHead('Talk to your agent', 'A direct realtime voice call through the same published Astra workflow runtime used on the phone.'));
 
   await ensureAgents().catch(() => {});
   if (!State.activeAgentId && State.agents.length) State.activeAgentId = State.agents[0].id;
@@ -1484,7 +1494,7 @@ async function viewTalk(root) {
   const statusDot = el('span', { class: 'conversation-dot', 'aria-hidden': 'true' });
   const statusText = el('span', {}, 'Ready');
   const statusPill = el('div', { class: 'conversation-status idle', role: 'status' }, [statusDot, statusText]);
-  const runtimePill = el('div', { class: 'conversation-pipeline' }, 'Dograh realtime voice · Deepgram · Groq · Rumik');
+  const runtimePill = el('div', { class: 'conversation-pipeline' }, 'Realtime voice · Deepgram · Groq · Rumik');
   const timingText = el('div', { class: 'conversation-timing', 'aria-live': 'polite' }, 'Latency is measured inside the live call runtime');
   const sessionBtn = el('button', { class: 'btn btn-primary conversation-btn', 'aria-label': 'Start voice call' }, [
     el('span', { class: 'conversation-btn-icon', 'aria-hidden': 'true', html: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.62 2.63a2 2 0 0 1-.45 2.11L8 9.73a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.85.29 1.73.5 2.63.62A2 2 0 0 1 22 16.9z"/></svg>' }),
@@ -1577,7 +1587,8 @@ async function viewTalk(root) {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       const session = await api('/api/voice/session', { method: 'POST', timeoutMs: 15000, body: { agentId: State.activeAgentId } });
       // Prefer the same-origin session response. A direct credentialed fetch to
-      // Dograh can be rejected by browsers when its CORS response uses `*`.
+      // Dograh can reject browsers when its CORS response uses `*`.
+      // Prefer same-origin proxy when available.
       const turn = session.turnCredentials || await fetchTurn(session.turnCredentialsUrl);
       const iceServers = [{ urls: ['stun:stun.l.google.com:19302'] }];
       if (turn && turn.uris && turn.uris.length) {
@@ -1601,7 +1612,7 @@ async function viewTalk(root) {
         catch (error) { setStatus('error', 'Signaling error'); toast(error.message || 'Realtime signaling failed.', 'err'); }
       };
       ws.onclose = (event) => { if (running && event.reason !== 'call ended') stopCall('Call ended'); };
-      await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = () => reject(new Error('Dograh signaling connection failed')); });
+      await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = () => reject(new Error('Realtime signaling connection failed')); });
       pc.onicecandidate = (event) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         console.log('Rumik WebRTC candidate', event.candidate ? event.candidate.type : 'complete');
@@ -1631,7 +1642,7 @@ async function viewTalk(root) {
   ]);
   const info = el('div', { class: 'talk-side' }, [el('div', { class: 'card card-pad' }, [
     el('h3', { class: 't-h3' }, 'The actual phone runtime'),
-    el('p', { class: 'muted' }, 'Your microphone is connected to Dograh over WebRTC. Dograh runs the same published workflow, Deepgram, Groq and Rumik pipeline used for phone calls.'),
+    el('p', { class: 'muted' }, 'Your microphone is connected over WebRTC. The published Astra workflow runs the same Deepgram, Groq and Rumik pipeline used for phone calls.'),
     el('hr', { class: 'divider' }),
     el('p', { class: 'muted' }, 'Turn detection, interruption, agent speech and latency now happen inside the call engine. Transcript text is a live diagnostic view, not the mechanism driving the page.'),
     el('p', { class: 'muted' }, 'Use End voice call to release the microphone and close the peer connection.')
@@ -2182,21 +2193,335 @@ function blobToBase64(blob) {
 }
 
 /* ===========================================================================
+   WORKFLOWS (Astra-first control plane)
+   =========================================================================== */
+async function ensureWorkflows(force) {
+  if (State.loaded.workflows && !force) return State.workflows || [];
+  const data = await api('/api/workflows');
+  State.workflows = data.workflows || [];
+  State.loaded.workflows = true;
+  return State.workflows;
+}
+
+async function ensureWorkflowTemplates(force) {
+  if (State.loaded.workflowTemplates && !force) return State.workflowTemplates || [];
+  const data = await api('/api/workflow-templates');
+  State.workflowTemplates = data.templates || [];
+  State.loaded.workflowTemplates = true;
+  return State.workflowTemplates;
+}
+
+function workflowStatusBadge(status) {
+  const s = String(status || 'draft');
+  const cls = s === 'published' ? 'badge-live' : (s === 'archived' ? 'badge-ready' : 'badge-ready');
+  return el('span', { class: cls }, [el('span', { class: 'd' }), s]);
+}
+
+async function viewWorkflows(root) {
+  const params = new URLSearchParams((location.hash.split('?')[1] || ''));
+  const createMode = params.get('create') === '1';
+  const editId = params.get('id');
+
+  if (createMode) return viewWorkflowCreate(root);
+  if (editId) return viewWorkflowBuilder(root, editId);
+
+  root.appendChild(viewHead(
+    'Workflows',
+    'Design call flows in Astra. Publish when ready. Runtime stays behind the scenes.'
+  ));
+
+  const actions = el('div', { class: 'flex gap-2', style: 'margin-bottom:16px' }, [
+    el('button', { class: 'btn btn-primary', onclick: () => { location.hash = '#/workflows?create=1'; } }, 'Create workflow')
+  ]);
+  root.appendChild(actions);
+
+  const host = el('div', { class: 'card card-pad', id: 'wfList' }, skeleton('sk-line', 5));
+  root.appendChild(host);
+
+  try {
+    const list = await ensureWorkflows(true);
+    paintWorkflowList(host, list);
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('div', { class: 'muted' }, 'Could not load workflows. ' + esc(e.message)));
+  }
+}
+
+function paintWorkflowList(host, list) {
+  host.innerHTML = '';
+  host.appendChild(el('div', { class: 'flex items-center justify-between', style: 'margin-bottom:14px' }, [
+    el('h3', { class: 't-h3' }, 'Your workflows'),
+    el('span', { class: 'pill' }, [el('span', { class: 'dot' }), String((list || []).length) + ' total'])
+  ]));
+
+  if (!list || !list.length) {
+    host.appendChild(el('div', { class: 'empty', style: 'padding:28px 12px' }, [
+      el('div', { class: 'ttl' }, 'No workflows yet'),
+      el('p', {}, 'Start from a template. Receptionist and outbound sales are good first picks.')
+    ]));
+    return;
+  }
+
+  const table = el('div', { class: 'wf-table' });
+  list.forEach((w) => {
+    const openBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Open');
+    openBtn.onclick = () => { location.hash = '#/workflows?id=' + encodeURIComponent(w.id); };
+    const meta = [
+      w.direction ? directionLabel(w.direction) : '',
+      w.agentName || (w.agentId ? 'Agent' : 'No agent'),
+      w.assignedNumberE164 || 'No number'
+    ].filter(Boolean).join(' · ');
+    table.appendChild(el('div', { class: 'wf-row' }, [
+      el('div', { class: 'wf-main' }, [
+        el('div', { class: 'wf-name' }, w.name),
+        el('div', { class: 'exp' }, meta)
+      ]),
+      workflowStatusBadge(w.status),
+      openBtn
+    ]));
+  });
+  host.appendChild(table);
+}
+
+async function viewWorkflowCreate(root) {
+  root.appendChild(viewHead(
+    'Create workflow',
+    'Pick a template first. You can edit stages after the draft is created.'
+  ));
+  root.appendChild(el('button', {
+    class: 'btn btn-ghost btn-sm', style: 'margin-bottom:14px',
+    onclick: () => { location.hash = '#/workflows'; }
+  }, 'Back to list'));
+
+  const host = el('div', { class: 'preset-grid', id: 'wfTemplates' }, skeleton('sk-card', 4));
+  root.appendChild(host);
+
+  try {
+    const templates = await ensureWorkflowTemplates(true);
+    host.innerHTML = '';
+    templates.forEach((t) => {
+      const btn = el('button', { class: 'btn btn-primary btn-sm' }, 'Use template');
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const created = await api('/api/workflows', {
+            method: 'POST',
+            body: { templateKey: t.key, name: t.name, description: t.description, direction: t.direction }
+          });
+          State.loaded.workflows = false;
+          toast('Draft created from ' + t.name + '.', 'ok');
+          location.hash = '#/workflows?id=' + encodeURIComponent(created.workflow.id);
+        } catch (ex) {
+          toast(ex.message || 'Create failed.', 'err');
+          btn.disabled = false;
+        }
+      };
+      host.appendChild(el('article', { class: 'card preset-card wf-template-card' }, [
+        el('div', { class: 'preset-icon' }, (t.name || '?').slice(0, 1)),
+        el('h3', { class: 't-h3' }, t.name),
+        el('p', { class: 'muted' }, t.description || ''),
+        el('div', { class: 'preset-meta' }, [
+          el('span', {}, directionLabel(t.direction)),
+          el('span', {}, t.key)
+        ]),
+        btn
+      ]));
+    });
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('div', { class: 'muted' }, e.message));
+  }
+}
+
+async function viewWorkflowBuilder(root, id) {
+  root.appendChild(viewHead('Workflow builder', 'Edit stages in order. Save a draft, then publish when the flow is ready.'));
+  root.appendChild(el('button', {
+    class: 'btn btn-ghost btn-sm', style: 'margin-bottom:14px',
+    onclick: () => { location.hash = '#/workflows'; }
+  }, 'Back to list'));
+
+  const host = el('div', { class: 'card card-pad' }, skeleton('sk-line', 6));
+  root.appendChild(host);
+
+  try {
+    await Promise.all([ensureAgents().catch(() => {}), ensureWorkflows()]);
+    const data = await api('/api/workflows/' + encodeURIComponent(id));
+    const wf = data.workflow;
+    paintWorkflowBuilder(host, wf);
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('div', { class: 'muted' }, 'Could not open workflow. ' + esc(e.message)));
+  }
+}
+
+function paintWorkflowBuilder(host, wf) {
+  host.innerHTML = '';
+  const isSuper = State.me && State.me.user && State.me.user.role === 'super_admin';
+  const nameI = el('input', { class: 'input', value: wf.name || '' });
+  const descI = el('textarea', { class: 'input', rows: '2' }, wf.description || '');
+  const dirSel = el('select', { class: 'select' }, [
+    el('option', { value: 'inbound' }, 'Inbound'),
+    el('option', { value: 'outbound' }, 'Outbound'),
+    el('option', { value: 'both' }, 'Both')
+  ]);
+  dirSel.value = wf.direction || 'both';
+  const agentSel = el('select', { class: 'select' }, [
+    el('option', { value: '' }, 'No primary agent')
+  ].concat((State.agents || []).map((a) => el('option', { value: a.id }, a.name))));
+  if (wf.agentId) agentSel.value = wf.agentId;
+
+  const nodes = ((wf.graphJson && wf.graphJson.nodes) || []).map((n) => ({ ...n }));
+  const stagesHost = el('div', { class: 'wf-stages' });
+
+  function paintStages() {
+    stagesHost.innerHTML = '';
+    nodes.forEach((n, idx) => {
+      if (n.type === 'global') return;
+      const nameField = el('input', { class: 'input', value: n.name || '' });
+      const promptField = el('textarea', { class: 'input', rows: '4' }, n.prompt || '');
+      nameField.oninput = () => { n.name = nameField.value; };
+      promptField.oninput = () => { n.prompt = promptField.value; };
+      const typeLabel = n.type === 'start' ? 'Start' : (n.type === 'end' ? 'End' : ('Stage ' + idx));
+      stagesHost.appendChild(el('div', { class: 'wf-stage' }, [
+        el('div', { class: 'wf-stage-head' }, [
+          el('span', { class: 'tag' }, typeLabel),
+          el('span', { class: 'muted' }, n.type || 'agent')
+        ]),
+        field('Name', nameField),
+        field('Prompt', promptField)
+      ]));
+    });
+    const global = nodes.find((n) => n.type === 'global');
+    if (global) {
+      const gPrompt = el('textarea', { class: 'input', rows: '4' }, global.prompt || '');
+      gPrompt.oninput = () => { global.prompt = gPrompt.value; };
+      stagesHost.appendChild(el('div', { class: 'wf-stage' }, [
+        el('div', { class: 'wf-stage-head' }, [el('span', { class: 'tag' }, 'Global rules')]),
+        field('Always-on prompt', gPrompt)
+      ]));
+    }
+  }
+  paintStages();
+
+  const addStageBtn = el('button', { class: 'btn btn-ghost btn-sm', type: 'button' }, 'Add stage');
+  addStageBtn.onclick = () => {
+    const endIdx = nodes.findIndex((n) => n.type === 'end');
+    const id = 'stage_' + Date.now().toString(36);
+    const stage = { id, type: 'agent', name: 'New stage', prompt: 'Describe what happens in this stage.', next: endIdx >= 0 ? nodes[endIdx].id : null };
+    // Relink previous agent/start next pointers.
+    const agents = nodes.filter((n) => n.type === 'start' || n.type === 'agent');
+    const last = agents[agents.length - 1];
+    if (last) last.next = id;
+    if (endIdx >= 0) nodes.splice(endIdx, 0, stage);
+    else nodes.push(stage);
+    paintStages();
+  };
+
+  const saveBtn = el('button', { class: 'btn btn-ghost' }, 'Save draft');
+  const publishBtn = el('button', { class: 'btn btn-primary' }, 'Publish');
+  const testBtn = el('button', { class: 'btn btn-ghost' }, 'Test');
+  testBtn.onclick = () => {
+    toast('Open Talk to it with an agent bound to this workflow to test the live voice path.', 'info');
+    goto('talk');
+  };
+
+  async function collectPayload() {
+    return {
+      name: nameI.value.trim(),
+      description: descI.value.trim(),
+      direction: dirSel.value,
+      agentId: agentSel.value || null,
+      graphJson: { version: 1, nodes: nodes.map((n) => ({
+        id: n.id, type: n.type, name: n.name, prompt: n.prompt, next: n.next || null
+      })) }
+    };
+  }
+
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    try {
+      const body = await collectPayload();
+      if (!body.name) { toast('Name is required.', 'err'); return; }
+      await api('/api/workflows/' + encodeURIComponent(wf.id), { method: 'PATCH', body });
+      State.loaded.workflows = false;
+      toast('Draft saved.', 'ok');
+    } catch (ex) {
+      toast(ex.message || 'Save failed.', 'err');
+    } finally {
+      saveBtn.disabled = false;
+    }
+  };
+
+  publishBtn.onclick = async () => {
+    publishBtn.disabled = true;
+    try {
+      const body = await collectPayload();
+      if (!body.name) { toast('Name is required.', 'err'); return; }
+      await api('/api/workflows/' + encodeURIComponent(wf.id), { method: 'PATCH', body });
+      const pub = await api('/api/workflows/' + encodeURIComponent(wf.id) + '/publish', { method: 'POST', body: {} });
+      State.loaded.workflows = false;
+      if (pub.syncError) toast('Published. Sync note: ' + pub.syncError, 'info');
+      else toast('Published.', 'ok');
+      const refreshed = await api('/api/workflows/' + encodeURIComponent(wf.id));
+      paintWorkflowBuilder(host, refreshed.workflow);
+    } catch (ex) {
+      toast(ex.message || 'Publish failed.', 'err');
+    } finally {
+      publishBtn.disabled = false;
+    }
+  };
+
+  const metaRow = el('div', { class: 'flex gap-2 items-center', style: 'margin-bottom:12px;flex-wrap:wrap' }, [
+    workflowStatusBadge(wf.status),
+    el('span', { class: 'tag' }, 'v' + (wf.version || 1)),
+    wf.assignedNumberE164 ? el('span', { class: 'tag' }, wf.assignedNumberE164) : null
+  ]);
+
+  host.appendChild(metaRow);
+  host.appendChild(el('div', { class: 'form-grid' }, [
+    field('Name', nameI),
+    field('Direction', dirSel),
+    (function () { const f = field('Description', descI); f.classList.add('full'); return f; })(),
+    field('Primary agent', agentSel)
+  ]));
+  host.appendChild(el('div', { class: 'flex items-center justify-between', style: 'margin:18px 0 10px' }, [
+    el('h3', { class: 't-h3' }, 'Stages'),
+    addStageBtn
+  ]));
+  host.appendChild(stagesHost);
+  host.appendChild(el('div', { class: 'flex gap-2', style: 'margin-top:18px;flex-wrap:wrap' }, [saveBtn, testBtn, publishBtn]));
+
+  if (isSuper) {
+    host.appendChild(el('div', { class: 'inbound-note', style: 'margin-top:18px' }, [
+      el('b', {}, 'Super Admin · provider mapping'),
+      el('div', { class: 'muted', style: 'margin-top:6px' },
+        'provider=' + esc(wf.provider || 'dograh')
+        + ' · providerWorkflowId=' + esc(wf.providerWorkflowId != null ? String(wf.providerWorkflowId) : 'none')
+        + ' · sync=' + esc(wf.syncStatus || 'n/a')
+        + (wf.syncError ? (' · ' + esc(wf.syncError)) : ''))
+    ]));
+  }
+}
+
+/* ===========================================================================
    5. PHONE NUMBERS (Astra-first inventory + assign)
    =========================================================================== */
 async function ensurePhoneNumbers(force) {
   if (State.loaded.phoneNumbers && !force) {
     return { numbers: State.phoneNumbers || [], available: State.availableNumbers || [] };
   }
-  const [mine, avail, agentsRes] = await Promise.all([
+  const [mine, avail, agentsRes, wfRes] = await Promise.all([
     api('/api/phone-numbers'),
     api('/api/phone-numbers/available'),
     State.loaded.agents ? Promise.resolve({ agents: State.agents }) : api('/api/agents'),
+    State.loaded.workflows ? Promise.resolve({ workflows: State.workflows }) : api('/api/workflows').catch(() => ({ workflows: [] })),
   ]);
   State.phoneNumbers = mine.numbers || [];
   State.availableNumbers = avail.numbers || [];
   State.agents = agentsRes.agents || State.agents || [];
+  State.workflows = wfRes.workflows || State.workflows || [];
   State.loaded.agents = true;
+  State.loaded.workflows = true;
   State.loaded.phoneNumbers = true;
   return { numbers: State.phoneNumbers, available: State.availableNumbers };
 }
@@ -2295,7 +2620,9 @@ function paintAssignedNumbers(host, numbers) {
     host.appendChild(el('div', { class: 'did-row pn-row' }, [
       el('div', {}, [
         el('div', { class: 'num' }, n.e164),
-        el('div', { class: 'exp' }, (n.label || 'Astra number') + (n.assignedAgentName ? ' · ' + n.assignedAgentName : ''))
+        el('div', { class: 'exp' }, (n.label || 'Astra number')
+          + (n.assignedAgentName ? ' · ' + n.assignedAgentName : '')
+          + (n.inboundWorkflowName ? ' · ' + n.inboundWorkflowName : ''))
       ]),
       el('div', { class: 'pn-actions' }, [inbound, outbound, unassignBtn])
     ]));
@@ -2326,6 +2653,16 @@ function paintAvailableNumbers(host, numbers) {
     const agentSel = el('select', { class: 'select' }, [
       el('option', { value: '' }, 'Select agent')
     ].concat((State.agents || []).map((a) => el('option', { value: a.id }, a.name))));
+    const inboundWf = (State.workflows || []).filter((w) => w.status !== 'archived' && (w.direction === 'inbound' || w.direction === 'both'));
+    const outboundWf = (State.workflows || []).filter((w) => w.status !== 'archived' && (w.direction === 'outbound' || w.direction === 'both'));
+    const inSel = el('select', { class: 'select' }, [
+      el('option', { value: '' }, 'Inbound workflow')
+    ].concat(inboundWf.map((w) => el('option', { value: w.id }, w.name))));
+    const outSel = el('select', { class: 'select' }, [
+      el('option', { value: '' }, 'Outbound workflow')
+    ].concat(outboundWf.map((w) => el('option', { value: w.id }, w.name))));
+    const seeded = (State.workflows || []).find((w) => w.name === 'AstraNova Receptionist' && w.status === 'published');
+    if (seeded) inSel.value = seeded.id;
     const assignBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Assign');
     assignBtn.onclick = async () => {
       const agentId = agentSel.value;
@@ -2334,7 +2671,13 @@ function paintAvailableNumbers(host, numbers) {
       try {
         await api('/api/phone-numbers/' + encodeURIComponent(n.id) + '/assign', {
           method: 'POST',
-          body: { agentId, inboundEnabled: true, outboundEnabled: true }
+          body: {
+            agentId,
+            inboundEnabled: true,
+            outboundEnabled: true,
+            inboundWorkflowId: inSel.value || undefined,
+            outboundWorkflowId: outSel.value || undefined
+          }
         });
         State.loaded.phoneNumbers = false;
         State.loaded.agents = false;
@@ -2348,12 +2691,12 @@ function paintAvailableNumbers(host, numbers) {
       }
     };
 
-    host.appendChild(el('div', { class: 'did-row pn-row' }, [
+    host.appendChild(el('div', { class: 'did-row pn-row pn-row-assign' }, [
       el('div', {}, [
         el('div', { class: 'num' }, n.e164),
         el('div', { class: 'exp' }, n.label || 'Available Astra number')
       ]),
-      el('div', { class: 'pn-assign' }, [agentSel, assignBtn])
+      el('div', { class: 'pn-assign' }, [agentSel, inSel, outSel, assignBtn])
     ]));
   });
 }
@@ -2675,7 +3018,7 @@ function latChip(label, ms) {
    =========================================================================== */
 async function viewPresets(root) {
   root.appendChild(viewHead('Agent presets', 'Browse by agent type. Each preset is a deployable starting point with a clear direction and job to do.'));
-  const notice = el('div', { class: 'inbound-note', style: 'margin:0 0 18px' }, 'AstraNova English Receptionist maps to live Dograh workflow 8 (Astanova v2 ENG). Outbound Jerry still uses workflow key outbound_callback until its Dograh id is assigned. Industry presets stay editable and do not auto-bill.');
+  const notice = el('div', { class: 'inbound-note', style: 'margin:0 0 18px' }, 'AstraNova Receptionist is the live inbound starting point. Outbound Jerry follows permission, discovery, then reschedule. Industry presets stay editable and do not auto-bill.');
   const host = el('div', { id: 'presetGroups', class: 'preset-groups' }, skeleton('sk-card', 4));
   root.appendChild(notice); root.appendChild(host);
   try {
@@ -2720,9 +3063,7 @@ async function viewPresets(root) {
 function presetCard(p, type) {
   const typeMeta = type || agentTypeMeta(p.agentType);
   const typeLabel = (typeMeta && typeMeta.label) || p.agentType || 'custom';
-  const workflowBit = p.dograhWorkflowId != null
-    ? ('Workflow ' + p.dograhWorkflowId)
-    : (p.dograhWorkflowKey ? ('Key: ' + p.dograhWorkflowKey) : null);
+  const workflowBit = p.direction === 'outbound' ? 'Outbound pattern' : (p.direction === 'inbound' ? 'Inbound pattern' : null);
   return el('article', { class: 'card preset-card' }, [
     el('div', { class: 'preset-icon' }, (p.name || '?').slice(0, 1)),
     el('div', { class: 'flex items-center justify-between gap-2' }, [
@@ -3341,7 +3682,7 @@ async function viewSettings(root) {
     try { await api('/api/privacy', { method: 'POST', body: { mode: privacySelect.value } }); toast('Privacy mode saved.', 'ok'); }
     catch (e) { toast(e.message, 'err'); } finally { privacySave.disabled = false; }
   };
-  const provider = el('select', { class: 'select' }, [el('option', { value: 'vobiz' }, 'VoBiz'), el('option', { value: 'telnyx' }, 'Telnyx'), el('option', { value: 'sip' }, 'SIP trunk')]);
+  const provider = el('select', { class: 'select' }, [el('option', { value: 'vobiz' }, 'Bring your own trunk'), el('option', { value: 'telnyx' }, 'Telnyx'), el('option', { value: 'sip' }, 'SIP trunk')]);
   const address = el('input', { class: 'input', placeholder: 'Verified E.164 number or SIP address' });
   const label = el('input', { class: 'input', placeholder: 'Main sales line' });
   const byonList = el('div', { class: 'byon-list muted' }, 'Loading connections...');

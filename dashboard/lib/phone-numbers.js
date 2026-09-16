@@ -132,9 +132,11 @@ function upsertProviderResource(db, number) {
 }
 
 /** Client-safe shape. Never includes API keys or raw Dograh resource ids. */
-function publicPhoneNumber(n, agentsById) {
+function publicPhoneNumber(n, agentsById, workflowsById) {
   if (!n) return null;
   const agent = n.assignedAgentId && agentsById ? agentsById.get(n.assignedAgentId) : null;
+  const inboundWf = n.inboundWorkflowId && workflowsById ? workflowsById.get(n.inboundWorkflowId) : null;
+  const outboundWf = n.outboundWorkflowId && workflowsById ? workflowsById.get(n.outboundWorkflowId) : null;
   return {
     id: n.id,
     e164: n.e164,
@@ -147,6 +149,10 @@ function publicPhoneNumber(n, agentsById) {
     assignedAgentName: agent ? agent.name : null,
     inboundEnabled: n.inboundEnabled !== false,
     outboundEnabled: n.outboundEnabled !== false,
+    inboundWorkflowId: n.inboundWorkflowId || null,
+    outboundWorkflowId: n.outboundWorkflowId || null,
+    inboundWorkflowName: inboundWf ? inboundWf.name : null,
+    outboundWorkflowName: outboundWf ? outboundWf.name : null,
     createdAt: n.createdAt,
     updatedAt: n.updatedAt,
   };
@@ -165,10 +171,66 @@ function findNumber(db, id) {
 }
 
 /**
+ * Resolve Astra workflow ids to Dograh provider ids for dial / inbound config.
+ * Accepts optional workflows module helpers via opts to avoid a hard cycle.
+ */
+function applyWorkflowBindings(db, number, tenantId, {
+  inboundWorkflowId,
+  outboundWorkflowId,
+  resolveProviderWorkflowId,
+}) {
+  const meta = { ...(number.providerMetadata || {}) };
+  if (inboundWorkflowId !== undefined) {
+    if (inboundWorkflowId) {
+      const wfId = String(inboundWorkflowId);
+      const wf = (db.workflows || []).find((w) => w.id === wfId && w.tenantId === tenantId);
+      if (!wf) return { ok: false, status: 404, code: 'workflow_not_found', error: 'inbound workflow not found' };
+      number.inboundWorkflowId = wf.id;
+      meta.inboundAstraWorkflowId = wf.id;
+      const dograhId = typeof resolveProviderWorkflowId === 'function'
+        ? resolveProviderWorkflowId(db, tenantId, wf.id)
+        : (wf.providerWorkflowId != null ? Number(wf.providerWorkflowId) : null);
+      if (Number.isInteger(dograhId) && dograhId > 0) {
+        meta.inboundWorkflowId = dograhId;
+        meta.providerInboundWorkflowId = dograhId;
+      }
+    } else {
+      number.inboundWorkflowId = null;
+      delete meta.inboundAstraWorkflowId;
+    }
+  }
+  if (outboundWorkflowId !== undefined) {
+    if (outboundWorkflowId) {
+      const wfId = String(outboundWorkflowId);
+      const wf = (db.workflows || []).find((w) => w.id === wfId && w.tenantId === tenantId);
+      if (!wf) return { ok: false, status: 404, code: 'workflow_not_found', error: 'outbound workflow not found' };
+      number.outboundWorkflowId = wf.id;
+      meta.outboundAstraWorkflowId = wf.id;
+      const dograhId = typeof resolveProviderWorkflowId === 'function'
+        ? resolveProviderWorkflowId(db, tenantId, wf.id)
+        : (wf.providerWorkflowId != null ? Number(wf.providerWorkflowId) : null);
+      if (Number.isInteger(dograhId) && dograhId > 0) {
+        meta.outboundWorkflowId = dograhId;
+        meta.providerOutboundWorkflowId = dograhId;
+      }
+    } else {
+      number.outboundWorkflowId = null;
+      delete meta.outboundAstraWorkflowId;
+    }
+  }
+  number.providerMetadata = meta;
+  return { ok: true };
+}
+
+/**
  * Assign a platform-available number to a tenant agent.
+ * inboundWorkflowId / outboundWorkflowId are Astra workflow ids (wf_...).
  * Returns { ok, status, code, error, number } so routes can map to HTTP.
  */
-function assignNumber(db, { numberId, tenantId, agentId, inboundEnabled, outboundEnabled }) {
+function assignNumber(db, {
+  numberId, tenantId, agentId, inboundEnabled, outboundEnabled,
+  inboundWorkflowId, outboundWorkflowId, resolveProviderWorkflowId,
+}) {
   const number = findNumber(db, numberId);
   if (!number || number.status === 'released') {
     return { ok: false, status: 404, code: 'not_found', error: 'phone number not found' };
@@ -211,6 +273,26 @@ function assignNumber(db, { numberId, tenantId, agentId, inboundEnabled, outboun
   if (outboundEnabled !== undefined) number.outboundEnabled = !!outboundEnabled;
   if (number.inboundEnabled === undefined) number.inboundEnabled = true;
   if (number.outboundEnabled === undefined) number.outboundEnabled = true;
+
+  if (inboundWorkflowId !== undefined || outboundWorkflowId !== undefined) {
+    const bind = applyWorkflowBindings(db, number, tenantId, {
+      inboundWorkflowId, outboundWorkflowId, resolveProviderWorkflowId,
+    });
+    if (!bind.ok) return bind;
+  } else if (!number.inboundWorkflowId) {
+    // Prefer seeded Astra receptionist mapping when present for this tenant.
+    const seeded = (db.workflows || []).find((w) =>
+      w.tenantId === tenantId
+      && String(w.providerWorkflowId) === String(SEED_INVENTORY.inboundWorkflowId)
+      && w.status === 'published');
+    if (seeded) {
+      applyWorkflowBindings(db, number, tenantId, {
+        inboundWorkflowId: seeded.id,
+        resolveProviderWorkflowId,
+      });
+    }
+  }
+
   number.updatedAt = ts;
 
   agent.telephony = {
@@ -250,7 +332,10 @@ function unassignNumber(db, { numberId, tenantId }) {
   return { ok: true, number };
 }
 
-function patchNumber(db, { numberId, tenantId, inboundEnabled, outboundEnabled }) {
+function patchNumber(db, {
+  numberId, tenantId, inboundEnabled, outboundEnabled,
+  inboundWorkflowId, outboundWorkflowId, resolveProviderWorkflowId,
+}) {
   const number = findNumber(db, numberId);
   if (!number || number.status === 'released') {
     return { ok: false, status: 404, code: 'not_found', error: 'phone number not found' };
@@ -258,11 +343,18 @@ function patchNumber(db, { numberId, tenantId, inboundEnabled, outboundEnabled }
   if (number.tenantId !== tenantId) {
     return { ok: false, status: 403, code: 'forbidden', error: 'phone number belongs to another workspace' };
   }
-  if (inboundEnabled === undefined && outboundEnabled === undefined) {
-    return { ok: false, status: 422, code: 'no_changes', error: 'provide inboundEnabled and/or outboundEnabled' };
+  const hasWorkflowPatch = inboundWorkflowId !== undefined || outboundWorkflowId !== undefined;
+  if (inboundEnabled === undefined && outboundEnabled === undefined && !hasWorkflowPatch) {
+    return { ok: false, status: 422, code: 'no_changes', error: 'provide inboundEnabled, outboundEnabled, and/or workflow ids' };
   }
   if (inboundEnabled !== undefined) number.inboundEnabled = !!inboundEnabled;
   if (outboundEnabled !== undefined) number.outboundEnabled = !!outboundEnabled;
+  if (hasWorkflowPatch) {
+    const bind = applyWorkflowBindings(db, number, tenantId, {
+      inboundWorkflowId, outboundWorkflowId, resolveProviderWorkflowId,
+    });
+    if (!bind.ok) return bind;
+  }
   number.updatedAt = nowIso();
   return { ok: true, number };
 }
@@ -286,7 +378,10 @@ function softReleaseNumber(db, { numberId, tenantId }) {
   return { ok: true, number };
 }
 
-/** Dial helper: pick the tenant's outbound-enabled assigned number metadata. */
+/**
+ * Dial helper: pick the tenant's outbound-enabled assigned number metadata.
+ * Resolves Astra outboundWorkflowId → Dograh workflow id when available.
+ */
 function outboundDialContext(db, tenantId) {
   const assigned = (db.phoneNumbers || []).find((n) =>
     n.tenantId === tenantId
@@ -294,11 +389,29 @@ function outboundDialContext(db, tenantId) {
     && n.outboundEnabled !== false);
   if (!assigned) return null;
   const meta = assigned.providerMetadata || {};
+  let workflowId = meta.outboundWorkflowId || meta.providerOutboundWorkflowId
+    || meta.inboundWorkflowId || meta.providerInboundWorkflowId || null;
+  if (assigned.outboundWorkflowId) {
+    const wf = (db.workflows || []).find((w) => w.id === assigned.outboundWorkflowId && w.tenantId === tenantId);
+    if (wf && wf.providerWorkflowId != null) {
+      const n = Number(wf.providerWorkflowId);
+      if (Number.isInteger(n) && n > 0) workflowId = n;
+    }
+  } else if (assigned.inboundWorkflowId) {
+    const wf = (db.workflows || []).find((w) => w.id === assigned.inboundWorkflowId && w.tenantId === tenantId);
+    if (wf && wf.providerWorkflowId != null) {
+      const n = Number(wf.providerWorkflowId);
+      if (Number.isInteger(n) && n > 0) workflowId = n;
+    }
+  }
   return {
     phoneNumberId: assigned.id,
     e164: assigned.e164,
     dograhTelephonyConfigId: meta.dograhTelephonyConfigId || null,
     dograhPhoneNumberId: meta.dograhPhoneNumberId || Number(assigned.providerNumberId) || null,
+    workflowId: Number.isInteger(Number(workflowId)) && Number(workflowId) > 0 ? Number(workflowId) : null,
+    inboundWorkflowId: assigned.inboundWorkflowId || null,
+    outboundWorkflowId: assigned.outboundWorkflowId || null,
   };
 }
 
@@ -316,6 +429,7 @@ module.exports = {
   patchNumber,
   softReleaseNumber,
   outboundDialContext,
+  applyWorkflowBindings,
   normalizeE164,
   digitsOnly,
   upsertProviderResource,

@@ -138,6 +138,31 @@
   content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
   width: 2.5px; height: 16px; border-radius: 99px; background: var(--grad-volt);
 }
+.nav-group {
+  margin: 14px 11px 6px;
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 650;
+}
+.wf-table { display: flex; flex-direction: column; gap: 8px; }
+.wf-row {
+  display: flex; align-items: center; gap: 12px; justify-content: space-between;
+  padding: 12px 4px; border-bottom: 1px solid var(--line);
+}
+.wf-row:last-child { border-bottom: 0; }
+.wf-main { min-width: 0; flex: 1; }
+.wf-name { font-weight: 620; color: var(--ink); }
+.wf-stages { display: flex; flex-direction: column; gap: 14px; }
+.wf-stage {
+  padding: 14px; border: 1px solid var(--line-2); border-radius: var(--r);
+  background: rgba(255,255,255,0.02);
+}
+.wf-stage-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 8px; }
+.wf-template-card .btn { margin-top: 12px; }
+.pn-row-assign .pn-assign { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pn-row-assign .pn-assign .select { min-width: 140px; max-width: 200px; }
 .side-foot { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
 .tenant-chip {
   display: flex; align-items: center; gap: 10px; padding: 10px 11px; border-radius: var(--r);
