@@ -66,7 +66,7 @@
       "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>" +
       "<stop offset='0' stop-color='#6B21A8'/><stop offset='0.55' stop-color='#7C3AED'/>" +
       "<stop offset='1' stop-color='#06B6D4'/></linearGradient></defs>" +
-      "<rect width='640' height='400' fill='#0A0A0A'/>" +
+      "<rect width='640' height='400' fill='#FFFFFF'/>" +
       "<rect width='640' height='400' fill='url(#g)' opacity='0.16'/>" +
       "<circle cx='320' cy='168' r='54' fill='none' stroke='url(#g)' stroke-width='3'/>" +
       "<path d='M300 168h6l5-16 9 32 5-16h10' fill='none' stroke='url(#g)' stroke-width='3' " +
