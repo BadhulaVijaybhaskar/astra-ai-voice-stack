@@ -27,6 +27,7 @@ const callback = require('./lib/callback');
 const phoneNumbers = require('./lib/phone-numbers');
 const { createDefaultTelephonyProvider, TelephonyProviderError } = require('./lib/telephony-provider');
 const { AGENT_TYPES, seedPresets, publicPreset, applyPresetToAgent, normalizeAgentType } = require('./lib/agent-types');
+const org = require('./lib/org');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
 
@@ -181,11 +182,8 @@ function publicUser(u) {
   return { id: u.id, tenantId: u.tenantId, email: u.email, name: u.name, role: u.role, status: u.status, createdAt: u.createdAt };
 }
 function publicTenant(t) {
-  return {
-    id: t.id, name: t.name, slug: t.slug, createdAt: t.createdAt,
-    branding: t.branding, providers: t.providers, plan: t.plan,
-    status: t.status, privacyMode: t.privacyMode,
-  };
+  // Workspace and organization are product aliases for the same tenant record.
+  return org.publicWorkspace(t);
 }
 function publicAgent(a) {
   return {
@@ -1222,7 +1220,38 @@ function apiMembers(req, res, ctx) {
 }
 
 function apiAudit(req, res, ctx) {
-  core.sendJson(res, 200, { auditEvents: core.db().auditEvents.filter((e) => e.tenantId === ctx.tenant.id).slice(-200).reverse() });
+  const events = core.db().auditEvents
+    .filter((e) => e.tenantId === ctx.tenant.id)
+    .slice(-200)
+    .reverse()
+    .map(org.publicAuditEvent);
+  core.sendJson(res, 200, { auditEvents: events });
+}
+
+async function apiTenantUpdate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const parsed = org.sanitizeTenantUpdate(ctx.body || {});
+  if (!parsed.ok) return core.sendJson(res, parsed.status, { error: parsed.error, code: parsed.code });
+  let tenant;
+  await core.mutate((d) => {
+    const row = d.tenants.find((t) => t.id === ctx.tenant.id);
+    if (!row) throw new Error('tenant missing');
+    row.name = parsed.name;
+    if (parsed.color) row.branding = Object.assign({}, row.branding || {}, { color: parsed.color });
+    addAudit(d, ctx, 'tenant.updated', 'tenant', row.id, { name: row.name });
+    tenant = row;
+  });
+  core.sendJson(res, 200, { tenant: publicTenant(tenant) });
+}
+
+function apiAdminProviderHealth(req, res) {
+  const described = providers.describeProviders();
+  const health = org.providerHealthSummary(described);
+  const check = org.assertNoSecretValues(health);
+  if (!check.ok) {
+    return core.sendJson(res, 500, { error: 'provider health refused to leak secrets', code: 'secret_guard' });
+  }
+  core.sendJson(res, 200, { providers: health });
 }
 
 async function apiMemberRole(req, res, ctx) {
@@ -1247,7 +1276,9 @@ function apiAdminTenants(req, res) {
 
 function apiAdminUsers(req, res) { core.sendJson(res, 200, { users: core.db().users.map(publicUser) }); }
 
-function apiAdminAudit(req, res) { core.sendJson(res, 200, { auditEvents: core.db().auditEvents.slice(-500).reverse() }); }
+function apiAdminAudit(req, res) {
+  core.sendJson(res, 200, { auditEvents: core.db().auditEvents.slice(-500).reverse().map(org.publicAuditEvent) });
+}
 
 function apiAdminTickets(req, res) {
   const d = core.db();
@@ -1463,6 +1494,7 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/admin/tickets') return core.requireRole(req, res, 'admin', apiAdminTickets);
         if (route === '/api/admin/tenant-detail') return core.requireRole(req, res, 'super_admin', apiAdminTenantDetail);
         if (route === '/api/admin/payment-events') return core.requireRole(req, res, 'admin', apiAdminPaymentEvents);
+        if (route === '/api/admin/providers') return core.requireRole(req, res, 'admin', apiAdminProviderHealth);
         if (route === '/api/hvac/desk') return core.requireAuth(req, res, apiHvacDesk);
         if (route === '/api/hvac/event-types') return core.requireAuth(req, res, apiHvacEventTypes);
         if (route === '/api/hvac/slots') return core.requireAuth(req, res, apiHvacSlots);
@@ -1545,6 +1577,7 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/payment-intents') return core.requireAuth(req, res, apiPaymentIntentCreate, body);
       if (route === '/api/support/tickets') return core.requireAuth(req, res, apiSupportCreate, body);
       if (route === '/api/support/tickets/reply') return core.requireAuth(req, res, apiSupportReply, body);
+      if (route === '/api/tenant/update') return core.requireRole(req, res, 'owner', apiTenantUpdate, body);
       if (route === '/api/byon') return core.requireRole(req, res, 'owner', apiByonSave, body);
       if (route === '/api/privacy') return core.requireRole(req, res, 'owner', apiPrivacyMode, body);
       if (route === '/api/members/role') return core.requireRole(req, res, 'owner', apiMemberRole, body);

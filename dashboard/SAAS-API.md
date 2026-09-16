@@ -15,7 +15,8 @@ All endpoints use the existing `rxv_sess` HttpOnly cookie. Every customer resour
 
 ## Tenant APIs
 
-- `GET /api/me` returns `{user,tenant}`.
+- `GET /api/me` returns `{user,tenant}`. Tenant includes `workspaceName` and `organizationName` aliases for `name`.
+- `POST /api/tenant/update` with `{name|workspaceName,color}` updates the workspace. Owner required. Emits `tenant.updated`.
 - `GET /api/wallet` returns `{wallet,ledger}`. Wallet includes `balancePaise` and display-only `balanceInr`.
 - `GET /api/payment-intents` returns `{paymentIntents}`.
 - `POST /api/payment-intents` with `{packId,firstname,phone}` accepts server-owned packs `starter`, `growth`, or `scale`. It returns `{paymentIntent,checkoutReady,checkout,message}`. When PayU and a public HTTPS origin are configured, `checkout` contains the hosted-checkout URL and signed fields. Secrets and the intent token are never returned.
@@ -64,6 +65,7 @@ Dograh's published workflow remains the runtime authority for phone and browser 
 - `GET /api/admin/overview` returns `{totals:{tenants,users,openTickets,walletPaise,calls}}`. Super admin required.
 - `GET /api/admin/tenants` returns `{tenants}` with user count and wallet. Super admin required.
 - `GET /api/admin/users` returns `{users}`. Super admin required.
+- `GET /api/admin/providers` returns provider health with `configured` booleans and env key **names** only. Never returns secret values. Admin required.
 - `GET /api/admin/audit` returns the latest 500 platform audit events. Admin required.
 - `GET /api/admin/tickets` returns `{tickets}`. Admin required.
 - `POST /api/admin/tenants/status` with `{tenantId,status}` accepts `active`, `suspended`, or `closed`. Super admin required and revokes sessions when inactive.

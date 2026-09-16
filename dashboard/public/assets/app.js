@@ -2832,27 +2832,67 @@ function ticketCard(t, admin) {
 async function viewAdmin(root) {
   if (!State.me || !['super_admin', 'admin'].includes(State.me.user.role)) { goto('overview'); return; }
   const superAdmin = State.me.user.role === 'super_admin';
-  root.appendChild(viewHead(superAdmin ? 'Super admin' : 'Operations admin', 'Users, workspaces, phone numbers, calls, billing, support, and immutable audit history.'));
+  root.appendChild(viewHead(superAdmin ? 'Super admin' : 'Operations admin', 'Users, workspaces, provider health, billing, support, and immutable audit history. Secrets stay in .env.'));
   const stats = el('div', { class: 'grid grid-3' }, skeleton('sk-stat', 5));
+  const healthHost = el('div', { class: 'card card-pad admin-table' }, skeleton('sk-card', 1));
   const tenantHost = el('div', { class: 'card card-pad admin-table' }, skeleton('sk-card', 1));
   const ticketHost = el('div', { class: 'ticket-list' }, skeleton('sk-card', 2));
   const eventHost = el('div', { class: 'card card-pad admin-table' }, skeleton('sk-card', 1));
-  root.appendChild(stats); root.appendChild(el('div', { class: 'admin-layout' }, [tenantHost, ticketHost])); root.appendChild(eventHost);
+  const auditHost = el('div', { class: 'card card-pad admin-table' }, skeleton('sk-card', 1));
+  root.appendChild(stats);
+  root.appendChild(healthHost);
+  root.appendChild(el('div', { class: 'admin-layout' }, [tenantHost, ticketHost]));
+  root.appendChild(eventHost);
+  root.appendChild(auditHost);
   try {
-    const calls = [api('/api/admin/tickets'), api('/api/admin/payment-events')];
+    const calls = [api('/api/admin/tickets'), api('/api/admin/payment-events'), api('/api/admin/providers'), api('/api/admin/audit')];
     if (superAdmin) calls.unshift(api('/api/admin/overview'), api('/api/admin/tenants'), api('/api/admin/users'));
     const data = await Promise.all(calls);
-    const o = superAdmin ? data[0] : { totals: {} }, ts = superAdmin ? data[1] : { tenants: [] }, users = superAdmin ? data[2] : { users: [] }, tickets = data[superAdmin ? 3 : 0], events = data[superAdmin ? 4 : 1];
+    const o = superAdmin ? data[0] : { totals: {} };
+    const ts = superAdmin ? data[1] : { tenants: [] };
+    const users = superAdmin ? data[2] : { users: [] };
+    const offset = superAdmin ? 3 : 0;
+    const tickets = data[offset];
+    const events = data[offset + 1];
+    const health = data[offset + 2];
+    const audit = data[offset + 3];
     stats.innerHTML = '';
     const totals = o.totals || {};
-    [['Tenants', totals.tenants || 'Restricted'], ['Users', totals.users || 'Restricted'], ['Open tickets', totals.openTickets != null ? totals.openTickets : (tickets.tickets || []).filter((t) => t.status !== 'closed').length], ['Wallet total', superAdmin ? '₹' + fmtInr((totals.walletPaise || 0) / 100) : 'Restricted'], ['Calls', superAdmin ? totals.calls : 'Restricted']].forEach((x) => stats.appendChild(statCard(x[0], String(x[1] || 0), 'All workspaces')));
-    tenantHost.innerHTML = ''; tenantHost.appendChild(el('h3', { class: 't-h3' }, 'Tenants'));
+    [['Workspaces', totals.tenants || 'Restricted'], ['Users', totals.users || 'Restricted'], ['Open tickets', totals.openTickets != null ? totals.openTickets : (tickets.tickets || []).filter((t) => t.status !== 'closed').length], ['Wallet total', superAdmin ? '₹' + fmtInr((totals.walletPaise || 0) / 100) : 'Restricted'], ['Calls', superAdmin ? totals.calls : 'Restricted']].forEach((x) => stats.appendChild(statCard(x[0], String(x[1] || 0), 'All workspaces')));
+    healthHost.innerHTML = '';
+    healthHost.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, 'Provider health'));
+    healthHost.appendChild(el('p', { class: 'muted', style: 'margin-bottom:12px' }, 'Configured true/false only. API key values are never returned.'));
+    const layers = health.providers || {};
+    Object.keys(layers).forEach((layer) => {
+      (layers[layer] || []).forEach((p) => {
+        healthHost.appendChild(el('div', { class: 'admin-row' }, [
+          el('div', {}, [el('b', {}, (p.label || p.id) + ' · ' + layer), el('small', { class: 'muted' }, (p.needs || []).join(', ') || 'No env keys')]),
+          el('span', { class: 'pill' }, p.configured ? 'configured' : 'missing')
+        ]));
+      });
+    });
+    tenantHost.innerHTML = ''; tenantHost.appendChild(el('h3', { class: 't-h3' }, 'Workspaces'));
     if (superAdmin) (ts.tenants || []).forEach((t) => tenantHost.appendChild(adminTenantRow(t, (users.users || []).filter((u) => u.tenantId === t.id))));
-    else tenantHost.appendChild(el('div', { class: 'muted' }, 'Tenant controls require super admin access.'));
+    else tenantHost.appendChild(el('div', { class: 'muted' }, 'Workspace controls require super admin access.'));
+    if (superAdmin) {
+      const usersCard = el('div', { class: 'card card-pad', style: 'margin-top:12px' }, [el('h3', { class: 't-h3' }, 'Users')]);
+      (users.users || []).slice(0, 40).forEach((u) => usersCard.appendChild(el('div', { class: 'admin-row' }, [
+        el('div', {}, [el('b', {}, u.email), el('small', { class: 'muted' }, (u.name || '') + ' · ' + (u.role || ''))]),
+        el('span', { class: 'pill' }, u.status || 'active')
+      ])));
+      tenantHost.appendChild(usersCard);
+    }
     ticketHost.innerHTML = ''; (tickets.tickets || []).forEach((t) => ticketHost.appendChild(ticketCard(t, true)));
     eventHost.innerHTML = ''; eventHost.appendChild(el('h3', { class: 't-h3' }, 'PayU webhook log'));
     (events.events || []).slice(0, 25).forEach((e) => eventHost.appendChild(el('div', { class: 'admin-row' }, [el('div', {}, [el('b', {}, e.txnid || 'Unknown transaction'), el('small', { class: 'muted' }, (e.reason || '') + ' · ' + (e.createdAt || ''))]), el('span', { class: 'pill' }, e.status || 'received')])));
     if (!(events.events || []).length) eventHost.appendChild(el('div', { class: 'muted' }, 'No PayU webhooks received yet.'));
+    auditHost.innerHTML = '';
+    auditHost.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, 'Platform audit'));
+    (audit.auditEvents || []).slice(0, 40).forEach((e) => auditHost.appendChild(el('div', { class: 'admin-row' }, [
+      el('div', {}, [el('b', {}, e.action || 'event'), el('small', { class: 'muted' }, (e.targetType || '') + ' ' + (e.targetId || '') + ' · ' + (e.createdAt || ''))]),
+      el('span', { class: 'pill' }, e.tenantId || 'platform')
+    ])));
+    if (!(audit.auditEvents || []).length) auditHost.appendChild(el('div', { class: 'muted' }, 'No audit events yet.'));
   } catch (e) { tenantHost.innerHTML = ''; tenantHost.appendChild(el('div', { class: 'muted' }, e.message)); }
 }
 
@@ -2911,12 +2951,13 @@ function adjustWallet(t) {
    7. SETTINGS
    =========================================================================== */
 async function viewSettings(root) {
-  root.appendChild(viewHead('Settings', 'Implemented providers, selected server defaults, and your tenant identity. Live call workflows are configured separately.'));
+  root.appendChild(viewHead('Settings', 'Workspace identity, members, audit history, and implemented providers. Secrets stay in server .env only.'));
 
   const provHost = el('div', { id: 'provHost' }, skeleton('sk-card', 3));
   root.appendChild(provHost);
 
   const t = State.me.tenant;
+  const isOwner = State.me && ['super_admin', 'admin', 'owner'].includes(State.me.user.role);
   const nameI = el('input', { class: 'input', id: 'set_name', type: 'text', value: t.name || '' });
   const colorVal = (t.branding && t.branding.color) || '#6B21A8';
   const colorI = el('input', { type: 'color', id: 'set_color', value: colorVal });
@@ -2924,32 +2965,74 @@ async function viewSettings(root) {
   colorI.addEventListener('input', () => { colorHex.value = colorI.value; });
   colorHex.addEventListener('input', () => { if (/^#[0-9a-fA-F]{6}$/.test(colorHex.value)) colorI.value = colorHex.value; });
 
-  const saveBtn = el('button', { class: 'btn btn-primary' }, 'Save tenant settings');
+  const saveBtn = el('button', { class: 'btn btn-primary' }, 'Save workspace settings');
   saveBtn.addEventListener('click', async () => {
     saveBtn.disabled = true; saveBtn.textContent = 'Saving...';
     try {
-      // tenant settings update is best effort. If the route is absent, surface a soft note.
-      await api('/api/tenant/update', { method: 'POST', body: { name: nameI.value.trim(), color: colorI.value } });
-      State.me.tenant.name = nameI.value.trim();
-      State.me.tenant.branding = Object.assign({}, State.me.tenant.branding, { color: colorI.value });
+      const out = await api('/api/tenant/update', { method: 'POST', body: { name: nameI.value.trim(), color: colorI.value } });
+      State.me.tenant = out.tenant || Object.assign({}, State.me.tenant, { name: nameI.value.trim(), branding: Object.assign({}, State.me.tenant.branding, { color: colorI.value }) });
       const tn = $('.tenant-chip .tn'); if (tn) { tn.textContent = State.me.tenant.name; tn.title = State.me.tenant.name; }
       const av = $('.tenant-chip .av'); if (av) av.textContent = initials(State.me.tenant.name);
-      toast('Tenant settings saved.', 'ok');
+      toast('Workspace settings saved.', 'ok');
     } catch (ex) {
-      toast(ex.status === 404 ? 'Tenant settings endpoint not available in this build.' : (ex.message || 'Save failed.'), 'err');
+      toast(ex.message || 'Save failed.', 'err');
     } finally {
-      saveBtn.disabled = false; saveBtn.textContent = 'Save tenant settings';
+      saveBtn.disabled = false; saveBtn.textContent = 'Save workspace settings';
     }
   });
+  if (!isOwner) { saveBtn.disabled = true; nameI.disabled = true; colorI.disabled = true; colorHex.disabled = true; }
 
   root.appendChild(el('div', { class: 'card card-pad', style: 'margin-top:8px' }, [
-    el('h3', { class: 't-h3', style: 'margin-bottom:16px' }, 'Tenant'),
+    el('h3', { class: 't-h3', style: 'margin-bottom:16px' }, 'Workspace'),
+    el('p', { class: 'muted', style: 'margin-bottom:12px' }, 'Organization and workspace map to this tenant record. Plan: ' + (t.plan || 'starter') + '.'),
     el('div', { class: 'settings-form' }, [
-      field('Tenant name', nameI),
+      field('Workspace name', nameI),
       el('div', { class: 'field' }, [el('label', {}, 'Brand color'), el('div', { class: 'color-row' }, [colorI, colorHex])]),
       el('div', { class: 'flex gap-2', style: 'margin-top:6px' }, [saveBtn, el('button', { class: 'btn btn-ghost', onclick: doLogout }, 'Sign out')])
     ])
   ]));
+
+  if (isOwner) {
+    const membersHost = el('div', { class: 'card card-pad', style: 'margin-top:12px' }, [el('h3', { class: 't-h3' }, 'Members'), el('div', { class: 'muted' }, 'Loading...')]);
+    const auditHost = el('div', { class: 'card card-pad', style: 'margin-top:12px' }, [el('h3', { class: 't-h3' }, 'Audit log'), el('div', { class: 'muted' }, 'Loading...')]);
+    root.appendChild(membersHost);
+    root.appendChild(auditHost);
+    Promise.all([api('/api/members'), api('/api/audit')]).then(([members, audit]) => {
+      membersHost.innerHTML = '';
+      membersHost.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, 'Members'));
+      (members.users || []).forEach((u) => {
+        const roleSel = el('select', { class: 'select' }, [
+          el('option', { value: 'owner' }, 'owner'),
+          el('option', { value: 'member' }, 'member')
+        ]);
+        roleSel.value = u.role === 'owner' ? 'owner' : 'member';
+        const saveRole = el('button', { class: 'btn btn-ghost' }, 'Update role');
+        saveRole.onclick = async () => {
+          try {
+            await api('/api/members/role', { method: 'POST', body: { userId: u.id, role: roleSel.value } });
+            toast('Member role updated.', 'ok');
+          } catch (e) { toast(e.message, 'err'); }
+        };
+        membersHost.appendChild(el('div', { class: 'admin-row' }, [
+          el('div', {}, [el('b', {}, u.email), el('small', { class: 'muted' }, u.name || '')]),
+          ['super_admin', 'admin'].includes(u.role) ? el('span', { class: 'pill' }, u.role) : el('div', { class: 'flex gap-2' }, [roleSel, saveRole])
+        ]));
+      });
+      auditHost.innerHTML = '';
+      auditHost.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, 'Audit log'));
+      auditHost.appendChild(el('p', { class: 'muted', style: 'margin-bottom:12px' }, 'Sensitive workspace actions for owners. Raw secrets are never stored here.'));
+      (audit.auditEvents || []).slice(0, 50).forEach((e) => {
+        auditHost.appendChild(el('div', { class: 'ledger-row' }, [
+          el('div', {}, [el('div', {}, e.action || 'event'), el('small', { class: 'muted' }, (e.targetType || '') + ' ' + (e.targetId || '') + ' · ' + (e.createdAt || ''))]),
+          el('span', { class: 'pill' }, e.actorUserId ? 'actor' : 'system')
+        ]));
+      });
+      if (!(audit.auditEvents || []).length) auditHost.appendChild(el('div', { class: 'muted' }, 'No audit events yet.'));
+    }).catch((e) => {
+      membersHost.appendChild(el('div', { class: 'muted' }, e.message));
+      auditHost.appendChild(el('div', { class: 'muted' }, e.message));
+    });
+  }
 
   const privacySelect = el('select', { class: 'select', id: 'privacy_mode' }, [
     el('option', { value: 'standard' }, 'Standard retention'),
