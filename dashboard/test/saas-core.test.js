@@ -7,12 +7,12 @@ const core = require('../lib/core');
 test('schema migration is additive and normalizes roles', () => {
   const old = { tenants: [{ id: 't1' }], users: [{ id: 'u1', role: 'unknown' }], agents: [{ id: 'a1' }] };
   const migrated = core.migrateDb(old);
-  assert.equal(migrated.schemaVersion, 4);
+  assert.equal(migrated.schemaVersion, 5);
   assert.equal(migrated.agents.length, 1);
   assert.equal(migrated.users[0].role, 'member');
   assert.equal(migrated.tenants[0].status, 'active');
   assert.equal(migrated.tenants[0].privacyMode, 'standard');
-  for (const key of ['wallets', 'ledger', 'paymentIntents', 'paymentEvents', 'supportTickets', 'supportMessages', 'auditEvents', 'presets', 'byonConnections', 'hvacJobs', 'hvacSettings', 'demoLinks', 'callbackJobs', 'phoneNumbers', 'providerResources']) assert.ok(Array.isArray(migrated[key]));
+  for (const key of ['wallets', 'ledger', 'paymentIntents', 'paymentEvents', 'supportTickets', 'supportMessages', 'auditEvents', 'presets', 'byonConnections', 'hvacJobs', 'hvacSettings', 'demoLinks', 'callbackJobs', 'phoneNumbers', 'providerResources', 'calls']) assert.ok(Array.isArray(migrated[key]));
 });
 
 test('password hashes verify and role hierarchy is enforced', () => {

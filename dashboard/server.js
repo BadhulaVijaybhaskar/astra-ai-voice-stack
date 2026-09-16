@@ -866,6 +866,90 @@ function matchPhoneNumberRoute(route) {
   return null;
 }
 
+/* ==========================================================================
+   Calls control plane (tenant-scoped history + Dograh sync)
+   ========================================================================== */
+
+function matchCallsRoute(route) {
+  if (route === '/api/calls') return { action: 'list' };
+  if (route === '/api/calls/sync') return { action: 'sync' };
+  const recording = route.match(/^\/api\/calls\/([^/]+)\/recording$/);
+  if (recording) return { action: 'recording', id: decodeURIComponent(recording[1]) };
+  const one = route.match(/^\/api\/calls\/([^/]+)$/);
+  if (one) return { action: 'detail', id: decodeURIComponent(one[1]) };
+  return null;
+}
+
+async function apiCallsList(req, res, ctx) {
+  try {
+    const url = new URL(req.url || '/', 'http://localhost');
+    const filters = {
+      agentId: url.searchParams.get('agentId') || undefined,
+      direction: url.searchParams.get('direction') || undefined,
+      limit: url.searchParams.get('limit') || undefined,
+    };
+    const list = await telephonyProvider.listCalls(ctx.tenant.id, filters);
+    core.sendJson(res, 200, { calls: list });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiCallsDetail(req, res, ctx) {
+  try {
+    const call = await telephonyProvider.getCall(ctx.params.id, ctx.tenant.id);
+    core.sendJson(res, 200, { call });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiCallsSync(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  try {
+    const body = ctx.body || {};
+    const result = await telephonyProvider.syncCalls(ctx.tenant.id, {
+      limit: body.limit,
+      import: body.import,
+    });
+    await core.mutate((d) => {
+      addAudit(d, ctx, 'calls.synced', 'calls', null, {
+        stubbed: result.stubbed,
+        fetched: result.fetched,
+        created: result.created,
+        updated: result.updated,
+      });
+    });
+    core.sendJson(res, 200, result);
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiCallsRecording(req, res, ctx) {
+  try {
+    const result = await telephonyProvider.getRecording(ctx.params.id, ctx.tenant.id);
+    if (result.mode === 'redirect' && result.url) {
+      res.writeHead(302, {
+        Location: result.url,
+        'Cache-Control': 'private, no-store',
+      });
+      return res.end();
+    }
+    if (result.mode === 'proxy' && result.buffer) {
+      res.writeHead(200, {
+        'Content-Type': result.contentType || 'audio/mpeg',
+        'Content-Length': result.buffer.length,
+        'Cache-Control': 'private, max-age=60',
+      });
+      return res.end(result.buffer);
+    }
+    return core.sendJson(res, 404, { error: 'recording not available', code: 'recording_not_found' });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
 // POST /api/callback (alias /api/outbound/callback). Shared-secret outbound trigger.
 // Body: { phone, when?, name?, note?, source? }. Never accepts provider API keys.
 async function apiOutboundCallback(req, res, body) {
@@ -1347,6 +1431,17 @@ const server = http.createServer(async (req, res) => {
           if (pnGet.action === 'available') return core.requireAuth(req, res, apiPhoneNumbersAvailable);
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
+        const callsGet = matchCallsRoute(route);
+        if (callsGet) {
+          if (callsGet.action === 'list') return core.requireAuth(req, res, apiCallsList);
+          if (callsGet.action === 'detail') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiCallsDetail(rq, rs, { ...ctx, params: { id: callsGet.id } }));
+          }
+          if (callsGet.action === 'recording') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiCallsRecording(rq, rs, { ...ctx, params: { id: callsGet.id } }));
+          }
+          return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+        }
         if (route === '/api/me') return core.requireAuth(req, res, apiMe);
         if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsList);
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);
@@ -1419,6 +1514,10 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Authed POST routes (tenant scoped through requireAuth).
+      const callsPost = matchCallsRoute(route);
+      if (callsPost && callsPost.action === 'sync') {
+        return core.requireAuth(req, res, apiCallsSync, body);
+      }
       const pnPost = matchPhoneNumberRoute(route);
       if (pnPost) {
         if (pnPost.action === 'assign') {

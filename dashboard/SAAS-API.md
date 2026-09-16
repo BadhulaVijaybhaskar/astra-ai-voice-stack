@@ -85,9 +85,20 @@ Numbers are first-class Astra resources. Customers never see Dograh or VoBiz bra
 
 See `docs/PHONE-NUMBERS.md` for curl examples and adapter notes.
 
+## Calls (Sprint 2 history)
+
+Calls are first-class Astra resources. Customers never see Dograh or VoBiz branding in the Calls UI. Provider run ids and recording secrets stay server-side.
+
+- `GET /api/calls` returns the authenticated tenant's calls (`id`, parties, agent, direction, duration, outcome, recording access path). Supports `agentId`, `direction`, and `limit` query filters. Provider ids and API keys are never returned.
+- `GET /api/calls/:id` returns detail including `summary`, `extractedData`, `transcript`, and `latency`.
+- `POST /api/calls/sync` pulls recent Dograh workflow runs / call logs when reachable (idempotent on `providerRunId`). When Dograh is unreachable or shapes are unknown, seeds demo calls and accepts optional `{import:[...]}` manual rows.
+- `GET /api/calls/:id/recording` proxies or redirects to a recording when available; returns **404** `recording_not_found` otherwise.
+
+See `docs/CALLS.md` for sync candidates, field notes, and deferred items.
+
 ## Persistence collections
 
-Schema version 4 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, and `providerResources`. Startup migration is additive. Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
+Schema version 5 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, and `calls`. Startup migration is additive. Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
 
 The JSON store remains suitable for a single-process demo. Production must move these contracts to transactional PostgreSQL before accepting money. PayU success redirects must never credit a wallet. Only a verified, idempotent server callback may convert a payment intent into a ledger credit.
 

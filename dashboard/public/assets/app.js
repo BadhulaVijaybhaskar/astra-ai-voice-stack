@@ -277,7 +277,7 @@ function resetData() {
   State.wallet = null; State.presets = []; State.agentTypes = []; State.tickets = [];
   State.demoLinks = [];
   State.createDraft = null;
-  State.loaded = { agents: false, providers: false, usage: false, telephony: false, phoneNumbers: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false };
+  State.loaded = { agents: false, providers: false, usage: false, telephony: false, phoneNumbers: false, calls: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false };
   State.activeAgentId = null;
 }
 
@@ -292,6 +292,7 @@ const ROUTES = [
   { id: 'demos', label: 'Demo links', icon: 'link', ownerOnly: true },
   { id: 'talk', label: 'Talk to it', icon: 'mic' },
   { id: 'numbers', label: 'Phone Numbers', icon: 'phone' },
+  { id: 'calls', label: 'Calls', icon: 'calls' },
   { id: 'billing', label: 'Billing', icon: 'wallet' },
   { id: 'support', label: 'Support', icon: 'support' },
   { id: 'admin', label: 'Admin', icon: 'shield', adminOnly: true },
@@ -305,6 +306,7 @@ function navIcon(name) {
     wave: '<path d="M2 12h2l2-6 3 14 3-18 3 14 2-6h2"/>',
     mic: '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/><path d="M8.5 21h7"/>',
     phone: '<path d="M5 3.5h3l1.5 4.5-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4.5 1.5v3a1.5 1.5 0 0 1-1.6 1.5A16.5 16.5 0 0 1 3.5 5.1 1.5 1.5 0 0 1 5 3.5z"/>',
+    calls: '<path d="M4 5h10v10H4z"/><path d="M8 15v4l4-2 4 2v-4"/><path d="M10 8h2M10 11h4"/>',
     gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M21.5 12h-2.6M5.1 12H2.5M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3 5.5 5.5"/>',
     template: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>',
     wallet: '<path d="M4 6.5h14a2 2 0 0 1 2 2v9H4a2 2 0 0 1-2-2v-11a2 2 0 0 0 2 2z"/><path d="M15 11h7v4h-7a2 2 0 0 1 0-4z"/>',
@@ -455,7 +457,7 @@ function onRoute() {
   view.appendChild(wrap);
   ({
     overview: viewOverview, agents: viewAgents, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
-    talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, billing: viewBilling,
+    talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, calls: viewCalls, billing: viewBilling,
     support: viewSupport, admin: viewAdmin, settings: viewSettings
   }[id] || viewOverview)(wrap);
 }
@@ -489,7 +491,8 @@ async function viewOverview(root) {
         el('button', { class: 'btn btn-ghost', onclick: () => goto('agents') }, 'Build an agent'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('studio') }, 'Open Voice Studio'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('talk') }, 'Talk to it'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('numbers') }, 'Phone Numbers')
+        el('button', { class: 'btn btn-ghost', onclick: () => goto('numbers') }, 'Phone Numbers'),
+        el('button', { class: 'btn btn-ghost', onclick: () => goto('calls') }, 'Calls')
       ]),
       el('div', { class: 'qa-foot', id: 'provMini' }, 'Checking providers...')
     ])
@@ -2383,6 +2386,7 @@ function onDial(numI, btn) {
         await api('/api/telephony/dial', { method: 'POST', body: { number: num, confirm: true } });
         toast('Call placed to +91 ' + num + '.', 'ok');
         State.loaded.telephony = false;
+        State.loaded.calls = false;
       } catch (ex) {
         if (ex.status === 400 && ex.data && ex.data.code === 'needs_confirm') toast('Confirmation required. Please retry.', 'err');
         else toast(ex.message || 'Dial failed.', 'err');
@@ -2392,6 +2396,269 @@ function onDial(numI, btn) {
       }
     }
   });
+}
+
+/* ===========================================================================
+   5b. CALLS (list + detail + sync)
+   =========================================================================== */
+function fmtCallTime(iso) {
+  if (!iso) return '-';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString(undefined, {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+  } catch (_) {
+    return String(iso);
+  }
+}
+
+function fmtDuration(sec) {
+  if (sec == null || !Number.isFinite(Number(sec))) return '-';
+  const s = Math.max(0, Math.round(Number(sec)));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m ? (m + 'm ' + r + 's') : (r + 's');
+}
+
+async function viewCalls(root) {
+  root.appendChild(viewHead(
+    'Calls',
+    'Inbound and outbound history for this workspace. Sync pulls recent runs from your telephony stack.'
+  ));
+
+  const toolbar = el('div', { class: 'calls-toolbar' }, [
+    el('div', { class: 'calls-filters' }, [
+      el('select', { class: 'select', id: 'callsDir' }, [
+        el('option', { value: '' }, 'All directions'),
+        el('option', { value: 'inbound' }, 'Inbound'),
+        el('option', { value: 'outbound' }, 'Outbound')
+      ]),
+      el('button', { class: 'btn btn-ghost btn-sm', id: 'callsRefresh' }, 'Refresh')
+    ]),
+    el('button', { class: 'btn btn-primary btn-sm', id: 'callsSync' }, 'Sync calls')
+  ]);
+  root.appendChild(toolbar);
+
+  const layout = el('div', { class: 'calls-layout' }, [
+    el('div', { class: 'card card-pad calls-list-panel', id: 'callsListHost' }, skeleton('sk-line', 6)),
+    el('div', { class: 'card card-pad calls-detail-panel', id: 'callsDetailHost' }, [
+      el('div', { class: 'empty', style: 'padding:36px 12px' }, [
+        el('div', { class: 'ttl' }, 'Select a call'),
+        el('p', {}, 'Choose a row to see summary, transcript, latency, and recording.')
+      ])
+    ])
+  ]);
+  root.appendChild(layout);
+
+  const listHost = $('#callsListHost');
+  const detailHost = $('#callsDetailHost');
+  const dirSel = $('#callsDir');
+  const syncBtn = $('#callsSync');
+  const refreshBtn = $('#callsRefresh');
+
+  function selectHandler(id) {
+    State.selectedCallId = id;
+    paintCallsList(listHost, State.calls, id, selectHandler);
+    paintCallDetail(detailHost, id);
+  }
+
+  async function reload() {
+    listHost.innerHTML = '';
+    listHost.appendChild(el('div', {}, skeleton('sk-line', 5)));
+    try {
+      const dir = dirSel.value;
+      const q = dir ? ('?limit=50&direction=' + encodeURIComponent(dir)) : '?limit=50';
+      const res = await api('/api/calls' + q);
+      State.calls = res.calls || [];
+      State.loaded.calls = true;
+      paintCallsList(listHost, State.calls, State.selectedCallId, selectHandler);
+      if (State.selectedCallId) {
+        const still = State.calls.find((c) => c.id === State.selectedCallId);
+        if (still) await paintCallDetail(detailHost, State.selectedCallId);
+        else {
+          State.selectedCallId = null;
+          detailHost.innerHTML = '';
+          detailHost.appendChild(el('div', { class: 'empty', style: 'padding:36px 12px' }, [
+            el('div', { class: 'ttl' }, 'Select a call'),
+            el('p', {}, 'Choose a row to see summary, transcript, latency, and recording.')
+          ]));
+        }
+      }
+    } catch (e) {
+      listHost.innerHTML = '';
+      listHost.appendChild(el('div', { class: 'muted' }, 'Could not load calls. ' + esc(e.message)));
+    }
+  }
+
+  dirSel.onchange = () => reload();
+  refreshBtn.onclick = () => reload();
+  syncBtn.onclick = async () => {
+    syncBtn.disabled = true;
+    syncBtn.textContent = 'Syncing...';
+    try {
+      const result = await api('/api/calls/sync', { method: 'POST', body: {} });
+      State.loaded.calls = false;
+      const note = result.stubbed
+        ? ('Synced with demo seed (' + (result.total || 0) + ' calls).')
+        : ('Synced ' + (result.fetched || 0) + ' upstream runs.');
+      toast(note, 'ok');
+      await reload();
+    } catch (ex) {
+      toast(ex.message || 'Sync failed.', 'err');
+    } finally {
+      syncBtn.disabled = false;
+      syncBtn.textContent = 'Sync calls';
+    }
+  };
+
+  await reload();
+}
+
+function paintCallsList(host, callRows, selectedId, onSelect) {
+  host.innerHTML = '';
+  host.appendChild(el('div', { class: 'flex items-center justify-between', style: 'margin-bottom:12px' }, [
+    el('h3', { class: 't-h3' }, 'Recent calls'),
+    el('span', { class: 'pill' }, [
+      el('span', { class: 'dot' }),
+      String((callRows || []).length) + ' shown'
+    ])
+  ]));
+
+  if (!callRows || !callRows.length) {
+    host.appendChild(el('div', { class: 'empty', style: 'padding:32px 12px' }, [
+      el('div', { class: 'ttl' }, 'No calls yet'),
+      el('p', {}, 'After numbers are assigned and calls happen, they appear here. Use Sync to pull recent activity or seed demo calls for testing.')
+    ]));
+    return;
+  }
+
+  const table = el('table', { class: 'calls-table' });
+  table.appendChild(el('thead', {}, el('tr', {}, [
+    el('th', {}, 'Time'),
+    el('th', {}, 'Parties'),
+    el('th', {}, 'Agent'),
+    el('th', {}, 'Dir'),
+    el('th', {}, 'Dur'),
+    el('th', {}, 'Outcome')
+  ])));
+  const tbody = el('tbody');
+  callRows.forEach((c) => {
+    const tr = el('tr', {
+      class: 'calls-row' + (c.id === selectedId ? ' is-selected' : ''),
+      tabindex: '0',
+      role: 'button'
+    }, [
+      el('td', {}, fmtCallTime(c.startedAt || c.createdAt)),
+      el('td', { class: 'mono' }, (c.fromE164 || '?') + ' to ' + (c.toE164 || '?')),
+      el('td', {}, c.agentName || '-'),
+      el('td', {}, el('span', { class: 'dir-chip dir-' + (c.direction || 'inbound') }, c.direction || 'inbound')),
+      el('td', {}, fmtDuration(c.durationSec)),
+      el('td', {}, c.outcome || c.status || '-')
+    ]);
+    tr.onclick = () => onSelect(c.id);
+    tr.onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onSelect(c.id); } };
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  host.appendChild(el('div', { class: 'calls-table-wrap' }, table));
+}
+
+async function paintCallDetail(host, callId) {
+  host.innerHTML = '';
+  host.appendChild(el('div', {}, skeleton('sk-line', 5)));
+  try {
+    const res = await api('/api/calls/' + encodeURIComponent(callId));
+    const c = res.call;
+    if (!c) throw new Error('Call not found');
+    host.innerHTML = '';
+
+    host.appendChild(el('div', { class: 'calls-detail-head' }, [
+      el('div', {}, [
+        el('h3', { class: 't-h3' }, (c.direction === 'outbound' ? 'Outbound' : 'Inbound') + ' call'),
+        el('p', { class: 'muted calls-detail-sub' },
+          fmtCallTime(c.startedAt) + ' · ' + (c.fromE164 || '?') + ' to ' + (c.toE164 || '?'))
+      ]),
+      el('span', { class: 'pill' }, [el('span', { class: 'dot' }), c.status || 'unknown'])
+    ]));
+
+    host.appendChild(el('div', { class: 'calls-meta' }, [
+      metaItem('Agent', c.agentName || '-'),
+      metaItem('Duration', fmtDuration(c.durationSec)),
+      metaItem('Outcome', c.outcome || '-')
+    ]));
+
+    host.appendChild(el('section', { class: 'calls-section' }, [
+      el('h4', {}, 'Summary'),
+      el('p', { class: 'calls-summary' }, c.summary || 'No summary captured for this call.')
+    ]));
+
+    const extracted = c.extractedData || {};
+    const keys = Object.keys(extracted);
+    host.appendChild(el('section', { class: 'calls-section' }, [
+      el('h4', {}, 'Extracted fields'),
+      keys.length
+        ? el('dl', { class: 'calls-extract' }, keys.flatMap((k) => [
+          el('dt', {}, k),
+          el('dd', {}, typeof extracted[k] === 'object' ? JSON.stringify(extracted[k]) : String(extracted[k]))
+        ]))
+        : el('p', { class: 'muted' }, 'No extracted fields.')
+    ]));
+
+    const transcript = c.transcript;
+    const turns = Array.isArray(transcript) ? transcript
+      : (typeof transcript === 'string' && transcript ? [{ role: 'transcript', text: transcript }] : []);
+    host.appendChild(el('section', { class: 'calls-section' }, [
+      el('h4', {}, 'Transcript'),
+      turns.length
+        ? el('div', { class: 'calls-transcript' }, turns.map((t) => el('div', { class: 'tx-turn' }, [
+          el('span', { class: 'tx-role' }, String(t.role || 'unknown')),
+          el('span', { class: 'tx-text' }, String(t.text || ''))
+        ])))
+        : el('p', { class: 'muted' }, 'No transcript available.')
+    ]));
+
+    const lat = c.latency || {};
+    host.appendChild(el('section', { class: 'calls-section' }, [
+      el('h4', {}, 'Latency / debug'),
+      el('div', { class: 'calls-latency' }, [
+        latChip('Total', lat.totalMs),
+        latChip('STT', lat.sttMs),
+        latChip('LLM', lat.llmMs),
+        latChip('TTS', lat.ttsMs)
+      ])
+    ]));
+
+    const recSection = el('section', { class: 'calls-section' }, [el('h4', {}, 'Recording')]);
+    if (c.recordingAvailable && c.recordingUrl) {
+      const audio = el('audio', { controls: 'controls', preload: 'none', class: 'calls-audio' });
+      audio.src = c.recordingUrl;
+      recSection.appendChild(audio);
+      recSection.appendChild(el('p', { class: 'muted', style: 'margin-top:8px;font-size:.8rem' },
+        'Played through Astra. Provider credentials never reach the browser.'));
+    } else {
+      recSection.appendChild(el('p', { class: 'muted' }, 'No recording for this call.'));
+    }
+    host.appendChild(recSection);
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('div', { class: 'muted' }, 'Could not load call. ' + esc(e.message)));
+  }
+}
+
+function metaItem(label, value) {
+  return el('div', { class: 'calls-meta-item' }, [
+    el('span', { class: 'lbl' }, label),
+    el('span', { class: 'val' }, value)
+  ]);
+}
+
+function latChip(label, ms) {
+  return el('div', { class: 'lat-chip' }, [
+    el('span', { class: 'lbl' }, label),
+    el('span', { class: 'val' }, ms == null ? '-' : (ms + ' ms'))
+  ]);
 }
 
 /* ===========================================================================

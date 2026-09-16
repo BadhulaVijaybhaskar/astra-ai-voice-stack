@@ -161,12 +161,12 @@ const DB_TMP = `${DB_FILE}.tmp`;
 
 function defaultDb() {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
     hvacJobs: [], hvacSettings: [], paymentEvents: [], demoLinks: [],
-    callbackJobs: [], phoneNumbers: [], providerResources: [],
+    callbackJobs: [], phoneNumbers: [], providerResources: [], calls: [],
   };
 }
 
@@ -174,13 +174,13 @@ const COLLECTIONS = [
   'tenants', 'users', 'agents', 'usage', 'sessions', 'wallets', 'ledger',
   'paymentIntents', 'supportTickets', 'supportMessages', 'auditEvents',
   'presets', 'byonConnections', 'hvacJobs', 'hvacSettings', 'paymentEvents', 'demoLinks',
-  'callbackJobs', 'phoneNumbers', 'providerResources',
+  'callbackJobs', 'phoneNumbers', 'providerResources', 'calls',
 ];
 
 function migrateDb(parsed) {
   const out = Object.assign(defaultDb(), parsed || {});
   for (const k of COLLECTIONS) if (!Array.isArray(out[k])) out[k] = [];
-  out.schemaVersion = 4;
+  out.schemaVersion = 5;
   for (const tenant of out.tenants) {
     if (!tenant.status) tenant.status = 'active';
     if (!tenant.privacyMode) tenant.privacyMode = 'standard';

@@ -494,6 +494,91 @@
   margin-top: 14px; padding: 12px 14px; border-radius: var(--r); font-size: 0.82rem; line-height: 1.55;
   background: rgba(251,191,36,0.07); border: 1px solid rgba(251,191,36,0.3); color: #f2dca6;
 }
+
+/* =========================================================
+   CALLS
+   ========================================================= */
+.calls-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 14px; flex-wrap: wrap;
+}
+.calls-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.calls-filters .select { min-width: 160px; width: auto; }
+.calls-layout {
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.95fr);
+  gap: 18px; align-items: start;
+}
+.calls-list-panel, .calls-detail-panel { min-height: 320px; }
+.calls-table-wrap { overflow-x: auto; margin: 0 -4px; }
+.calls-table {
+  width: 100%; border-collapse: collapse; font-size: 0.84rem;
+}
+.calls-table th {
+  text-align: left; color: var(--ink-soft); font-size: 0.7rem; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.calls-table td {
+  padding: 11px 10px; border-bottom: 1px solid var(--line); color: var(--ink);
+  vertical-align: top;
+}
+.calls-table td.mono { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-soft); }
+.calls-row { cursor: pointer; transition: background 0.15s; }
+.calls-row:hover { background: rgba(255,255,255,0.03); }
+.calls-row.is-selected { background: rgba(6,182,212,0.08); }
+.dir-chip {
+  display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.02em;
+  border: 1px solid var(--line); color: var(--ink-soft); background: var(--bg-2);
+  text-transform: capitalize;
+}
+.dir-chip.dir-inbound { color: #9fd4ff; border-color: rgba(96,165,250,0.35); }
+.dir-chip.dir-outbound { color: #b8f0c8; border-color: rgba(74,222,128,0.35); }
+.calls-detail-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  margin-bottom: 14px;
+}
+.calls-detail-sub { margin: 6px 0 0; font-size: 0.84rem; color: var(--ink-soft); }
+.calls-meta {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+  margin-bottom: 18px;
+}
+.calls-meta-item {
+  padding: 10px 12px; border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line);
+}
+.calls-meta-item .lbl {
+  display: block; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-soft); margin-bottom: 4px;
+}
+.calls-meta-item .val { color: var(--ink); font-size: 0.88rem; font-weight: 560; }
+.calls-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.calls-section h4 {
+  margin: 0 0 8px; font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-soft); font-weight: 620;
+}
+.calls-summary { margin: 0; color: var(--ink); line-height: 1.55; font-size: 0.9rem; }
+.calls-extract { margin: 0; display: grid; grid-template-columns: minmax(90px, 140px) 1fr; gap: 6px 12px; }
+.calls-extract dt { color: var(--ink-soft); font-size: 0.8rem; }
+.calls-extract dd { margin: 0; color: var(--ink); font-size: 0.86rem; font-family: var(--mono); }
+.calls-transcript { display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow: auto; }
+.tx-turn {
+  display: grid; grid-template-columns: 72px 1fr; gap: 10px; padding: 8px 10px;
+  border-radius: var(--r-sm); background: var(--bg-2); border: 1px solid var(--line);
+}
+.tx-role {
+  font-size: 0.72rem; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+.tx-text { color: var(--ink); font-size: 0.86rem; line-height: 1.45; }
+.calls-latency { display: flex; flex-wrap: wrap; gap: 8px; }
+.lat-chip {
+  min-width: 88px; padding: 8px 10px; border-radius: var(--r-sm);
+  background: var(--bg-2); border: 1px solid var(--line);
+}
+.lat-chip .lbl { display: block; font-size: 0.68rem; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.05em; }
+.lat-chip .val { font-family: var(--mono); font-size: 0.84rem; color: var(--ink); margin-top: 2px; }
+.calls-audio { width: 100%; margin-top: 4px; }
+
 .dial-form { display: flex; flex-direction: column; gap: 14px; }
 .dial-input-row { display: flex; gap: 10px; }
 .dial-input-row .prefix {
@@ -643,7 +728,8 @@
    ========================================================= */
 @media (max-width: 1080px) {
   .grid-3 { grid-template-columns: repeat(2, 1fr); }
-  .grid-12, .studio-grid, .talk-grid, .tel-grid { grid-template-columns: 1fr; }
+  .grid-12, .studio-grid, .talk-grid, .tel-grid, .calls-layout { grid-template-columns: 1fr; }
+  .calls-meta { grid-template-columns: 1fr; }
   .talk-panel { height: min(56vh, 520px); }
   .support-layout,.admin-layout,.settings-split { grid-template-columns:1fr; }
   .support-compose { position:static; }

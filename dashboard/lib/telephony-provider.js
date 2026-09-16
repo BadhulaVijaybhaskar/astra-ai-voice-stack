@@ -3,7 +3,8 @@
  *
  * The dashboard talks to numbers as Astra resources. Dograh/VoBiz stay behind
  * this adapter. Purchase is intentionally unimplemented in the V1 test phase
- * (platform-owned inventory only).
+ * (platform-owned inventory only). Call history sync pulls Dograh runs when
+ * reachable, otherwise seeds demo calls for UI testing.
  *
  * No em dashes anywhere. Commas and periods only.
  */
@@ -11,6 +12,7 @@
 
 const providers = require('./providers');
 const phoneNumbers = require('./phone-numbers');
+const calls = require('./calls');
 
 class TelephonyProviderError extends Error {
   constructor(message, status = 502, code = 'telephony_error', detail) {
@@ -55,12 +57,20 @@ class TelephonyProvider {
     throw new TelephonyProviderError('createOutboundCall is not implemented', 501, 'not_implemented');
   }
 
+  async listCalls() {
+    throw new TelephonyProviderError('listCalls is not implemented', 501, 'not_implemented');
+  }
+
   async getCall() {
     throw new TelephonyProviderError('getCall is not implemented', 501, 'not_implemented');
   }
 
   async getRecording() {
     throw new TelephonyProviderError('getRecording is not implemented', 501, 'not_implemented');
+  }
+
+  async syncCalls() {
+    throw new TelephonyProviderError('syncCalls is not implemented', 501, 'not_implemented');
   }
 
   async handleWebhook() {
@@ -219,12 +229,169 @@ class DograhVobizProvider extends TelephonyProvider {
     return this.tel.dial(rawNumber, dialOpts);
   }
 
-  async getCall() {
-    throw new TelephonyProviderError('Call detail is not available yet', 501, 'not_implemented');
+  /**
+   * List tenant call records from the Astra store (already synced / seeded).
+   */
+  async listCalls(tenantId, filters = {}) {
+    if (!this.core) throw new TelephonyProviderError('core store is required', 500, 'misconfigured');
+    const db = this.db();
+    const agentsById = new Map(
+      (db.agents || []).filter((a) => a.tenantId === tenantId).map((a) => [a.id, a]),
+    );
+    return calls.listTenantCalls(db, tenantId, filters)
+      .map((c) => calls.publicCall(c, agentsById, { detail: false }));
   }
 
-  async getRecording() {
-    throw new TelephonyProviderError('Recordings are not available yet', 501, 'not_implemented');
+  async getCall(callId, tenantId) {
+    if (!this.core) throw new TelephonyProviderError('core store is required', 500, 'misconfigured');
+    const found = calls.findCallForTenant(this.db(), callId, tenantId);
+    if (!found.ok) {
+      throw new TelephonyProviderError(found.error, found.status, found.code);
+    }
+    const agentsById = new Map(
+      (this.db().agents || []).filter((a) => a.tenantId === tenantId).map((a) => [a.id, a]),
+    );
+    return calls.publicCall(found.call, agentsById, { detail: true });
+  }
+
+  /**
+   * Resolve recording for a tenant call. Prefer stored upstream URL redirect,
+   * else try Dograh getCallRecording. Never returns API keys.
+   */
+  async getRecording(callId, tenantId) {
+    if (!this.core) throw new TelephonyProviderError('core store is required', 500, 'misconfigured');
+    const found = calls.findCallForTenant(this.db(), callId, tenantId);
+    if (!found.ok) {
+      throw new TelephonyProviderError(found.error, found.status, found.code);
+    }
+    const access = calls.recordingAccess(found.call);
+    if (!access.available) {
+      throw new TelephonyProviderError('recording not available', 404, 'recording_not_found');
+    }
+    if (access.upstreamUrl && /^https:\/\//i.test(access.upstreamUrl)) {
+      return { mode: 'redirect', url: access.upstreamUrl };
+    }
+    const runId = found.call.providerRunId
+      || (found.call.providerMetadata && found.call.providerMetadata.providerRunId);
+    if (this.tel && typeof this.tel.getCallRecording === 'function' && runId) {
+      try {
+        const rec = await this.tel.getCallRecording(runId);
+        if (rec && rec.available) {
+          if (rec.redirectUrl) return { mode: 'redirect', url: rec.redirectUrl };
+          if (rec.buffer) {
+            return { mode: 'proxy', buffer: rec.buffer, contentType: rec.contentType || 'audio/mpeg' };
+          }
+        }
+      } catch (_) { /* fall through to 404 */ }
+    }
+    throw new TelephonyProviderError('recording not available', 404, 'recording_not_found');
+  }
+
+  /**
+   * Pull recent Dograh runs into Astra calls (idempotent on providerRunId).
+   * If Dograh is unreachable or returns an unknown shape, seed demo calls
+   * and accept optional manual import payloads.
+   */
+  async syncCalls(tenantId, options = {}) {
+    if (!this.core) throw new TelephonyProviderError('core store is required', 500, 'misconfigured');
+    const limit = Math.max(1, Math.min(100, Number(options.limit) || 20));
+    let fetched = 0;
+    let created = 0;
+    let updated = 0;
+    let stubbed = true;
+    let endpoint = null;
+    let reason = null;
+    const tried = [];
+
+    const dbSnap = this.db();
+    const tenantAgents = (dbSnap.agents || []).filter((a) => a.tenantId === tenantId);
+    const assignedNumber = (dbSnap.phoneNumbers || []).find(
+      (n) => n.tenantId === tenantId && n.status === 'assigned',
+    );
+    const context = {
+      agentId: tenantAgents[0] && tenantAgents[0].id,
+      phoneNumberId: assignedNumber && assignedNumber.id,
+      fromE164: assignedNumber && assignedNumber.e164,
+      toE164: assignedNumber && assignedNumber.e164,
+      workflowId: assignedNumber
+        && assignedNumber.providerMetadata
+        && assignedNumber.providerMetadata.inboundWorkflowId,
+    };
+
+    if (this.tel && typeof this.tel.listCallRuns === 'function' && this.tel.live) {
+      try {
+        const listed = await this.tel.listCallRuns({
+          limit,
+          workflowId: context.workflowId ? Number(context.workflowId) : undefined,
+        });
+        stubbed = !!listed.stubbed;
+        endpoint = listed.endpoint || null;
+        reason = listed.reason || null;
+        if (Array.isArray(listed.tried)) tried.push(...listed.tried);
+        const runs = Array.isArray(listed.runs) ? listed.runs : [];
+        fetched = runs.length;
+        if (runs.length) {
+          await this.core.mutate((db) => {
+            for (const run of runs) {
+              const input = calls.mapDograhRunToCallInput(run, context);
+              if (!input) continue;
+              const r = calls.upsertCallFromProvider(db, tenantId, input);
+              if (r.created) created += 1;
+              if (r.updated) updated += 1;
+            }
+          });
+        }
+      } catch (e) {
+        stubbed = true;
+        reason = String((e && e.message) || e);
+      }
+    } else {
+      reason = 'dograh_not_live';
+      stubbed = true;
+    }
+
+    let imported = null;
+    if (Array.isArray(options.import) && options.import.length) {
+      await this.core.mutate((db) => {
+        imported = calls.importCalls(db, tenantId, options.import);
+        if (imported.ok) {
+          created += imported.created || 0;
+          updated += imported.updated || 0;
+        }
+      });
+      if (imported && !imported.ok) {
+        throw new TelephonyProviderError(imported.error, imported.status, imported.code);
+      }
+    }
+
+    // When Dograh unreachable or yielded nothing, seed demo calls for UI testing.
+    let demo = null;
+    const existingCount = calls.listTenantCalls(this.db(), tenantId, { limit: 1 }).length;
+    if (stubbed || fetched === 0) {
+      await this.core.mutate((db) => {
+        demo = calls.seedDemoCalls(db, tenantId, {
+          agentId: context.agentId,
+          phoneNumberId: context.phoneNumberId,
+        });
+        created += demo.created || 0;
+        updated += demo.updated || 0;
+      });
+    }
+
+    return {
+      ok: true,
+      stubbed,
+      endpoint,
+      reason,
+      tried: tried.length ? tried : calls.DOGRAH_SYNC_CANDIDATES.slice(),
+      candidates: calls.DOGRAH_SYNC_CANDIDATES.slice(),
+      fetched,
+      created,
+      updated,
+      imported: imported ? { created: imported.created, updated: imported.updated } : null,
+      demoSeeded: !!(demo && (demo.created || demo.updated || existingCount === 0 || stubbed)),
+      total: calls.listTenantCalls(this.db(), tenantId, { limit: 200 }).length,
+    };
   }
 
   async handleWebhook() {

@@ -516,6 +516,116 @@ const telVobiz = {
     }
     return { status: result.up.status, data: result.data };
   },
+
+  /**
+   * Best-effort list of recent workflow runs / call logs from Dograh.
+   * Tries several documented candidate paths. Returns { runs, endpoint, stubbed }
+   * without throwing when shapes are uncertain (caller seeds demos instead).
+   */
+  async listCallRuns(options = {}) {
+    if (!hasEnv(this.needs)) {
+      return { runs: [], endpoint: null, stubbed: true, reason: 'not_configured' };
+    }
+    const limit = Math.max(1, Math.min(100, Number(options.limit) || 20));
+    const workflowId = Number.isInteger(options.workflowId) && options.workflowId > 0
+      ? options.workflowId
+      : (() => { try { return positiveIntEnv('DOGRAH_WORKFLOW_ID'); } catch { return null; } })();
+
+    const candidates = [];
+    if (workflowId) {
+      candidates.push(`/api/v1/workflows/${workflowId}/runs?limit=${limit}`);
+    }
+    candidates.push(
+      `/api/v1/workflow-runs?limit=${limit}`,
+      `/api/v1/telephony/calls?limit=${limit}`,
+    );
+
+    for (const pathname of candidates) {
+      try {
+        const result = await this.request('GET', pathname);
+        if (result.up.status < 200 || result.up.status >= 300) continue;
+        const data = result.data || {};
+        const runs = Array.isArray(data.runs) ? data.runs
+          : Array.isArray(data.workflow_runs) ? data.workflow_runs
+            : Array.isArray(data.calls) ? data.calls
+              : Array.isArray(data.items) ? data.items
+                : Array.isArray(data) ? data
+                  : [];
+        if (!runs.length && !Array.isArray(data.runs) && !Array.isArray(data.calls)
+          && !Array.isArray(data.workflow_runs) && !Array.isArray(data.items)
+          && !Array.isArray(data)) {
+          // Endpoint responded but shape unknown. Keep trying.
+          continue;
+        }
+        return { runs, endpoint: pathname, stubbed: false, workflowId };
+      } catch (_) {
+        // Try the next candidate.
+      }
+    }
+    return {
+      runs: [],
+      endpoint: null,
+      stubbed: true,
+      reason: 'endpoints_unreachable_or_unknown_shape',
+      tried: candidates,
+      workflowId,
+    };
+  },
+
+  async getCallRun(runId) {
+    if (!hasEnv(this.needs)) {
+      return { run: null, stubbed: true, reason: 'not_configured' };
+    }
+    const id = encodeURIComponent(String(runId || '').trim());
+    if (!id) return { run: null, stubbed: true, reason: 'missing_id' };
+    const candidates = [
+      `/api/v1/workflow-runs/${id}`,
+      `/api/v1/telephony/calls/${id}`,
+    ];
+    for (const pathname of candidates) {
+      try {
+        const result = await this.request('GET', pathname);
+        if (result.up.status < 200 || result.up.status >= 300) continue;
+        return { run: result.data, endpoint: pathname, stubbed: false };
+      } catch (_) { /* next */ }
+    }
+    return { run: null, stubbed: true, reason: 'not_found_or_unreachable', tried: candidates };
+  },
+
+  async getCallRecording(runId) {
+    if (!hasEnv(this.needs)) {
+      return { available: false, stubbed: true, reason: 'not_configured' };
+    }
+    const id = encodeURIComponent(String(runId || '').trim());
+    if (!id) return { available: false, stubbed: true, reason: 'missing_id' };
+    const candidates = [
+      `/api/v1/workflow-runs/${id}/recording`,
+      `/api/v1/telephony/calls/${id}/recording`,
+    ];
+    for (const pathname of candidates) {
+      try {
+        const connection = dograhConnection();
+        const headers = { 'X-API-Key': process.env.DOGRAH_API_KEY };
+        const up = await httpsGet(connection.host, connection.prefix + pathname, headers);
+        if (up.status < 200 || up.status >= 300) continue;
+        const contentType = String(up.headers['content-type'] || 'application/octet-stream');
+        if (contentType.includes('json')) {
+          const data = parseJsonResponse(up);
+          const url = data.url || data.recording_url || data.recordingUrl || null;
+          if (url) return { available: true, redirectUrl: url, endpoint: pathname, stubbed: false };
+          continue;
+        }
+        return {
+          available: true,
+          buffer: up.buffer,
+          contentType,
+          endpoint: pathname,
+          stubbed: false,
+        };
+      } catch (_) { /* next */ }
+    }
+    return { available: false, stubbed: true, reason: 'not_found_or_unreachable', tried: candidates };
+  },
 };
 
 /* ==========================================================================
