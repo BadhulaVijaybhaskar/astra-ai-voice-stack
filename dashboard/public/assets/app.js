@@ -2847,21 +2847,57 @@ async function viewAnalytics(root) {
 }
 
 async function viewBilling(root) {
-  root.appendChild(viewHead('Billing', 'Prepaid INR wallet, immutable transaction history, and secure PayU checkout.'));
+  root.appendChild(viewHead('Billing', 'Plan, prepaid wallet balance, PayU top-up packs, and usage. Secrets stay in server .env. Use PAYU_ENV=test for sandbox.'));
   const host = el('div', { class: 'grid grid-12' }, [
     el('section', { class: 'card card-pad', id: 'walletSummary' }, skeleton('sk-card', 1)),
+    el('section', { class: 'card card-pad', id: 'planPanel' }, skeleton('sk-card', 1)),
+    el('section', { class: 'card card-pad', id: 'usagePanel' }, skeleton('sk-card', 1)),
     el('section', { class: 'card card-pad', id: 'walletLedger' }, skeleton('sk-card', 1))
   ]);
   root.appendChild(host);
   try {
-    const out = await api('/api/wallet');
+    const [out, planCatalog] = await Promise.all([api('/api/wallet'), api('/api/plans')]);
     const wallet = out.wallet || {}; const rows = out.ledger || [];
+    const plan = out.plan || {};
     const sum = $('#walletSummary'); sum.innerHTML = '';
     sum.appendChild(el('div', { class: 'muted' }, 'Available credit'));
     sum.appendChild(el('div', { class: 'wallet-big' }, ['₹' + fmtInr(wallet.balanceInr != null ? wallet.balanceInr : (wallet.balancePaise || 0) / 100), el('small', {}, ' INR') ]));
-    sum.appendChild(el('p', { class: 'muted' }, 'New accounts receive a one-time ₹10 trial credit. Voice and carrier usage are deducted separately according to the live rate card.'));
-    const packs = [{ id: 'starter', inr: 200 }, { id: 'growth', inr: 500 }, { id: 'scale', inr: 1000 }];
-    sum.appendChild(el('div', { class: 'pack-row' }, packs.map((pack) => el('button', { class: 'btn btn-ghost', onclick: () => startRecharge(pack.id) }, 'Add ₹' + fmtInr(pack.inr)))));
+    sum.appendChild(el('p', { class: 'muted' }, 'Signup grants a ₹10 trial plus the Starter plan allowance. Top-ups use PayU ' + (out.payuEnv || 'test') + ' mode' + (out.payuConfigured ? '.' : ' (not configured yet).')));
+    const packs = out.packs && out.packs.length ? out.packs : [{ id: 'starter', amountInr: 200 }, { id: 'growth', amountInr: 500 }, { id: 'scale', amountInr: 1000 }];
+    sum.appendChild(el('h3', { class: 't-h3', style: 'margin:16px 0 10px' }, 'Top-up packs'));
+    sum.appendChild(el('div', { class: 'pack-row' }, packs.map((pack) => el('button', { class: 'btn btn-ghost', onclick: () => startRecharge(pack.id) }, 'Add ₹' + fmtInr(pack.amountInr != null ? pack.amountInr : pack.inr)))));
+
+    const planPanel = $('#planPanel'); planPanel.innerHTML = '';
+    planPanel.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:10px' }, 'Current plan'));
+    planPanel.appendChild(el('div', { class: 'wallet-big', style: 'font-size:28px' }, plan.label || plan.id || 'Starter'));
+    planPanel.appendChild(el('p', { class: 'muted' }, 'Includes ₹' + fmtInr(plan.includedCreditsInr || 0) + ' credits and ' + (plan.includedNumbers || 1) + ' phone number(s).'));
+    const isOwner = State.me && ['super_admin', 'admin', 'owner'].includes(State.me.user.role);
+    if (isOwner) {
+      planPanel.appendChild(el('div', { class: 'pack-row', style: 'margin-top:12px' }, (planCatalog.plans || []).map((p) => {
+        const btn = el('button', { class: 'btn ' + (p.id === plan.id ? 'btn-primary' : 'btn-ghost') }, p.label);
+        btn.disabled = p.id === plan.id;
+        btn.onclick = async () => {
+          try {
+            await api('/api/plans/upgrade', { method: 'POST', body: { planId: p.id } });
+            toast('Plan updated to ' + p.label + '.', 'ok');
+            onRoute();
+          } catch (e) { toast(e.message, 'err'); }
+        };
+        return btn;
+      })));
+    }
+
+    const usagePanel = $('#usagePanel'); usagePanel.innerHTML = '';
+    usagePanel.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:10px' }, 'Recent usage'));
+    const days = out.usageDays || [];
+    if (!days.length) usagePanel.appendChild(el('div', { class: 'muted' }, 'No usage rows yet.'));
+    days.slice().reverse().slice(0, 10).forEach((d) => {
+      usagePanel.appendChild(el('div', { class: 'ledger-row' }, [
+        el('div', {}, [el('div', {}, d.day), el('small', { class: 'muted' }, (d.chars || 0) + ' chars · ' + (d.calls || 0) + ' calls')]),
+        el('b', {}, String(d.llmTokens || 0) + ' tok')
+      ]));
+    });
+
     const ledger = $('#walletLedger'); ledger.innerHTML = '';
     ledger.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:14px' }, 'Transaction history'));
     rows.slice(0, 20).forEach((x) => ledger.appendChild(el('div', { class: 'ledger-row' }, [

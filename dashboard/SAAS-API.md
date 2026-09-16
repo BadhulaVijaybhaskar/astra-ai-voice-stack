@@ -17,7 +17,9 @@ All endpoints use the existing `rxv_sess` HttpOnly cookie. Every customer resour
 
 - `GET /api/me` returns `{user,tenant}`. Tenant includes `workspaceName` and `organizationName` aliases for `name`.
 - `POST /api/tenant/update` with `{name|workspaceName,color}` updates the workspace. Owner required. Emits `tenant.updated`.
-- `GET /api/wallet` returns `{wallet,ledger}`. Wallet includes `balancePaise` and display-only `balanceInr`.
+- `GET /api/wallet` returns `{wallet,ledger,plan,packs,usageDays,payuEnv,payuConfigured}`. Wallet includes `balancePaise` and display-only `balanceInr`.
+- `GET /api/plans` returns the Starter / Growth / Scale catalog (included credits + numbers).
+- `POST /api/plans/upgrade` with `{planId}` grants plan credits idempotently. Owner required. Downgrades are blocked in V1.
 - `GET /api/payment-intents` returns `{paymentIntents}`.
 - `POST /api/payment-intents` with `{packId,firstname,phone}` accepts server-owned packs `starter`, `growth`, or `scale`. It returns `{paymentIntent,checkoutReady,checkout,message}`. When PayU and a public HTTPS origin are configured, `checkout` contains the hosted-checkout URL and signed fields. Secrets and the intent token are never returned.
 - `POST /api/payu/callback` is a public form-urlencoded PayU success callback. It checks the reverse hash and persisted checkout snapshot, calls PayU `verify_payment`, then applies exactly one immutable `payment_credit` ledger entry.
@@ -117,6 +119,13 @@ Schema version 6 adds `knowledgeEntries`, `integrationWebhooks`, `campaigns`, an
 - `POST /api/campaigns/leads` uploads/pastes leads (`phone`, `name`, `meta`).
 - `POST /api/campaigns/enqueue` requires `confirm:true` and rate-limits each batch.
 - `GET /api/analytics` returns call and campaign aggregates for the tenant.
+
+## Plans and billing (Sprint 6)
+
+- Plans: `starter`, `growth`, `scale` with included credits and phone number allowances.
+- Signup grants Starter plan credits (idempotent) in addition to the ₹10 trial.
+- Soft usage debits apply for TTS chars and dials without allowing a negative wallet.
+- PayU top-up packs use `PAYU_ENV=test` by default. See `docs/PLANS-BILLING.md`.
 
 ## Persistence collections
 

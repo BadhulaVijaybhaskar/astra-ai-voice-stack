@@ -43,6 +43,7 @@ function roleAtLeast(role, minimum) {
  */
 function publicWorkspace(tenant) {
   const t = tenant || {};
+  const planId = (!t.plan || t.plan === 'studio') ? 'starter' : t.plan;
   return {
     id: t.id,
     name: t.name,
@@ -52,7 +53,8 @@ function publicWorkspace(tenant) {
     createdAt: t.createdAt,
     branding: t.branding,
     providers: t.providers,
-    plan: t.plan || 'starter',
+    plan: planId,
+    includedNumbers: t.includedNumbers != null ? t.includedNumbers : (planId === 'scale' ? 10 : planId === 'growth' ? 3 : 1),
     status: t.status || 'active',
     privacyMode: t.privacyMode || 'standard',
   };

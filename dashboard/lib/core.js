@@ -186,6 +186,11 @@ function migrateDb(parsed) {
   for (const tenant of out.tenants) {
     if (!tenant.status) tenant.status = 'active';
     if (!tenant.privacyMode) tenant.privacyMode = 'standard';
+    if (!tenant.plan || tenant.plan === 'studio') tenant.plan = 'starter';
+    if (tenant.includedNumbers == null) {
+      const catalog = { starter: 1, growth: 3, scale: 10 };
+      tenant.includedNumbers = catalog[tenant.plan] || 1;
+    }
   }
   for (const user of out.users) {
     if (!['super_admin', 'admin', 'owner', 'member'].includes(user.role)) user.role = 'member';

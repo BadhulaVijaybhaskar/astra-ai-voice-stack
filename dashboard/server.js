@@ -32,6 +32,7 @@ const knowledge = require('./lib/knowledge');
 const integrations = require('./lib/integrations');
 const campaigns = require('./lib/campaigns');
 const analytics = require('./lib/analytics');
+const plans = require('./lib/plans');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
 
@@ -137,8 +138,8 @@ async function boot() {
         createdAt: nowIso,
         branding: { color: '#6B21A8' },
         providers: { ...DEFAULT_PROVIDERS },
-        plan: 'studio',
-        status: 'active', privacyMode: 'standard',
+        plan: 'starter',
+        status: 'active', privacyMode: 'standard', includedNumbers: 1,
       });
       d.users.push({
         id: userId,
@@ -151,6 +152,7 @@ async function boot() {
       });
       d.wallets.push({ id: core.genId('wal_'), tenantId, currency: 'INR', balancePaise: 0, createdAt: nowIso, updatedAt: nowIso });
       addLedgerEntry(d, tenantId, TRIAL_CREDIT_PAISE, 'trial_grant', `trial:${tenantId}`, userId, { amountInr: 10, source: 'test_bootstrap' });
+      plans.grantPlanCredits(d, tenantId, 'starter', userId, addLedgerEntry);
       // Migrate any legacy agents into the demo tenant.
       for (const la of legacy) d.agents.push(migrateLegacyAgent(la, tenantId));
     });
@@ -279,8 +281,8 @@ async function apiSignup(req, res, body) {
       id: tenantId, name: company, slug: makeSlug(company, taken), createdAt: nowIso,
       branding: { color: '#6B21A8' },
       providers: { ...DEFAULT_PROVIDERS },
-      plan: 'studio',
-      status: 'active', privacyMode: 'standard',
+      plan: 'starter',
+      status: 'active', privacyMode: 'standard', includedNumbers: 1,
     };
     user = {
       id: userId, tenantId, email, name,
@@ -290,6 +292,7 @@ async function apiSignup(req, res, body) {
     d.users.push(user);
     d.wallets.push({ id: core.genId('wal_'), tenantId, currency: 'INR', balancePaise: 0, createdAt: nowIso, updatedAt: nowIso });
     addLedgerEntry(d, tenantId, TRIAL_CREDIT_PAISE, 'trial_grant', `trial:${tenantId}`, userId, { amountInr: 10 });
+    plans.grantPlanCredits(d, tenantId, 'starter', userId, addLedgerEntry);
     addAudit(d, { tenant, user }, 'auth.signup', 'tenant', tenantId);
   });
 
@@ -504,6 +507,9 @@ async function apiTts(req, res, ctx) {
     });
     // Count usage only on a real synthesis.
     bumpUsage(ctx.tenant.id, 'chars', out.chars).catch(() => {});
+    core.mutate((d) => {
+      plans.debitUsage(d, ctx.tenant.id, { chars: out.chars, calls: 0 }, ctx.user.id, addLedgerEntry);
+    }).catch(() => {});
     core.send(res, 200, out.buffer, {
       'Content-Type': 'audio/wav',
       'Content-Length': out.buffer.length,
@@ -747,6 +753,9 @@ async function apiTelephonyDial(req, res, ctx) {
     const r = await telephonyProvider.createOutboundCall(ctx.tenant.id, b.number, { workflowId });
     // Count the dial attempt against today's usage.
     bumpUsage(ctx.tenant.id, 'calls', 1).catch(() => {});
+    core.mutate((d) => {
+      plans.debitUsage(d, ctx.tenant.id, { chars: 0, calls: 1 }, ctx.user.id, addLedgerEntry);
+    }).catch(() => {});
     core.sendJson(res, r.status, r.data);
   } catch (e) {
     handleProviderError(res, e);
@@ -1103,7 +1112,39 @@ function apiWallet(req, res, ctx) {
   const d = core.db();
   const wallet = d.wallets.find((w) => w.tenantId === ctx.tenant.id);
   const ledger = d.ledger.filter((x) => x.tenantId === ctx.tenant.id).slice(-100).reverse();
-  core.sendJson(res, 200, { wallet: publicWallet(wallet || { id: null, tenantId: ctx.tenant.id, currency: 'INR', balancePaise: 0 }), ledger });
+  const usage = d.usage.filter((x) => x.tenantId === ctx.tenant.id).slice(-30);
+  const plan = plans.publicPlan(ctx.tenant.plan || 'starter');
+  core.sendJson(res, 200, {
+    wallet: publicWallet(wallet || { id: null, tenantId: ctx.tenant.id, currency: 'INR', balancePaise: 0 }),
+    ledger,
+    plan,
+    packs: Object.keys(CREDIT_PACKS).map((id) => ({
+      id,
+      amountInr: Number(CREDIT_PACKS[id].amount),
+      creditsPaise: CREDIT_PACKS[id].credits,
+      productinfo: CREDIT_PACKS[id].productinfo,
+    })),
+    usageDays: usage,
+    payuEnv: (payuConfig() && payuConfig().env) || (process.env.PAYU_ENV === 'production' ? 'production' : 'test'),
+    payuConfigured: !!payuConfig(),
+  });
+}
+
+function apiPlansList(req, res) {
+  core.sendJson(res, 200, { plans: plans.listPlans().map((p) => plans.publicPlan(p.id)) });
+}
+
+async function apiPlansUpgrade(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const planId = String((ctx.body || {}).planId || '');
+  if (!plans.PLANS[planId]) return core.sendJson(res, 422, { error: 'unknown plan', code: 'bad_plan' });
+  let result;
+  await core.mutate((d) => {
+    result = plans.upgradePlan(d, ctx.tenant.id, planId, ctx.user.id, addLedgerEntry);
+    if (result.ok && result.granted) addAudit(d, ctx, 'billing.plan.upgraded', 'tenant', ctx.tenant.id, { planId });
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result);
 }
 
 function apiPaymentIntents(req, res, ctx) {
@@ -1684,6 +1725,7 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/presets') return core.requireAuth(req, res, apiPresets);
         if (route === '/api/agent-types') return core.requireAuth(req, res, apiAgentTypes);
         if (route === '/api/wallet') return core.requireAuth(req, res, apiWallet);
+        if (route === '/api/plans') return core.requireAuth(req, res, apiPlansList);
         if (route === '/api/payment-intents') return core.requireAuth(req, res, apiPaymentIntents);
         if (route === '/api/support/tickets') return core.requireAuth(req, res, apiSupportList);
         if (route === '/api/byon') return core.requireAuth(req, res, apiByonList);
@@ -1785,6 +1827,7 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/demo-links/revoke') return core.requireRole(req, res, 'owner', apiDemoLinksRevoke, body);
       if (route === '/api/telephony/dial') return core.requireAuth(req, res, apiTelephonyDial, body);
       if (route === '/api/payment-intents') return core.requireAuth(req, res, apiPaymentIntentCreate, body);
+      if (route === '/api/plans/upgrade') return core.requireRole(req, res, 'owner', apiPlansUpgrade, body);
       if (route === '/api/support/tickets') return core.requireAuth(req, res, apiSupportCreate, body);
       if (route === '/api/support/tickets/reply') return core.requireAuth(req, res, apiSupportReply, body);
       if (route === '/api/tenant/update') return core.requireRole(req, res, 'owner', apiTenantUpdate, body);
