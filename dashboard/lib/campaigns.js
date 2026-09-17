@@ -38,6 +38,7 @@ function publicCampaign(row, leadCounts) {
     id: c.id,
     name: c.name,
     status: c.status || 'draft',
+    employeeId: c.employeeId || null,
     agentId: c.agentId || null,
     ratePerMinute: c.ratePerMinute || DEFAULT_RATE_PER_MIN,
     leadCount: leadCounts ? (leadCounts.total || 0) : (c.leadCount || 0),
@@ -90,11 +91,19 @@ function createCampaign(db, tenantId, input, actorUserId) {
   const b = input && typeof input === 'object' ? input : {};
   const name = String(b.name || '').trim().slice(0, 120);
   if (!name) return { ok: false, status: 422, error: 'name required', code: 'bad_name' };
-  const agentId = b.agentId ? String(b.agentId) : null;
+
+  let employeeId = b.employeeId ? String(b.employeeId) : null;
+  let agentId = b.agentId ? String(b.agentId) : null;
+  if (employeeId) {
+    const emp = (db.employees || []).find((e) => e.id === employeeId && e.tenantId === tenantId);
+    if (!emp) return { ok: false, status: 404, error: 'employee not found', code: 'employee_not_found' };
+    if (!agentId) agentId = emp.agentId || null;
+  }
   if (agentId) {
     const agent = (db.agents || []).find((a) => a.id === agentId && a.tenantId === tenantId);
     if (!agent) return { ok: false, status: 404, error: 'agent not found', code: 'agent_not_found' };
   }
+
   const rate = Math.max(1, Math.min(60, Number(b.ratePerMinute) || DEFAULT_RATE_PER_MIN));
   if (!Array.isArray(db.campaigns)) db.campaigns = [];
   const ts = nowIso();
@@ -103,6 +112,7 @@ function createCampaign(db, tenantId, input, actorUserId) {
     tenantId,
     name,
     status: 'draft',
+    employeeId,
     agentId,
     ratePerMinute: rate,
     createdBy: actorUserId || null,
@@ -113,6 +123,25 @@ function createCampaign(db, tenantId, input, actorUserId) {
   };
   db.campaigns.push(row);
   return { ok: true, campaign: row };
+}
+
+/**
+ * Attach or clear an Employee on a campaign. Resolves agentId from the employee
+ * when present so enqueue can dial through the same CallJob path as Instant Leads.
+ */
+function setCampaignEmployee(db, tenantId, campaignId, employeeId) {
+  const campaign = findCampaign(db, tenantId, campaignId);
+  if (!campaign) return { ok: false, status: 404, error: 'campaign not found', code: 'not_found' };
+  if (employeeId) {
+    const emp = (db.employees || []).find((e) => e.id === String(employeeId) && e.tenantId === tenantId);
+    if (!emp) return { ok: false, status: 404, error: 'employee not found', code: 'employee_not_found' };
+    campaign.employeeId = emp.id;
+    campaign.agentId = emp.agentId || campaign.agentId || null;
+  } else {
+    campaign.employeeId = null;
+  }
+  campaign.updatedAt = nowIso();
+  return { ok: true, campaign };
 }
 
 function parseLeadLines(textOrList) {
@@ -264,6 +293,7 @@ module.exports = {
   listCampaigns,
   findCampaign,
   createCampaign,
+  setCampaignEmployee,
   parseLeadLines,
   addLeads,
   setCampaignStatus,

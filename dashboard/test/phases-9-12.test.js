@@ -42,7 +42,7 @@ test('schema v11 migrates callJobs.employeeId from lead', () => {
     }],
     employees: [],
   });
-  assert.equal(migrated.schemaVersion, 11);
+  assert.equal(migrated.schemaVersion, 12);
   assert.equal(migrated.callJobs[0].employeeId, 'emp_1');
 });
 

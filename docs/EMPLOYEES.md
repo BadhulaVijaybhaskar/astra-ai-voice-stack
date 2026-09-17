@@ -1,4 +1,4 @@
-# AI Employees (Phases 1 to 12)
+# AI Employees (Phases 1 to 16)
 
 Customer-facing **Employee** product layer. An employee is a composition of relationships, not a duplicated agent/workflow blob.
 
@@ -45,21 +45,24 @@ Each maps onto existing workflow templates and agent presets (reuse).
 | `GET` / `PUT` | `/api/employees/:id/outcomes` | Outcome definitions. See [OUTCOMES.md](./OUTCOMES.md). |
 | `GET` | `/api/employees/:id/leads` | Connected leads. See [LEADS.md](./LEADS.md). |
 
+Assign Number uses Phone Numbers APIs with `employeeId`. See [PHONE-NUMBERS.md](./PHONE-NUMBERS.md).
+
 Public JSON never includes Dograh / VoBiz / Deepgram / Groq / Rumik terms.
 
 ## UI
 
 - **My Employees**: cards, filters, Open / Test / Pause / Resume, + New Employee.
 - **Create Employee**: templates + brief → compose.
-- **Employee Studio**: header actions + tabs (Overview, Instructions, Workflow, Training, Leads, Timeline, Actions, Outcomes, Voice, Settings).
-  - Instructions / Workflow / Training / Outcomes / Leads / Timeline are real editors (Phases 5–10).
+- **Employee Studio**: header actions + tabs (Overview, Instructions, Workflow, Training, Assign Number, Leads, Timeline, Actions, Outcomes, Voice, Settings).
+  - Instructions / Workflow / Training / Assign Number / Outcomes / Leads / Timeline are real editors.
   - Actions remains an honest stub (no Phase 2 webhooks).
+- Customer nav: see [NAV-IA.md](./NAV-IA.md).
 
 North star: Create → Teach → Test → Assign Number → Connect Leads → Go Live → Conversations → outcomes.
 
 ## Schema
 
-Additive migration to **schemaVersion 11**: `callJobs.employeeId` (backfilled from lead when present). Collections unchanged from v10 plus CallJob linkage. See [INSTANT-LEADS.md](./INSTANT-LEADS.md).
+Additive migration to **schemaVersion 12**: `phoneNumbers.assignedEmployeeId`, `campaigns.employeeId`. See [INSTANT-LEADS.md](./INSTANT-LEADS.md), [CAMPAIGNS-ANALYTICS.md](./CAMPAIGNS-ANALYTICS.md).
 
 ## Out of scope
 

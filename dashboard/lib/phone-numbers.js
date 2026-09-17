@@ -87,6 +87,7 @@ function seedPlatformInventory(db) {
     capabilities: [...SEED_INVENTORY.capabilities],
     status: 'available',
     assignedAgentId: null,
+    assignedEmployeeId: null,
     inboundEnabled: true,
     outboundEnabled: true,
     providerMetadata: {
@@ -132,9 +133,12 @@ function upsertProviderResource(db, number) {
 }
 
 /** Client-safe shape. Never includes API keys or raw Dograh resource ids. */
-function publicPhoneNumber(n, agentsById, workflowsById) {
+function publicPhoneNumber(n, agentsById, workflowsById, employeesById) {
   if (!n) return null;
   const agent = n.assignedAgentId && agentsById ? agentsById.get(n.assignedAgentId) : null;
+  const employee = n.assignedEmployeeId && employeesById
+    ? employeesById.get(n.assignedEmployeeId)
+    : null;
   const inboundWf = n.inboundWorkflowId && workflowsById ? workflowsById.get(n.inboundWorkflowId) : null;
   const outboundWf = n.outboundWorkflowId && workflowsById ? workflowsById.get(n.outboundWorkflowId) : null;
   return {
@@ -145,6 +149,8 @@ function publicPhoneNumber(n, agentsById, workflowsById) {
     numberType: n.numberType || 'local',
     capabilities: Array.isArray(n.capabilities) ? [...n.capabilities] : [],
     status: n.status,
+    assignedEmployeeId: n.assignedEmployeeId || null,
+    assignedEmployeeName: employee ? employee.name : null,
     assignedAgentId: n.assignedAgentId || null,
     assignedAgentName: agent ? agent.name : null,
     inboundEnabled: n.inboundEnabled !== false,
@@ -158,8 +164,36 @@ function publicPhoneNumber(n, agentsById, workflowsById) {
   };
 }
 
-function listTenantNumbers(db, tenantId) {
-  return (db.phoneNumbers || []).filter((n) => n.tenantId === tenantId && n.status !== 'released');
+function matchesNumberQuery(n, q, agentsById, employeesById) {
+  if (!q) return true;
+  const needle = String(q).trim().toLowerCase();
+  if (!needle) return true;
+  const agent = n.assignedAgentId && agentsById ? agentsById.get(n.assignedAgentId) : null;
+  const employee = n.assignedEmployeeId && employeesById
+    ? employeesById.get(n.assignedEmployeeId)
+    : null;
+  const hay = [
+    n.id, n.e164, n.label, n.status,
+    n.assignedEmployeeId, employee && employee.name,
+    n.assignedAgentId, agent && agent.name,
+  ].filter(Boolean).join(' ').toLowerCase();
+  return hay.includes(needle);
+}
+
+function listTenantNumbers(db, tenantId, opts = {}) {
+  let rows = (db.phoneNumbers || []).filter((n) => n.tenantId === tenantId && n.status !== 'released');
+  const q = opts.q != null ? String(opts.q) : '';
+  if (q.trim()) {
+    const agentsById = new Map(
+      (db.agents || []).filter((a) => a.tenantId === tenantId).map((a) => [a.id, a]),
+    );
+    const employeesById = new Map(
+      (db.employees || []).filter((e) => e.tenantId === tenantId).map((e) => [e.id, e]),
+    );
+    rows = rows.filter((n) => matchesNumberQuery(n, q, agentsById, employeesById));
+  }
+  rows.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  return rows;
 }
 
 function listAvailableInventory(db) {
@@ -223,12 +257,13 @@ function applyWorkflowBindings(db, number, tenantId, {
 }
 
 /**
- * Assign a platform-available number to a tenant agent.
- * inboundWorkflowId / outboundWorkflowId are Astra workflow ids (wf_...).
- * Returns { ok, status, code, error, number } so routes can map to HTTP.
+ * Assign a platform-available number to a tenant Employee (preferred) or agent.
+ * employeeId resolves the linked agentId. Syncs employee.phoneNumberId and
+ * number.assignedEmployeeId. inboundWorkflowId / outboundWorkflowId are Astra
+ * workflow ids (wf_...). Returns { ok, status, code, error, number }.
  */
 function assignNumber(db, {
-  numberId, tenantId, agentId, inboundEnabled, outboundEnabled,
+  numberId, tenantId, agentId, employeeId, inboundEnabled, outboundEnabled,
   inboundWorkflowId, outboundWorkflowId, resolveProviderWorkflowId,
 }) {
   const number = findNumber(db, numberId);
@@ -241,24 +276,65 @@ function assignNumber(db, {
   if (number.status === 'available' && number.tenantId && number.tenantId !== tenantId) {
     return { ok: false, status: 403, code: 'forbidden', error: 'phone number belongs to another workspace' };
   }
-  if (number.status === 'assigned' && number.tenantId === tenantId && number.assignedAgentId === agentId) {
-    // Idempotent re-assign of same agent. Allow toggle updates.
-  } else if (number.status === 'assigned' && number.tenantId === tenantId && number.assignedAgentId !== agentId) {
+
+  let resolvedEmployeeId = employeeId ? String(employeeId) : null;
+  let resolvedAgentId = agentId ? String(agentId) : null;
+  let employee = null;
+
+  if (resolvedEmployeeId) {
+    employee = (db.employees || []).find(
+      (e) => e.id === resolvedEmployeeId && e.tenantId === tenantId,
+    );
+    if (!employee) {
+      return { ok: false, status: 404, code: 'employee_not_found', error: 'employee not found in this workspace' };
+    }
+    if (!resolvedAgentId) resolvedAgentId = employee.agentId || null;
+    if (!resolvedAgentId) {
+      return {
+        ok: false,
+        status: 422,
+        code: 'employee_no_agent',
+        error: 'employee has no linked agent to receive the phone number',
+      };
+    }
+  }
+
+  if (number.status === 'assigned' && number.tenantId === tenantId
+    && number.assignedAgentId === resolvedAgentId
+    && (!resolvedEmployeeId || number.assignedEmployeeId === resolvedEmployeeId)) {
+    // Idempotent re-assign of same employee/agent. Allow toggle updates.
+  } else if (number.status === 'assigned' && number.tenantId === tenantId) {
     // Reassign within the same tenant is allowed.
   } else if (number.status !== 'available' && !(number.tenantId === tenantId)) {
     return { ok: false, status: 409, code: 'not_available', error: 'phone number is not available to assign' };
   }
 
-  const agent = (db.agents || []).find((a) => a.id === String(agentId || '') && a.tenantId === tenantId);
+  if (!resolvedAgentId) {
+    return { ok: false, status: 422, code: 'validation', error: 'employeeId or agentId is required' };
+  }
+
+  const agent = (db.agents || []).find((a) => a.id === resolvedAgentId && a.tenantId === tenantId);
   if (!agent) {
     return { ok: false, status: 404, code: 'agent_not_found', error: 'agent not found in this workspace' };
   }
 
-  // One primary DID per agent for V1: clear prior assignment of this agent on other numbers.
+  // Prefer linking the employee that owns this agent when only agentId was passed.
+  if (!employee && !resolvedEmployeeId) {
+    employee = (db.employees || []).find(
+      (e) => e.tenantId === tenantId
+        && e.agentId === agent.id
+        && e.status !== 'ARCHIVED',
+    ) || null;
+    if (employee) resolvedEmployeeId = employee.id;
+  }
+
+  // One primary Phone Number per agent for V1: clear prior assignment of this agent on other numbers.
   for (const other of db.phoneNumbers || []) {
     if (other.id === number.id) continue;
     if (other.tenantId === tenantId && other.assignedAgentId === agent.id && other.status === 'assigned') {
+      clearEmployeeNumberLinks(db, tenantId, other);
       other.assignedAgentId = null;
+      other.assignedEmployeeId = null;
       other.status = 'available';
       other.tenantId = null;
       other.updatedAt = nowIso();
@@ -268,6 +344,7 @@ function assignNumber(db, {
   const ts = nowIso();
   number.tenantId = tenantId;
   number.assignedAgentId = agent.id;
+  number.assignedEmployeeId = resolvedEmployeeId || null;
   number.status = 'assigned';
   if (inboundEnabled !== undefined) number.inboundEnabled = !!inboundEnabled;
   if (outboundEnabled !== undefined) number.outboundEnabled = !!outboundEnabled;
@@ -301,8 +378,33 @@ function assignNumber(db, {
     phoneNumberId: number.id,
   };
 
+  // Sync Employee.phoneNumberId. One number per employee; clear others pointing here.
+  for (const emp of db.employees || []) {
+    if (emp.tenantId !== tenantId) continue;
+    if (resolvedEmployeeId && emp.id === resolvedEmployeeId) {
+      emp.phoneNumberId = number.id;
+      emp.updatedAt = ts;
+    } else if (emp.phoneNumberId === number.id) {
+      emp.phoneNumberId = null;
+      emp.updatedAt = ts;
+    }
+  }
+
   upsertProviderResource(db, number);
   return { ok: true, number };
+}
+
+function clearEmployeeNumberLinks(db, tenantId, number) {
+  const numberId = number && number.id;
+  if (!numberId) return;
+  for (const emp of db.employees || []) {
+    if (emp.tenantId !== tenantId) continue;
+    if (emp.phoneNumberId === numberId
+      || (number.assignedEmployeeId && emp.id === number.assignedEmployeeId && emp.phoneNumberId === numberId)) {
+      emp.phoneNumberId = null;
+      emp.updatedAt = nowIso();
+    }
+  }
 }
 
 function unassignNumber(db, { numberId, tenantId }) {
@@ -324,7 +426,10 @@ function unassignNumber(db, { numberId, tenantId }) {
     }
   }
 
+  clearEmployeeNumberLinks(db, tenantId, number);
+
   number.assignedAgentId = null;
+  number.assignedEmployeeId = null;
   number.tenantId = null;
   number.status = 'available';
   number.updatedAt = nowIso();
@@ -367,13 +472,14 @@ function softReleaseNumber(db, { numberId, tenantId }) {
   if (number.tenantId && number.tenantId !== tenantId) {
     return { ok: false, status: 403, code: 'forbidden', error: 'phone number belongs to another workspace' };
   }
-  if (number.assignedAgentId) {
+  if (number.assignedAgentId || number.assignedEmployeeId) {
     const un = unassignNumber(db, { numberId, tenantId: number.tenantId || tenantId });
     if (!un.ok && un.code !== 'forbidden') return un;
   }
   number.status = 'released';
   number.tenantId = null;
   number.assignedAgentId = null;
+  number.assignedEmployeeId = null;
   number.updatedAt = nowIso();
   return { ok: true, number };
 }
@@ -430,6 +536,8 @@ module.exports = {
   softReleaseNumber,
   outboundDialContext,
   applyWorkflowBindings,
+  matchesNumberQuery,
+  clearEmployeeNumberLinks,
   normalizeE164,
   digitsOnly,
   upsertProviderResource,

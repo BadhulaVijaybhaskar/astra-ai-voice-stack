@@ -7,7 +7,7 @@ const core = require('../lib/core');
 test('schema migration is additive and normalizes roles', () => {
   const old = { tenants: [{ id: 't1' }], users: [{ id: 'u1', role: 'unknown' }], agents: [{ id: 'a1' }] };
   const migrated = core.migrateDb(old);
-  assert.equal(migrated.schemaVersion, 11);
+  assert.equal(migrated.schemaVersion, 12);
   assert.equal(migrated.agents.length, 1);
   assert.equal(migrated.users[0].role, 'member');
   assert.equal(migrated.tenants[0].status, 'active');

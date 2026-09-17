@@ -172,6 +172,7 @@ class DograhVobizProvider extends TelephonyProvider {
         numberId,
         tenantId,
         agentId: opts.agentId,
+        employeeId: opts.employeeId,
         inboundEnabled: opts.inboundEnabled,
         outboundEnabled: opts.outboundEnabled,
         inboundWorkflowId: opts.inboundWorkflowId,
@@ -193,7 +194,12 @@ class DograhVobizProvider extends TelephonyProvider {
         .filter((w) => w.tenantId === tenantId)
         .map((w) => [w.id, w]),
     );
-    return phoneNumbers.publicPhoneNumber(result.number, agentsById, workflowsById);
+    const employeesById = new Map(
+      (db.employees || [])
+        .filter((e) => e.tenantId === tenantId)
+        .map((e) => [e.id, e]),
+    );
+    return phoneNumbers.publicPhoneNumber(result.number, agentsById, workflowsById, employeesById);
   }
 
   async unassignNumber(numberId, tenantId) {

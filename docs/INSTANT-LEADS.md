@@ -8,7 +8,7 @@ Customers never see Dograh, VoBiz, or provider ids. Seed number metadata stays s
 
 1. Create a tenant-scoped lead (name + phone, optional employee/agent and workflow ids).
 2. `POST /api/leads/:id/call` with `{ confirm: true }` creates a `CallJob`, dials via the canonical `telephonyProvider.createOutboundCall` path (same as `/api/telephony/dial`), and links the resulting Call when Dograh returns a real `providerRunId`.
-3. Campaign enqueue advances `stub_queued` leads through the same helper (no parallel dial stub).
+3. Campaign enqueue advances leads through the same CallJob helper with campaign `employeeId` (no parallel dial stub). See [CAMPAIGNS-ANALYTICS.md](./CAMPAIGNS-ANALYTICS.md).
 
 Composition stays relational: Lead and CallJob store `employeeId`, `agentId`, `workflowId` (`wf_`), and `phoneNumberId` (`pn_`). Provider Dograh ints are resolved only inside `createOutboundCall`.
 
@@ -47,8 +47,8 @@ Dashboard nav: **Instant Leads** (OPERATE). Form: name, phone, employee select, 
 
 ## Schema
 
-Additive migration to **schemaVersion 11**: `callJobs.employeeId` (backfill from lead). See [LEADS.md](./LEADS.md).
+Additive migration to **schemaVersion 12** (builds on v11 `callJobs.employeeId`). See [LEADS.md](./LEADS.md), [PHONE-NUMBERS.md](./PHONE-NUMBERS.md).
 
 ## Out of scope
 
-SPA rebuild, Teach UX polish beyond Employee Studio, billing, number purchase, Outpero copy, collapsing Agent/Workflow, Phase 2 webhooks, fake analytics, broad nav redesign.
+SPA rebuild, Teach UX polish beyond Employee Studio, billing, number purchase, Outpero copy, collapsing Agent/Workflow, Phase 2 webhooks, fake analytics.

@@ -76,14 +76,14 @@ Dograh's published workflow remains the runtime authority for phone and browser 
 - `POST /api/admin/wallet/adjust` with `{tenantId,amountPaise,idempotencyKey,reason}` returns `{ledgerEntry}`. Replays return `{duplicate:true}` and never apply twice. Admin required.
 - `POST /api/admin/tickets/reply` with `{ticketId,message,internal,status}` returns `{message}`. Admin required.
 
-## Phone numbers (Sprint 1 test inventory)
+## Phone numbers (Sprint 1 + Phase 13)
 
-Numbers are first-class Astra resources. Customers never see Dograh or VoBiz branding in the Phone Numbers UI. Provider mapping stays server-side.
+Numbers are first-class Astra **Phone Number** resources. Customers never see Dograh or VoBiz branding. Provider mapping stays server-side.
 
-- `GET /api/phone-numbers` returns the authenticated tenant's assigned numbers (`id`, `e164`, label, status, agent assignment, inbound/outbound flags). Provider ids and API keys are never returned.
+- `GET /api/phone-numbers` returns the authenticated tenant's assigned numbers (`id`, `e164`, label, status, Employee assignment, inbound/outbound flags). Supports `?q=` search. Provider ids and API keys are never returned.
 - `GET /api/phone-numbers/available` returns platform-owned inventory still marked `available` (seeded live test number `+918065353938`).
-- `POST /api/phone-numbers/:id/assign` with `{agentId, inboundEnabled?, outboundEnabled?}` assigns inventory to a tenant agent, sets `agent.telephony.did`, and stores Dograh ids server-side for dial.
-- `POST /api/phone-numbers/:id/unassign` returns the number to platform inventory.
+- `POST /api/phone-numbers/:id/assign` with `{employeeId}` (preferred) or `{agentId}` assigns inventory, syncs `employee.phoneNumberId` / `assignedEmployeeId`, sets agent telephony DID, and stores Dograh ids server-side for dial.
+- `POST /api/phone-numbers/:id/unassign` returns the number to platform inventory and clears Employee links.
 - `PATCH /api/phone-numbers/:id` toggles `inboundEnabled` / `outboundEnabled`.
 - `POST /api/phone-numbers/purchase` returns **501** `purchase_deferred` during the testing phase.
 
@@ -112,13 +112,16 @@ See `docs/CALLS.md` for sync candidates, field notes, and deferred items.
 
 Schema version 6 adds `knowledgeEntries`, `integrationWebhooks`, `campaigns`, and `campaignLeads`.
 
-## Campaigns and Analytics (Sprint 5)
+## Campaigns and Performance (Sprint 5 + Phases 14–15)
 
-- `GET /api/campaigns` lists tenant campaigns with lead counts.
-- `POST /api/campaigns` creates a draft campaign linked to an optional agent.
+- `GET /api/campaigns` lists tenant campaigns with lead counts and optional `employeeId`.
+- `POST /api/campaigns` creates a draft campaign linked to an optional Employee (`employeeId`) or agent.
+- `POST /api/campaigns/employee` attaches or clears an Employee on a campaign.
 - `POST /api/campaigns/leads` uploads/pastes leads (`phone`, `name`, `meta`).
-- `POST /api/campaigns/enqueue` requires `confirm:true` and rate-limits each batch.
-- `GET /api/analytics` returns call and campaign aggregates for the tenant.
+- `POST /api/campaigns/enqueue` requires `confirm:true`, rate-limits each batch, and dials through the same CallJob path as Instant Leads.
+- `GET /api/analytics` and `GET /api/performance` return honest Call / Lead / Outcome / Campaign aggregates. Empty conversion rate is `null` (UI shows —). Never invent chart series.
+
+See `docs/CAMPAIGNS-ANALYTICS.md`.
 
 ## Plans and billing (Sprint 6)
 
@@ -129,7 +132,7 @@ Schema version 6 adds `knowledgeEntries`, `integrationWebhooks`, `campaigns`, an
 
 Schema version 8 adds `leads` and `callJobs` for Instant Leads (Lead → CallJob → outbound → Call). Outbound dials reuse the telephony `createOutboundCall` contract (Astra `pn_` / `wf_` ids, server-side provider resolution, real `providerRunId`). See `docs/INSTANT-LEADS.md`.
 
-## AI Employees (Phases 1 to 12)
+## AI Employees (Phases 1 to 16)
 
 - `GET /api/employees` lists tenant employees with honest metrics (`callsToday`, `leads`, `qualified`, `lastActiveAt`).
 - `GET /api/employees/templates` returns job templates (Receptionist through Custom).
@@ -144,11 +147,12 @@ Schema version 8 adds `leads` and `callJobs` for Instant Leads (Lead → CallJob
 - `GET /api/employees/:id/leads` and `PATCH /api/leads/:id` formalize Lead ↔ Employee links (Phase 8).
 - `GET /api/call-jobs` queue list with status and Employee / Lead / Conversation links (Phase 11).
 - `GET /api/conversations` alias of `/api/calls` with filters `employeeId`, `outcome`, `status` (Phase 12).
-- Customer UI never shows Dograh / VoBiz / Deepgram / Groq / Rumik terminology. See `docs/EMPLOYEES.md`, `docs/INSTRUCTIONS.md`, `docs/OUTCOMES.md`, `docs/LEADS.md`, `docs/TIMELINE.md`, `docs/CONVERSATIONS.md`.
+- Phone Number assign via `employeeId` + Studio Assign Number tab (Phase 13). Campaigns attach Employee and enqueue CallJobs (Phase 14). Performance aggregates (Phase 15). Journey nav (Phase 16).
+- Customer UI never shows Dograh / VoBiz / Deepgram / Groq / Rumik terminology. See `docs/EMPLOYEES.md`, `docs/INSTRUCTIONS.md`, `docs/OUTCOMES.md`, `docs/LEADS.md`, `docs/TIMELINE.md`, `docs/CONVERSATIONS.md`, `docs/PHONE-NUMBERS.md`, `docs/CAMPAIGNS-ANALYTICS.md`, `docs/NAV-IA.md`.
 
 ## Persistence collections
 
-Schema version 11 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, `campaignLeads`, `workflows`, `leads`, `callJobs`, and `employees`. Startup migration is additive (structured employee outcomes, `lead.employeeId`, `callJobs.employeeId`). Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
+Schema version 12 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, `campaignLeads`, `workflows`, `leads`, `callJobs`, and `employees`. Startup migration is additive (structured employee outcomes, `lead.employeeId`, `callJobs.employeeId`, `phoneNumbers.assignedEmployeeId`, `campaigns.employeeId`). Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
 
 The JSON store remains suitable for a single-process demo. Production must move these contracts to transactional PostgreSQL before accepting money. PayU success redirects must never credit a wallet. Only a verified, idempotent server callback may convert a payment intent into a ledger credit.
 

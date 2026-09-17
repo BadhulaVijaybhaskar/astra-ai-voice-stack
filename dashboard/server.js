@@ -838,6 +838,12 @@ function workflowsMapForTenant(tenantId) {
   );
 }
 
+function employeesMapForTenant(tenantId) {
+  return new Map(
+    (core.db().employees || []).filter((e) => e.tenantId === tenantId).map((e) => [e.id, e]),
+  );
+}
+
 function includeWorkflowProvider(ctx) {
   return !!(ctx && ctx.user && ctx.user.role === 'super_admin');
 }
@@ -850,11 +856,20 @@ function serializeWorkflow(row, ctx) {
   });
 }
 
+function serializePhoneNumber(n, tenantId) {
+  return phoneNumbers.publicPhoneNumber(
+    n,
+    agentsMapForTenant(tenantId),
+    workflowsMapForTenant(tenantId),
+    employeesMapForTenant(tenantId),
+  );
+}
+
 function apiPhoneNumbersList(req, res, ctx) {
-  const agentsById = agentsMapForTenant(ctx.tenant.id);
-  const workflowsById = workflowsMapForTenant(ctx.tenant.id);
-  const numbers = phoneNumbers.listTenantNumbers(core.db(), ctx.tenant.id)
-    .map((n) => phoneNumbers.publicPhoneNumber(n, agentsById, workflowsById));
+  const url = new URL(req.url || '/', 'http://localhost');
+  const q = url.searchParams.get('q') || url.searchParams.get('search') || '';
+  const numbers = phoneNumbers.listTenantNumbers(core.db(), ctx.tenant.id, { q })
+    .map((n) => serializePhoneNumber(n, ctx.tenant.id));
   core.sendJson(res, 200, { numbers });
 }
 
@@ -870,13 +885,15 @@ async function apiPhoneNumbersAvailable(req, res, ctx) {
 async function apiPhoneNumbersAssign(req, res, ctx) {
   if (rejectImpersonated(res, ctx)) return;
   const b = ctx.body || {};
+  const employeeId = String(b.employeeId || '').trim();
   const agentId = String(b.agentId || '').trim();
-  if (!agentId) {
-    return core.sendJson(res, 422, { error: 'agentId is required', code: 'validation' });
+  if (!employeeId && !agentId) {
+    return core.sendJson(res, 422, { error: 'employeeId or agentId is required', code: 'validation' });
   }
   try {
     const number = await telephonyProvider.assignNumber(ctx.params.id, ctx.tenant.id, {
-      agentId,
+      employeeId: employeeId || undefined,
+      agentId: agentId || undefined,
       inboundEnabled: b.inboundEnabled,
       outboundEnabled: b.outboundEnabled,
       inboundWorkflowId: b.inboundWorkflowId,
@@ -884,7 +901,9 @@ async function apiPhoneNumbersAssign(req, res, ctx) {
     });
     await core.mutate((d) => {
       addAudit(d, ctx, 'phone_number.assigned', 'phone_number', number.id, {
-        agentId, e164: number.e164,
+        employeeId: number.assignedEmployeeId || employeeId || null,
+        agentId: number.assignedAgentId || agentId || null,
+        e164: number.e164,
         inboundWorkflowId: number.inboundWorkflowId || null,
         outboundWorkflowId: number.outboundWorkflowId || null,
       });
@@ -940,9 +959,7 @@ async function apiPhoneNumbersPatch(req, res, ctx) {
   if (!result.ok) {
     return core.sendJson(res, result.status, { error: result.error, code: result.code });
   }
-  const agentsById = agentsMapForTenant(ctx.tenant.id);
-  const workflowsById = workflowsMapForTenant(ctx.tenant.id);
-  core.sendJson(res, 200, { number: phoneNumbers.publicPhoneNumber(result.number, agentsById, workflowsById) });
+  core.sendJson(res, 200, { number: serializePhoneNumber(result.number, ctx.tenant.id) });
 }
 
 async function apiPhoneNumbersPurchase(req, res) {
@@ -1723,6 +1740,29 @@ async function apiCampaignsStatus(req, res, ctx) {
   core.sendJson(res, 200, { campaign: campaigns.publicCampaign(result.campaign, campaigns.countLeads(core.db(), result.campaign.id)) });
 }
 
+async function apiCampaignsAttachEmployee(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const id = String(b.campaignId || b.id || '');
+  const employeeId = b.employeeId != null && String(b.employeeId).trim()
+    ? String(b.employeeId).trim()
+    : null;
+  let result;
+  await core.mutate((d) => {
+    result = campaigns.setCampaignEmployee(d, ctx.tenant.id, id, employeeId);
+    if (result.ok) {
+      addAudit(d, ctx, 'campaign.employee', 'campaign', id, {
+        employeeId: result.campaign.employeeId || null,
+        agentId: result.campaign.agentId || null,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, {
+    campaign: campaigns.publicCampaign(result.campaign, campaigns.countLeads(core.db(), result.campaign.id)),
+  });
+}
+
 async function apiCampaignsEnqueue(req, res, ctx) {
   if (rejectImpersonated(res, ctx)) return;
   const b = ctx.body || {};
@@ -1754,6 +1794,7 @@ async function apiCampaignsEnqueue(req, res, ctx) {
       userId: ctx.user.id,
       toE164: leadRow.phone,
       agentId: campaign && campaign.agentId,
+      employeeId: campaign && campaign.employeeId,
       campaignLeadId: leadRow.id,
       source: 'campaign',
       ctx,
@@ -1839,6 +1880,16 @@ async function placeOutboundCallJob({
   let astraEmployeeId = employeeId || null;
 
   await core.mutate((d) => {
+    if (astraEmployeeId) {
+      const emp = (d.employees || []).find(
+        (e) => e.id === String(astraEmployeeId) && e.tenantId === tenantId,
+      );
+      if (emp) {
+        if (!astraAgentId) astraAgentId = emp.agentId || null;
+        if (!astraWorkflowId) astraWorkflowId = emp.workflowId || null;
+        if (!astraPhoneNumberId) astraPhoneNumberId = emp.phoneNumberId || null;
+      }
+    }
     astraWorkflowId = resolveLeadWorkflowId(d, tenantId, {
       workflowId: astraWorkflowId,
       agentId: astraAgentId,
@@ -2476,7 +2527,8 @@ function apiCampaignsLeads(req, res, ctx) {
 }
 
 function apiAnalytics(req, res, ctx) {
-  core.sendJson(res, 200, { analytics: analytics.buildDashboard(core.db(), ctx.tenant.id) });
+  const dash = analytics.buildDashboard(core.db(), ctx.tenant.id);
+  core.sendJson(res, 200, { analytics: dash, performance: dash });
 }
 
 async function apiMemberRole(req, res, ctx) {
@@ -2754,6 +2806,7 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/campaigns') return core.requireAuth(req, res, apiCampaignsList);
         if (route === '/api/campaigns/leads') return core.requireAuth(req, res, apiCampaignsLeads);
         if (route === '/api/analytics') return core.requireAuth(req, res, apiAnalytics);
+        if (route === '/api/performance') return core.requireAuth(req, res, apiAnalytics);
         const leadsGet = matchLeadsRoute(route);
         if (leadsGet) {
           if (leadsGet.action === 'list_or_create') return core.requireAuth(req, res, apiLeadsList);
@@ -2980,6 +3033,7 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/campaigns') return core.requireAuth(req, res, apiCampaignsCreate, body);
       if (route === '/api/campaigns/leads') return core.requireAuth(req, res, apiCampaignsAddLeads, body);
       if (route === '/api/campaigns/status') return core.requireAuth(req, res, apiCampaignsStatus, body);
+      if (route === '/api/campaigns/employee') return core.requireAuth(req, res, apiCampaignsAttachEmployee, body);
       if (route === '/api/campaigns/enqueue') return core.requireAuth(req, res, apiCampaignsEnqueue, body);
       const leadsPost = matchLeadsRoute(route);
       if (leadsPost) {
