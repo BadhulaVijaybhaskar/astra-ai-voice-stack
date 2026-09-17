@@ -62,6 +62,7 @@ test('tenant update and audit require owner; admin providers hide secrets', asyn
   const ownerId = core.genId('u_');
   const memberId = core.genId('u_');
   const adminId = core.genId('u_');
+  const superId = core.genId('u_');
   const now = new Date().toISOString();
   await core.mutate((d) => {
     d.tenants.push({
@@ -73,6 +74,7 @@ test('tenant update and audit require owner; admin providers hide secrets', asyn
       { id: ownerId, tenantId, email: 'owner@astra.local', name: 'Owner', passHash: core.hashPassword('password-owner'), role: 'owner', status: 'active', createdAt: now },
       { id: memberId, tenantId, email: 'member@astra.local', name: 'Member', passHash: core.hashPassword('password-member'), role: 'member', status: 'active', createdAt: now },
       { id: adminId, tenantId, email: 'admin@astra.local', name: 'Admin', passHash: core.hashPassword('password-adminx'), role: 'admin', status: 'active', createdAt: now },
+      { id: superId, tenantId, email: 'super@astra.local', name: 'Super', passHash: core.hashPassword('password-superxx'), role: 'super_admin', status: 'active', createdAt: now },
     );
     d.auditEvents.push({
       id: core.genId('aud_'), tenantId, actorUserId: ownerId, action: 'auth.signup',
@@ -83,6 +85,7 @@ test('tenant update and audit require owner; admin providers hide secrets', asyn
   const cookieOwner = 'rxv_sess=' + await core.createSession(ownerId, tenantId);
   const cookieMember = 'rxv_sess=' + await core.createSession(memberId, tenantId);
   const cookieAdmin = 'rxv_sess=' + await core.createSession(adminId, tenantId);
+  const cookieSuper = 'rxv_sess=' + await core.createSession(superId, tenantId);
 
   async function handle(req, res) {
     const route = (req.url || '').split('?')[0];
@@ -94,9 +97,21 @@ test('tenant update and audit require owner; admin providers hide secrets', asyn
       });
     }
     if (req.method === 'GET' && route === '/api/admin/providers') {
-      return core.requireRole(req, res, 'admin', (rq, rs) => {
+      return core.requireRole(req, res, 'super_admin', (rq, rs) => {
         const health = orgMod.providerHealthSummary(providers.describeProviders());
         core.sendJson(rs, 200, { providers: health });
+      });
+    }
+    if (req.method === 'GET' && route === '/api/admin/diagnostics') {
+      return core.requireRole(req, res, 'super_admin', (rq, rs) => {
+        const payload = orgMod.buildDiagnosticsConsole({
+          described: providers.describeProviders(),
+          db: core.db(),
+          deploy: { gitSha: 'testsha' },
+          version: '1.0.0',
+          uptimeSec: 1,
+        });
+        core.sendJson(rs, 200, { diagnostics: payload });
       });
     }
     if (req.method === 'POST' && route === '/api/tenant/update') {
@@ -169,11 +184,25 @@ test('tenant update and audit require owner; admin providers hide secrets', asyn
   assert.equal(ownerUpdate.body.tenant.workspaceName, 'Nova Workspace');
   assert.equal(ownerUpdate.body.tenant.organizationName, 'Nova Workspace');
 
-  const health = await request('GET', '/api/admin/providers', null, cookieAdmin);
+  const adminDenied = await request('GET', '/api/admin/providers', null, cookieAdmin);
+  assert.equal(adminDenied.status, 403);
+
+  const health = await request('GET', '/api/admin/providers', null, cookieSuper);
   assert.equal(health.status, 200);
   const blob = JSON.stringify(health.body);
   assert.equal(blob.includes('test-deepgram-secret-abcdef'), false);
   assert.equal(blob.includes('test-rumik-secret-ghijkl'), false);
   assert.ok(blob.includes('configured'));
   assert.ok(Array.isArray(health.body.providers.stt));
+
+  const ownerDeniedDiag = await request('GET', '/api/admin/diagnostics', null, cookieOwner);
+  assert.equal(ownerDeniedDiag.status, 403);
+  const adminDeniedDiag = await request('GET', '/api/admin/diagnostics', null, cookieAdmin);
+  assert.equal(adminDeniedDiag.status, 403);
+  const diag = await request('GET', '/api/admin/diagnostics', null, cookieSuper);
+  assert.equal(diag.status, 200);
+  assert.equal(diag.body.diagnostics.scope, 'super_admin');
+  assert.equal(diag.body.diagnostics.customerVisible, false);
+  assert.ok(diag.body.diagnostics.providers);
+  assert.equal(JSON.stringify(diag.body).includes('test-deepgram-secret-abcdef'), false);
 });

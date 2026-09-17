@@ -68,7 +68,8 @@ Dograh's published workflow remains the runtime authority for phone and browser 
 - `GET /api/admin/overview` returns `{totals:{tenants,users,openTickets,walletPaise,calls}}`. Super admin required.
 - `GET /api/admin/tenants` returns `{tenants}` with user count and wallet. Super admin required.
 - `GET /api/admin/users` returns `{users}`. Super admin required.
-- `GET /api/admin/providers` returns provider health with `configured` booleans and env key **names** only. Never returns secret values. Admin required.
+- `GET /api/admin/providers` returns provider health with `configured` booleans and env key **names** only. Never returns secret values. Super admin required (Phase 21).
+- `GET /api/admin/diagnostics` returns the Super Admin diagnostics console (provider health, deploy identity, tenant overview, capabilities). Super admin required. Customers never receive this payload.
 - `GET /api/admin/audit` returns the latest 500 platform audit events. Admin required.
 - `GET /api/admin/tickets` returns `{tickets}`. Admin required.
 - `POST /api/admin/tenants/status` with `{tenantId,status}` accepts `active`, `suspended`, or `closed`. Super admin required and revokes sessions when inactive.

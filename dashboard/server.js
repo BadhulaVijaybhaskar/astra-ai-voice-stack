@@ -1602,6 +1602,24 @@ function apiAdminProviderHealth(req, res) {
   core.sendJson(res, 200, { providers: health });
 }
 
+// GET /api/admin/diagnostics -> Super Admin diagnostics console (Phase 21).
+// Provider inventory + tenant overview. Customers never receive this payload.
+function apiAdminDiagnostics(req, res) {
+  const id = currentDeployIdentity();
+  const payload = org.buildDiagnosticsConsole({
+    described: providers.describeProviders(),
+    db: core.db(),
+    deploy: { gitSha: id.gitSha, deployedAt: id.deployedAt, ref: id.ref },
+    uptimeSec: (Date.now() - STARTED_AT_MS) / 1000,
+    version: APP_VERSION,
+  });
+  const check = org.assertNoSecretValues(payload);
+  if (!check.ok) {
+    return core.sendJson(res, 500, { error: 'diagnostics refused to leak secrets', code: 'secret_guard' });
+  }
+  core.sendJson(res, 200, { diagnostics: payload });
+}
+
 /* ==========================================================================
    Knowledge Base + Integrations (Sprint 4)
    ========================================================================== */
@@ -2960,7 +2978,8 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/admin/tickets') return core.requireRole(req, res, 'admin', apiAdminTickets);
         if (route === '/api/admin/tenant-detail') return core.requireRole(req, res, 'super_admin', apiAdminTenantDetail);
         if (route === '/api/admin/payment-events') return core.requireRole(req, res, 'admin', apiAdminPaymentEvents);
-        if (route === '/api/admin/providers') return core.requireRole(req, res, 'admin', apiAdminProviderHealth);
+        if (route === '/api/admin/providers') return core.requireRole(req, res, 'super_admin', apiAdminProviderHealth);
+        if (route === '/api/admin/diagnostics') return core.requireRole(req, res, 'super_admin', apiAdminDiagnostics);
         if (route === '/api/knowledge') return core.requireAuth(req, res, apiKnowledgeList);
         if (route === '/api/knowledge/retrieve') return core.requireAuth(req, res, apiKnowledgeRetrieve);
         if (route === '/api/integrations') return core.requireAuth(req, res, apiIntegrationsList);

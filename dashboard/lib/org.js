@@ -245,6 +245,71 @@ function publicAuditEvent(event) {
   };
 }
 
+/**
+ * Super Admin diagnostics console payload (Phase 21).
+ * Combines leak-safe provider health, deploy identity, and tenant overview.
+ * Never intended for customer roles. Call assertNoSecretValues before sending.
+ */
+function buildDiagnosticsConsole(opts = {}) {
+  const described = opts.described && typeof opts.described === 'object' ? opts.described : {};
+  const db = opts.db && typeof opts.db === 'object' ? opts.db : null;
+  const deploy = opts.deploy && typeof opts.deploy === 'object' ? opts.deploy : {};
+  const providers = providerHealthSummary(described);
+  const health = detailedHealthPayload(described);
+  const tenants = Array.isArray(db && db.tenants) ? db.tenants : [];
+  const users = Array.isArray(db && db.users) ? db.users : [];
+  const overview = {
+    tenants: tenants.length,
+    users: users.length,
+    activeTenants: tenants.filter((t) => (t.status || 'active') === 'active').length,
+    suspendedTenants: tenants.filter((t) => t.status === 'suspended').length,
+    closedTenants: tenants.filter((t) => t.status === 'closed').length,
+    employees: Array.isArray(db && db.employees) ? db.employees.length : 0,
+    callJobs: Array.isArray(db && db.callJobs) ? db.callJobs.length : 0,
+    calls: Array.isArray(db && db.calls) ? db.calls.length : 0,
+    openTickets: Array.isArray(db && db.supportTickets)
+      ? db.supportTickets.filter((t) => t.status !== 'closed').length
+      : 0,
+  };
+  const out = {
+    ok: true,
+    scope: 'super_admin',
+    customerVisible: false,
+    health,
+    providers,
+    overview,
+    deploy: {
+      gitSha: Object.prototype.hasOwnProperty.call(deploy, 'gitSha')
+        ? (deploy.gitSha == null || deploy.gitSha === '' ? null : String(deploy.gitSha))
+        : null,
+      deployedAt: Object.prototype.hasOwnProperty.call(deploy, 'deployedAt')
+        ? (deploy.deployedAt == null || deploy.deployedAt === '' ? null : String(deploy.deployedAt))
+        : null,
+      ref: Object.prototype.hasOwnProperty.call(deploy, 'ref')
+        ? (deploy.ref == null || deploy.ref === '' ? null : String(deploy.ref))
+        : null,
+      version: opts.version != null && String(opts.version).trim() ? String(opts.version).trim() : null,
+      uptimeSec: opts.uptimeSec != null && Number.isFinite(Number(opts.uptimeSec))
+        ? Math.max(0, Math.floor(Number(opts.uptimeSec)))
+        : null,
+    },
+    schemaVersion: db && db.schemaVersion != null ? Number(db.schemaVersion) || null : null,
+    capabilities: {
+      providerInventory: true,
+      tenantSuspendActivate: true,
+      testCreditGrant: true,
+      impersonation: true,
+    },
+    notes: [
+      'Diagnostics are Super Admin only. Customers never see this payload.',
+      'Anonymous GET /api/health stays sanitized with no provider inventory.',
+      'providerRunId and Dograh/VoBiz ids stay server-side only.',
+      'Live outbound to customer phones is out of scope for automated acceptance.',
+    ],
+  };
+  return out;
+}
+
 module.exports = {
   ROLE_LEVEL,
   SENSITIVE_ACTIONS,
@@ -259,4 +324,5 @@ module.exports = {
   versionPayload,
   assertNoSecretValues,
   publicAuditEvent,
+  buildDiagnosticsConsole,
 };

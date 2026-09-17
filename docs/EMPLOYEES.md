@@ -72,4 +72,4 @@ Additive migration to **schemaVersion 13**: Phone Number inbound greeting/hours,
 
 ## Out of scope
 
-Phase 2 webhooks, fake analytics, unauthorized live dials, collapsing Agent/Workflow modules, Super Admin overhaul (Phase 21), full live CRM execution.
+Phase 2 webhooks, fake analytics, unauthorized live dials, collapsing Agent/Workflow modules, full live CRM execution. Super Admin diagnostics landed in Phase 21 ([SUPER-ADMIN.md](./SUPER-ADMIN.md)). E2E acceptance harness in Phase 22 ([E2E-ACCEPTANCE.md](./E2E-ACCEPTANCE.md)); live phone proof remains an external blocker.
