@@ -210,34 +210,138 @@ class DograhVobizProvider extends TelephonyProvider {
 
   /**
    * Place an outbound call through the existing Dograh initiate-call path.
-   * Prefers the tenant's assigned number Dograh ids when present.
+   * Resolves Astra phoneNumberId (pn_) and workflowId (wf_ or numeric Dograh id)
+   * server-side into Dograh ids. Prefer explicit options over first-assigned
+   * outboundDialContext. Returns the normalized initiate shape including
+   * providerRunId for Full-Stack Call upsert. Never exposes Dograh ids in
+   * publicCall serialization.
    */
   async createOutboundCall(tenantId, rawNumber, options = {}) {
     if (!this.tel || typeof this.tel.initiateCall !== 'function') {
       throw new TelephonyProviderError('Telephony dial adapter is not configured', 501, 'not_configured');
     }
-    const dialOpts = { ...options };
+
+    const dialOpts = {};
+    let resolvedPhoneNumberId = null;
+    let resolvedFromE164 = null;
+    let numericWorkflowId = providers.positiveIntOption(options.workflowId);
+    const astraWorkflowId = (typeof options.workflowId === 'string'
+      && /^wf_[A-Za-z0-9]+$/i.test(options.workflowId))
+      ? options.workflowId
+      : null;
+    // Explicit Dograh ints from caller (rare, server-side only).
+    const explicitConfigId = providers.positiveIntOption(options.telephonyConfigId);
+    const explicitFromId = providers.positiveIntOption(options.fromPhoneNumberId);
+    if (explicitConfigId) dialOpts.telephonyConfigId = explicitConfigId;
+    if (explicitFromId) dialOpts.fromPhoneNumberId = explicitFromId;
+
     if (this.core && tenantId) {
-      const ctx = phoneNumbers.outboundDialContext(this.core.db(), tenantId);
+      const db = this.core.db();
+      const workflows = require('./workflows');
+      let ctx = null;
+
+      // Prefer explicit Astra pn_ over first-assigned outboundDialContext.
+      if (options.phoneNumberId) {
+        const number = phoneNumbers.findNumber(db, options.phoneNumberId);
+        if (number
+          && number.tenantId === tenantId
+          && number.status === 'assigned'
+          && number.outboundEnabled !== false) {
+          const meta = number.providerMetadata || {};
+          ctx = {
+            phoneNumberId: number.id,
+            e164: number.e164,
+            dograhTelephonyConfigId: meta.dograhTelephonyConfigId || null,
+            dograhPhoneNumberId: meta.dograhPhoneNumberId
+              || Number(number.providerNumberId) || null,
+            workflowId: null,
+          };
+          if (number.outboundWorkflowId) {
+            const resolved = workflows.resolveProviderWorkflowId(db, tenantId, number.outboundWorkflowId);
+            if (resolved) ctx.workflowId = resolved;
+          } else if (number.inboundWorkflowId) {
+            const resolved = workflows.resolveProviderWorkflowId(db, tenantId, number.inboundWorkflowId);
+            if (resolved) ctx.workflowId = resolved;
+          }
+        }
+      }
+      if (!ctx) {
+        ctx = phoneNumbers.outboundDialContext(db, tenantId);
+      }
+
       if (ctx) {
-        if (ctx.dograhTelephonyConfigId) dialOpts.telephonyConfigId = ctx.dograhTelephonyConfigId;
-        if (ctx.dograhPhoneNumberId) dialOpts.fromPhoneNumberId = ctx.dograhPhoneNumberId;
-        if (!dialOpts.workflowId && ctx.workflowId) dialOpts.workflowId = ctx.workflowId;
+        resolvedPhoneNumberId = ctx.phoneNumberId || null;
+        resolvedFromE164 = ctx.e164 || null;
+        if (!dialOpts.telephonyConfigId && ctx.dograhTelephonyConfigId) {
+          const n = providers.positiveIntOption(ctx.dograhTelephonyConfigId);
+          if (n) dialOpts.telephonyConfigId = n;
+        }
+        if (!dialOpts.fromPhoneNumberId && ctx.dograhPhoneNumberId) {
+          const n = providers.positiveIntOption(ctx.dograhPhoneNumberId);
+          if (n) dialOpts.fromPhoneNumberId = n;
+        }
+        if (!numericWorkflowId && !astraWorkflowId && ctx.workflowId) {
+          numericWorkflowId = providers.positiveIntOption(ctx.workflowId);
+        }
+      }
+
+      if (astraWorkflowId) {
+        const resolved = workflows.resolveProviderWorkflowId(db, tenantId, astraWorkflowId);
+        if (resolved) numericWorkflowId = resolved;
       }
     }
 
-    // Prefer initiateCall with E.164 when the input looks like E.164; else dial().
+    if (numericWorkflowId) dialOpts.workflowId = numericWorkflowId;
+
+    // Prefer initiateCall with E.164. dial() only for national-format input.
     const asE164 = phoneNumbers.normalizeE164(rawNumber);
+    let result;
     if (/^\+[1-9]\d{6,14}$/.test(asE164) && typeof this.tel.initiateCall === 'function') {
-      // providers.telephony.initiateCall currently reads env for config/from ids.
-      // Pass through dial() for national format compatibility when Indian mobile.
-      const digits = phoneNumbers.digitsOnly(asE164);
-      if (digits.length === 12 && digits.startsWith('91')) {
-        return this.tel.dial(digits.slice(2), dialOpts);
-      }
-      return this.tel.initiateCall(asE164, dialOpts);
+      result = await this.tel.initiateCall(asE164, dialOpts);
+    } else {
+      result = await this.tel.dial(rawNumber, dialOpts);
     }
-    return this.tel.dial(rawNumber, dialOpts);
+
+    // Ensure callers always see the normalized initiate shape.
+    if (!result || typeof result !== 'object') {
+      result = { status: 200, data: result, providerRunId: null, ok: true };
+    } else if (result.providerRunId === undefined) {
+      const extract = providers.extractProviderRunId;
+      result = {
+        status: result.status,
+        data: result.data,
+        providerRunId: typeof extract === 'function' ? extract(result.data) : null,
+        ok: true,
+      };
+    }
+
+    // Minimal safe upsert when Dograh returned a run id. The Call row stays
+    // server-side; publicCall never includes providerRunId.
+    let upsertedCall = null;
+    if (result.providerRunId && this.core && tenantId) {
+      await this.core.mutate((db) => {
+        const up = calls.upsertCallFromProvider(db, tenantId, {
+          providerRunId: result.providerRunId,
+          direction: 'outbound',
+          toE164: /^\+[1-9]\d{6,14}$/.test(asE164) ? asE164 : null,
+          fromE164: resolvedFromE164,
+          phoneNumberId: resolvedPhoneNumberId || options.phoneNumberId || null,
+          status: (result.data && (result.data.status || result.data.state)) || 'queued',
+          source: 'outbound_dial',
+        });
+        if (up && up.ok !== false) upsertedCall = up.call;
+      });
+    }
+
+    // Server-only return for the dial route. Strip providerRunId before any
+    // customer JSON (route must respond with { call: publicCall(...) } only).
+    return {
+      status: result.status,
+      data: result.data,
+      providerRunId: result.providerRunId != null ? result.providerRunId : null,
+      ok: true,
+      call: upsertedCall,
+    };
   }
 
   /**
