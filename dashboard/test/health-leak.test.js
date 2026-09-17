@@ -60,7 +60,15 @@ test('publicTelephonyStatus strips provider and orchestrator branding', () => {
     dashboard: 'https://dograh.example/ops',
     workflowId: 8,
     did: '+919999999999',
-    dids: [{ id: 3, number: '+919999999999', status: 'active', label: 'Main', isDefaultCallerId: true }],
+    dids: [{
+      id: 3,
+      number: '+919999999999',
+      status: 'active',
+      label: 'Main',
+      isDefaultCallerId: true,
+      inboundWorkflowId: 8,
+      inboundWorkflowName: 'Dograh Receptionist',
+    }],
     configuration: { id: 2, name: 'Default trunk', isDefaultOutbound: true },
   });
   assert.equal(body.connected, true);
@@ -70,8 +78,30 @@ test('publicTelephonyStatus strips provider and orchestrator branding', () => {
   assert.equal(body.orchestrator, undefined);
   assert.equal(body.dashboard, undefined);
   assert.equal(body.workflowId, undefined);
+  assert.equal(body.dids[0].inboundWorkflowId, undefined);
+  assert.equal(body.dids[0].inboundWorkflowName, undefined);
+  assert.equal(Object.prototype.hasOwnProperty.call(body.dids[0], 'inboundWorkflowId'), false);
   const blob = JSON.stringify(body);
   assert.equal(PROVIDER_BRAND_RE.test(blob), false);
+  assert.equal(blob.includes('"inboundWorkflowId":8'), false);
+  assert.equal(blob.includes('Dograh'), false);
+});
+
+test('publicTelephonyStatus keeps Astra wf_* inboundWorkflowId only', () => {
+  const body = org.publicTelephonyStatus({
+    connected: true,
+    dids: [{
+      id: 3,
+      number: '+919999999999',
+      status: 'active',
+      label: 'Main',
+      isDefaultCallerId: true,
+      inboundWorkflowId: 'wf_abc123',
+      inboundWorkflowName: 'should not leak',
+    }],
+  });
+  assert.equal(body.dids[0].inboundWorkflowId, 'wf_abc123');
+  assert.equal(body.dids[0].inboundWorkflowName, undefined);
 });
 
 test('versionPayload reads GIT_SHA from env and never invents', () => {

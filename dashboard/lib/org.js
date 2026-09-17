@@ -144,6 +144,8 @@ function publicHealthPayload(meta = {}) {
 /**
  * Customer-safe telephony status. Drops provider/orchestrator branding and
  * ops-console fields (dashboard, upstream workflow id). Keeps DIDs and connect state.
+ * DID inboundWorkflowId is omitted unless it is clearly an Astra wf_* id
+ * (never pass through Dograh numeric provider workflow ids).
  */
 function publicTelephonyStatus(status) {
   const s = status && typeof status === 'object' ? status : {};
@@ -153,15 +155,18 @@ function publicTelephonyStatus(status) {
     dids: Array.isArray(s.dids)
       ? s.dids.map((d) => {
         if (!d || typeof d !== 'object') return { number: String(d || '') };
-        return {
+        const row = {
           id: d.id,
           number: d.number,
           status: d.status,
           label: d.label || '',
           isDefaultCallerId: !!d.isDefaultCallerId,
-          inboundWorkflowId: d.inboundWorkflowId,
-          inboundWorkflowName: d.inboundWorkflowName || '',
         };
+        const wf = d.inboundWorkflowId;
+        if (typeof wf === 'string' && /^wf_[a-zA-Z0-9]+$/.test(wf)) {
+          row.inboundWorkflowId = wf;
+        }
+        return row;
       })
       : [],
   };
