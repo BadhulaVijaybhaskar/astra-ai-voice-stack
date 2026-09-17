@@ -1,4 +1,4 @@
-# AI Employees (Phases 1 to 16)
+# AI Employees (Phases 1 to 20)
 
 Customer-facing **Employee** product layer. An employee is a composition of relationships, not a duplicated agent/workflow blob.
 
@@ -15,6 +15,7 @@ Customer-facing **Employee** product layer. An employee is a composition of rela
 | `status` | `DRAFT` \| `READY` \| `LIVE` \| `PAUSED` \| `ARCHIVED` |
 | `channel` | `inbound` \| `instant_lead` \| `campaign` \| `outbound` \| `both` |
 | `outcomes` | Structured outcome defs (`key`, `label`, `description`, `success`) |
+| `actions` | Structured action defs (Phase 19). See [ACTIONS.md](./ACTIONS.md). |
 
 Lifecycle: create composes Agent + Workflow from a job template → usually `READY`. Go live / pause / resume / archive via status APIs. Metrics (`callsToday`, `leads`, `qualified`, `lastActiveAt`) come from real Call/Lead rows or honest zeros. Never fake analytics.
 
@@ -30,9 +31,11 @@ Each maps onto existing workflow templates and agent presets (reuse).
 | --- | --- | --- |
 | `GET` | `/api/employees` | List. `?filter=` channel or status. |
 | `GET` | `/api/employees/templates` | Job templates. |
+| `GET` | `/api/employees/languages` | Supported Languages (Phase 18). See [LANGUAGES.md](./LANGUAGES.md). |
+| `GET` | `/api/employees/action-types` | Action type catalog (Phase 19). |
 | `GET` | `/api/employees/:id` | Detail + linked agent/workflow/knowledge. |
 | `POST` | `/api/employees` | Create. Composes agent+workflow by default. |
-| `PATCH` | `/api/employees/:id` | Update fields / links / status. |
+| `PATCH` | `/api/employees/:id` | Update fields / links / status / language. |
 | `POST` | `/api/employees/:id/status` | Lifecycle transition. |
 | `POST` | `/api/employees/:id/pause` | LIVE → PAUSED. |
 | `POST` | `/api/employees/:id/resume` | PAUSED → LIVE. |
@@ -43,9 +46,12 @@ Each maps onto existing workflow templates and agent presets (reuse).
 | `POST` | `/api/employees/:id/knowledge` | Attach existing `kb_` or create+attach. |
 | `DELETE` | `/api/employees/:id/knowledge/:kbId` | Detach. |
 | `GET` / `PUT` | `/api/employees/:id/outcomes` | Outcome definitions. See [OUTCOMES.md](./OUTCOMES.md). |
+| `GET` / `PUT` | `/api/employees/:id/actions` | Action definitions (Phase 19). See [ACTIONS.md](./ACTIONS.md). |
+| `POST` | `/api/employees/:id/actions/execute` | Execution hook foundation only. |
+| `PUT` | `/api/employees/:id/language` | Set Language (Phase 18). |
 | `GET` | `/api/employees/:id/leads` | Connected leads. See [LEADS.md](./LEADS.md). |
 
-Assign Number uses Phone Numbers APIs with `employeeId`. See [PHONE-NUMBERS.md](./PHONE-NUMBERS.md).
+Assign Number uses Phone Numbers APIs with `employeeId`. Inbound answer/greeting/hours: see [INBOUND.md](./INBOUND.md).
 
 Public JSON never includes Dograh / VoBiz / Deepgram / Groq / Rumik terms.
 
@@ -54,16 +60,16 @@ Public JSON never includes Dograh / VoBiz / Deepgram / Groq / Rumik terms.
 - **My Employees**: cards, filters, Open / Test / Pause / Resume, + New Employee.
 - **Create Employee**: templates + brief → compose.
 - **Employee Studio**: header actions + tabs (Overview, Instructions, Workflow, Training, Assign Number, Leads, Timeline, Actions, Outcomes, Voice, Settings).
-  - Instructions / Workflow / Training / Assign Number / Outcomes / Leads / Timeline are real editors.
-  - Actions remains an honest stub (no Phase 2 webhooks).
+  - Instructions / Workflow / Training / Assign Number / Outcomes / Leads / Timeline / Actions / Voice Language are real editors.
+  - Assign Number includes Inbound ownership when a Phone Number is linked.
 - Customer nav: see [NAV-IA.md](./NAV-IA.md).
 
 North star: Create → Teach → Test → Assign Number → Connect Leads → Go Live → Conversations → outcomes.
 
 ## Schema
 
-Additive migration to **schemaVersion 12**: `phoneNumbers.assignedEmployeeId`, `campaigns.employeeId`. See [INSTANT-LEADS.md](./INSTANT-LEADS.md), [CAMPAIGNS-ANALYTICS.md](./CAMPAIGNS-ANALYTICS.md).
+Additive migration to **schemaVersion 13**: Phone Number inbound greeting/hours, Employee `actions`, voice language normalize, plan `includedEmployees` / `includedMinutes`. See [INBOUND.md](./INBOUND.md), [LANGUAGES.md](./LANGUAGES.md), [ACTIONS.md](./ACTIONS.md), [PLANS-BILLING.md](./PLANS-BILLING.md).
 
 ## Out of scope
 
-Phase 2 webhooks, fake analytics, unauthorized live dials, collapsing Agent/Workflow modules, billing.
+Phase 2 webhooks, fake analytics, unauthorized live dials, collapsing Agent/Workflow modules, Super Admin overhaul (Phase 21), full live CRM execution.

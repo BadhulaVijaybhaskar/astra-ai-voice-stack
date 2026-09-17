@@ -17,8 +17,9 @@ All endpoints use the existing `rxv_sess` HttpOnly cookie. Every customer resour
 
 - `GET /api/me` returns `{user,tenant}`. Tenant includes `workspaceName` and `organizationName` aliases for `name`.
 - `POST /api/tenant/update` with `{name|workspaceName,color}` updates the workspace. Owner required. Emits `tenant.updated`.
-- `GET /api/wallet` returns `{wallet,ledger,plan,packs,usageDays,payuEnv,payuConfigured}`. Wallet includes `balancePaise` and display-only `balanceInr`.
-- `GET /api/plans` returns the Starter / Growth / Scale catalog (included credits + numbers).
+- `GET /api/wallet` returns `{wallet,ledger,plan,entitlements,packs,usageDays,payuEnv,payuConfigured,providerInvoices}`. Wallet includes `balancePaise` and display-only `balanceInr`. `providerInvoices` is always `null` for customers.
+- `GET /api/plans` returns the Starter / Growth / Scale catalog (included credits, numbers, employees, minutes).
+- `GET /api/billing/entitlements` returns packaging usage vs included allowances (honest counts only).
 - `POST /api/plans/upgrade` with `{planId}` grants plan credits idempotently. Owner required. Downgrades are blocked in V1.
 - `GET /api/payment-intents` returns `{paymentIntents}`.
 - `POST /api/payment-intents` with `{packId,firstname,phone}` accepts server-owned packs `starter`, `growth`, or `scale`. It returns `{paymentIntent,checkoutReady,checkout,message}`. When PayU and a public HTTPS origin are configured, `checkout` contains the hosted-checkout URL and signed fields. Secrets and the intent token are never returned.
@@ -74,6 +75,7 @@ Dograh's published workflow remains the runtime authority for phone and browser 
 - `POST /api/admin/users/status` with `{userId,status}` accepts `active`, `suspended`, or `deleted`. Super admin required and revokes sessions.
 - `POST /api/admin/users/role` with `{userId,role}` accepts `super_admin`, `admin`, `owner`, or `member`. Super admin required and self-demotion is rejected.
 - `POST /api/admin/wallet/adjust` with `{tenantId,amountPaise,idempotencyKey,reason}` returns `{ledgerEntry}`. Replays return `{duplicate:true}` and never apply twice. Admin required.
+- `POST /api/admin/wallet/test-credits` with `{tenantId,amountPaise,idempotencyKey,reason}` grants positive test credits (`test_credit`). Admin required.
 - `POST /api/admin/tickets/reply` with `{ticketId,message,internal,status}` returns `{message}`. Admin required.
 
 ## Phone numbers (Sprint 1 + Phase 13)
@@ -84,7 +86,8 @@ Numbers are first-class Astra **Phone Number** resources. Customers never see Do
 - `GET /api/phone-numbers/available` returns platform-owned inventory still marked `available` (seeded live test number `+918065353938`).
 - `POST /api/phone-numbers/:id/assign` with `{employeeId}` (preferred) or `{agentId}` assigns inventory, syncs `employee.phoneNumberId` / `assignedEmployeeId`, sets agent telephony DID, and stores Dograh ids server-side for dial.
 - `POST /api/phone-numbers/:id/unassign` returns the number to platform inventory and clears Employee links.
-- `PATCH /api/phone-numbers/:id` toggles `inboundEnabled` / `outboundEnabled`.
+- `PATCH /api/phone-numbers/:id` toggles `inboundEnabled` / `outboundEnabled` and may set Inbound greeting / hours.
+- `GET` / `PUT` / `PATCH /api/phone-numbers/:id/inbound` customer Inbound ownership (answer, greeting, hours). See `docs/INBOUND.md`.
 - `POST /api/phone-numbers/purchase` returns **501** `purchase_deferred` during the testing phase.
 
 See `docs/PHONE-NUMBERS.md` for curl examples and adapter notes.
@@ -123,16 +126,19 @@ Schema version 6 adds `knowledgeEntries`, `integrationWebhooks`, `campaigns`, an
 
 See `docs/CAMPAIGNS-ANALYTICS.md`.
 
-## Plans and billing (Sprint 6)
+## Plans and billing (Sprint 6 + Phase 20)
 
-- Plans: `starter`, `growth`, `scale` with included credits and phone number allowances.
+- Plans: `starter`, `growth`, `scale` with included credits, phone numbers, employees, and soft minute allowances.
 - Signup grants Starter plan credits (idempotent) in addition to the ₹10 trial.
 - Soft usage debits apply for TTS chars and dials without allowing a negative wallet.
+- `GET /api/wallet` includes `entitlements` (honest used vs included). `providerInvoices` is always null for customers.
+- `GET /api/billing/entitlements` packaging foundation.
+- `POST /api/admin/wallet/test-credits` Super Admin / admin may grant positive test credits.
 - PayU top-up packs use `PAYU_ENV=test` by default. See `docs/PLANS-BILLING.md`.
 
 Schema version 8 adds `leads` and `callJobs` for Instant Leads (Lead → CallJob → outbound → Call). Outbound dials reuse the telephony `createOutboundCall` contract (Astra `pn_` / `wf_` ids, server-side provider resolution, real `providerRunId`). See `docs/INSTANT-LEADS.md`.
 
-## AI Employees (Phases 1 to 16)
+## AI Employees (Phases 1 to 20)
 
 - `GET /api/employees` lists tenant employees with honest metrics (`callsToday`, `leads`, `qualified`, `lastActiveAt`).
 - `GET /api/employees/templates` returns job templates (Receptionist through Custom).
@@ -144,6 +150,9 @@ Schema version 8 adds `leads` and `callJobs` for Instant Leads (Lead → CallJob
 - `GET /api/employees/:id/timeline` and `GET /api/leads/:id/timeline` real activity only (Phase 10).
 - `GET /api/employees/:id/training`, `POST .../knowledge`, `DELETE .../knowledge/:id` attach training assets (Phase 6).
 - `GET` / `PUT /api/employees/:id/outcomes` structured outcome definitions (Phase 7). Results foundation only.
+- `GET` / `PUT /api/employees/:id/actions` Action definitions (Phase 19). `POST .../actions/execute` is foundation only (`queued_foundation`). See `docs/ACTIONS.md`.
+- `GET /api/employees/languages` and `PUT /api/employees/:id/language` India Language catalog (Phase 18). See `docs/LANGUAGES.md`.
+- `GET /api/employees/action-types` Action type catalog.
 - `GET /api/employees/:id/leads` and `PATCH /api/leads/:id` formalize Lead ↔ Employee links (Phase 8).
 - `GET /api/call-jobs` queue list with status and Employee / Lead / Conversation links (Phase 11).
 - `GET /api/conversations` alias of `/api/calls` with filters `employeeId`, `outcome`, `status` (Phase 12).
@@ -152,7 +161,7 @@ Schema version 8 adds `leads` and `callJobs` for Instant Leads (Lead → CallJob
 
 ## Persistence collections
 
-Schema version 12 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, `campaignLeads`, `workflows`, `leads`, `callJobs`, and `employees`. Startup migration is additive (structured employee outcomes, `lead.employeeId`, `callJobs.employeeId`, `phoneNumbers.assignedEmployeeId`, `campaigns.employeeId`). Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
+Schema version 13 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, `campaignLeads`, `workflows`, `leads`, `callJobs`, and `employees`. Startup migration is additive (structured employee outcomes, `lead.employeeId`, `callJobs.employeeId`, `phoneNumbers.assignedEmployeeId`, `campaigns.employeeId`, Phone Number inbound greeting/hours, Employee `actions`, voice language normalize, tenant `includedEmployees` / `includedMinutes`). Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
 
 The JSON store remains suitable for a single-process demo. Production must move these contracts to transactional PostgreSQL before accepting money. PayU success redirects must never credit a wallet. Only a verified, idempotent server callback may convert a payment intent into a ledger credit.
 

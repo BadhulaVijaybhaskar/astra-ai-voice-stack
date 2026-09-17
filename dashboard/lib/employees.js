@@ -23,6 +23,48 @@ const CHANNELS = Object.freeze(['inbound', 'instant_lead', 'campaign', 'outbound
 const CHANNEL_SET = new Set(CHANNELS);
 
 /**
+ * India-first Language catalog for Employee voice (Phase 18).
+ * Honest list only: languages the stack can route today. Customer copy uses
+ * "Language", never STT/TTS vendor names.
+ */
+const SUPPORTED_LANGUAGES = Object.freeze([
+  Object.freeze({ id: 'en-IN', label: 'English (India)', nativeLabel: 'English' }),
+  Object.freeze({ id: 'hi-IN', label: 'Hindi', nativeLabel: 'हिन्दी' }),
+  Object.freeze({ id: 'te-IN', label: 'Telugu', nativeLabel: 'తెలుగు' }),
+  Object.freeze({ id: 'ta-IN', label: 'Tamil', nativeLabel: 'தமிழ்' }),
+]);
+const LANGUAGE_BY_ID = new Map(SUPPORTED_LANGUAGES.map((l) => [l.id, l]));
+const DEFAULT_LANGUAGE = 'en-IN';
+
+/**
+ * Customer Action types (Phase 19). Definitions persist; live CRM execution
+ * is foundation-only (no Phase 2 webhooks, no invented integrations).
+ */
+const ACTION_TYPES = Object.freeze([
+  Object.freeze({
+    type: 'book_callback',
+    label: 'Book callback',
+    description: 'Offer a callback time and record a callback outcome.',
+  }),
+  Object.freeze({
+    type: 'tag_outcome',
+    label: 'Tag outcome',
+    description: 'Apply an outcome tag after the conversation.',
+  }),
+  Object.freeze({
+    type: 'transfer_to_human',
+    label: 'Transfer to human',
+    description: 'Stub handoff to a human teammate (routing foundation only).',
+  }),
+  Object.freeze({
+    type: 'crm_webhook',
+    label: 'CRM webhook URL',
+    description: 'Store a webhook URL for a later CRM delivery. Not called live in this release.',
+  }),
+]);
+const ACTION_TYPE_SET = new Set(ACTION_TYPES.map((a) => a.type));
+
+/**
  * Job templates for Create Employee. Each maps onto existing Astra Agent types
  * and Workflow templates (reuse, do not rewrite).
  */
@@ -177,10 +219,29 @@ function normalizeChannel(value, fallback = 'both') {
   return CHANNEL_SET.has(c) ? c : fallback;
 }
 
+function listSupportedLanguages() {
+  return SUPPORTED_LANGUAGES.map((l) => ({ ...l }));
+}
+
+function normalizeLanguage(value, fallback = DEFAULT_LANGUAGE) {
+  const raw = String(value != null ? value : fallback || DEFAULT_LANGUAGE).trim();
+  if (LANGUAGE_BY_ID.has(raw)) return raw;
+  // Accept short codes and map to India locales when unambiguous.
+  const lower = raw.toLowerCase();
+  if (lower === 'en' || lower === 'english' || lower === 'en-in') return 'en-IN';
+  if (lower === 'hi' || lower === 'hindi' || lower === 'hi-in') return 'hi-IN';
+  if (lower === 'te' || lower === 'telugu' || lower === 'te-in') return 'te-IN';
+  if (lower === 'ta' || lower === 'tamil' || lower === 'ta-in') return 'ta-IN';
+  return LANGUAGE_BY_ID.has(fallback) ? fallback : DEFAULT_LANGUAGE;
+}
+
 function normalizeVoice(input, existing) {
   const b = input && typeof input === 'object' ? input : {};
   const base = existing && typeof existing === 'object' ? existing : {};
-  const language = String(b.language != null ? b.language : base.language || 'en-IN').trim().slice(0, 32) || 'en-IN';
+  const language = normalizeLanguage(
+    b.language != null ? b.language : base.language,
+    DEFAULT_LANGUAGE,
+  );
   const model = String(b.model != null ? b.model : base.model || 'mulberry').trim().slice(0, 40) || 'mulberry';
   const speaker = String(b.speaker != null ? b.speaker : base.speaker || 'speaker_1').trim().slice(0, 40) || 'speaker_1';
   let f0 = base.f0_up_key != null ? Number(base.f0_up_key) : 0;
@@ -228,6 +289,70 @@ function normalizeOutcomesList(list) {
     if (out.length >= 24) break;
   }
   return out;
+}
+
+/**
+ * Structured Action definition (Phase 19). Overlaps with Outcomes for
+ * tag_outcome; CRM webhook URL is stored only (never invoked here).
+ */
+function normalizeActionDef(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  let type = String(raw.type || raw.actionType || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+  if (!ACTION_TYPE_SET.has(type)) {
+    // Infer from key/label when type omitted.
+    const hint = String(raw.key || raw.label || '').toLowerCase();
+    if (hint.includes('callback')) type = 'book_callback';
+    else if (hint.includes('transfer') || hint.includes('human')) type = 'transfer_to_human';
+    else if (hint.includes('webhook') || hint.includes('crm')) type = 'crm_webhook';
+    else if (hint.includes('outcome') || hint.includes('tag')) type = 'tag_outcome';
+    else return null;
+  }
+  const key = String(raw.key || raw.id || type)
+    .trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  if (!key) return null;
+  const catalog = ACTION_TYPES.find((a) => a.type === type);
+  const label = String(raw.label || raw.name || (catalog && catalog.label) || key).trim().slice(0, 80) || key;
+  const description = String(raw.description || (catalog && catalog.description) || '').trim().slice(0, 400);
+  const enabled = raw.enabled !== false;
+  const config = {};
+  const src = raw.config && typeof raw.config === 'object' ? raw.config : raw;
+  if (type === 'tag_outcome') {
+    const outcomeKey = String(src.outcomeKey || src.outcome || '').trim().toLowerCase()
+      .replace(/[^a-z0-9_]+/g, '_').slice(0, 40);
+    if (outcomeKey) config.outcomeKey = outcomeKey;
+  }
+  if (type === 'crm_webhook') {
+    // Store URL only. Never call it in this phase (no Phase 2 webhooks).
+    const url = String(src.webhookUrl || src.url || '').trim().slice(0, 500);
+    if (url && /^https?:\/\//i.test(url)) config.webhookUrl = url;
+  }
+  if (type === 'transfer_to_human') {
+    const target = String(src.target || src.team || '').trim().slice(0, 80);
+    if (target) config.target = target;
+  }
+  if (type === 'book_callback') {
+    const note = String(src.note || '').trim().slice(0, 200);
+    if (note) config.note = note;
+  }
+  return { key, type, label, description, enabled: !!enabled, config };
+}
+
+function normalizeActionsList(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    const def = normalizeActionDef(item);
+    if (!def || seen.has(def.key)) continue;
+    seen.add(def.key);
+    out.push(def);
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
+function listActionTypes() {
+  return ACTION_TYPES.map((a) => ({ ...a }));
 }
 
 function isQualifiedCall(call) {
@@ -330,7 +455,8 @@ function publicEmployee(row, db, opts = {}) {
     phoneNumberId: row.phoneNumberId || null,
     voice: normalizeVoice(row.voice),
     outcomes: normalizeOutcomesList(row.outcomes),
-    language: (row.voice && row.voice.language) || 'en-IN',
+    actions: normalizeActionsList(row.actions),
+    language: normalizeLanguage((row.voice && row.voice.language) || DEFAULT_LANGUAGE),
     assignedNumber: number,
     agentName: names.agentName,
     workflowName: names.workflowName,
@@ -521,6 +647,7 @@ function createEmployee(db, tenantId, input, actorUserId, opts = {}) {
     outcomes: normalizeOutcomesList(
       Array.isArray(b.outcomes) ? b.outcomes : template.outcomes.slice(),
     ),
+    actions: normalizeActionsList(Array.isArray(b.actions) ? b.actions : []),
     lastActiveAt: null,
     createdBy: actorUserId || null,
     createdAt: ts,
@@ -549,11 +676,20 @@ function updateEmployee(db, tenantId, id, patch) {
   if (b.description !== undefined) row.description = String(b.description || '').trim().slice(0, 4000);
   if (b.channel !== undefined) row.channel = normalizeChannel(b.channel, row.channel);
   if (b.voice !== undefined) row.voice = normalizeVoice(b.voice, row.voice);
+  if (b.language !== undefined) {
+    row.voice = normalizeVoice({ ...(row.voice || {}), language: b.language }, row.voice);
+  }
   if (b.outcomes !== undefined) {
     if (!Array.isArray(b.outcomes)) {
       return { ok: false, status: 422, error: 'outcomes must be an array', code: 'bad_outcomes' };
     }
     row.outcomes = normalizeOutcomesList(b.outcomes);
+  }
+  if (b.actions !== undefined) {
+    if (!Array.isArray(b.actions)) {
+      return { ok: false, status: 422, error: 'actions must be an array', code: 'bad_actions' };
+    }
+    row.actions = normalizeActionsList(b.actions);
   }
 
   const refs = validateRefs(db, tenantId, b);
@@ -812,6 +948,111 @@ function setOutcomes(db, tenantId, id, list) {
   return getOutcomes(db, tenantId, id);
 }
 
+function getActions(db, tenantId, id) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const defs = normalizeActionsList(row.actions);
+  return {
+    ok: true,
+    actions: {
+      employeeId: row.id,
+      definitions: defs,
+      count: defs.length,
+      types: listActionTypes(),
+      // Foundation only. Live CRM / webhook execution is not enabled here.
+      executionAvailable: false,
+      executions: [],
+    },
+  };
+}
+
+function setActions(db, tenantId, id, list) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  if (!Array.isArray(list)) {
+    return { ok: false, status: 422, error: 'actions must be an array', code: 'bad_actions' };
+  }
+  row.actions = normalizeActionsList(list);
+  row.updatedAt = nowIso();
+  return getActions(db, tenantId, id);
+}
+
+/**
+ * Execution hook foundation (Phase 19). Validates the Action exists for the
+ * Employee and records intent only. Never calls CRM webhooks or places dials.
+ */
+function executeActionHook(db, tenantId, id, body) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const b = body && typeof body === 'object' ? body : {};
+  const key = String(b.key || b.actionKey || '').trim().toLowerCase();
+  const defs = normalizeActionsList(row.actions);
+  const def = defs.find((d) => d.key === key || d.type === key);
+  if (!def) {
+    return { ok: false, status: 404, error: 'action not found', code: 'action_not_found' };
+  }
+  if (!def.enabled) {
+    return { ok: false, status: 409, error: 'action is disabled', code: 'action_disabled' };
+  }
+  // Reuse outcomes when tagging.
+  let outcomeApplied = null;
+  if (def.type === 'tag_outcome') {
+    const outcomeKey = String(
+      (b.config && b.config.outcomeKey) || def.config.outcomeKey || b.outcomeKey || '',
+    ).trim().toLowerCase();
+    const outcomes = normalizeOutcomesList(row.outcomes);
+    const match = outcomes.find((o) => o.key === outcomeKey);
+    if (match) outcomeApplied = match.key;
+  }
+  return {
+    ok: true,
+    execution: {
+      employeeId: row.id,
+      actionKey: def.key,
+      actionType: def.type,
+      status: 'queued_foundation',
+      executionAvailable: false,
+      outcomeApplied,
+      message: 'Action recorded as foundation only. Live CRM calls and Phase 2 webhooks are not enabled.',
+    },
+  };
+}
+
+function setEmployeeLanguage(db, tenantId, id, language) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const next = String(language || '').trim();
+  let resolved = null;
+  if (LANGUAGE_BY_ID.has(next)) resolved = next;
+  else {
+    const lower = next.toLowerCase();
+    const aliases = {
+      en: 'en-IN', english: 'en-IN', 'en-in': 'en-IN',
+      hi: 'hi-IN', hindi: 'hi-IN', 'hi-in': 'hi-IN',
+      te: 'te-IN', telugu: 'te-IN', 'te-in': 'te-IN',
+      ta: 'ta-IN', tamil: 'ta-IN', 'ta-in': 'ta-IN',
+    };
+    resolved = aliases[lower] || null;
+  }
+  if (!resolved) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'unsupported language',
+      code: 'unsupported_language',
+      supported: listSupportedLanguages(),
+    };
+  }
+  row.voice = normalizeVoice({ ...(row.voice || {}), language: resolved }, row.voice);
+  row.updatedAt = nowIso();
+  return {
+    ok: true,
+    employee: row,
+    language: row.voice.language,
+    languages: listSupportedLanguages(),
+  };
+}
+
 /**
  * Customer Workflow view for an Employee (Phase 9).
  * Language: Workflow / Steps / Instructions. Never graph/node/SIP jargon.
@@ -944,15 +1185,23 @@ module.exports = {
   STATUSES,
   CHANNELS,
   JOB_TEMPLATES,
+  SUPPORTED_LANGUAGES,
+  DEFAULT_LANGUAGE,
+  ACTION_TYPES,
   ALLOWED_TRANSITIONS,
   ensureEmployees,
   getJobTemplate,
   listJobTemplates,
+  listSupportedLanguages,
+  listActionTypes,
   normalizeStatus,
   normalizeChannel,
+  normalizeLanguage,
   normalizeVoice,
   normalizeOutcomeDef,
   normalizeOutcomesList,
+  normalizeActionDef,
+  normalizeActionsList,
   computeMetrics,
   publicEmployee,
   findEmployee,
@@ -972,6 +1221,10 @@ module.exports = {
   createAndAttachKnowledge,
   getOutcomes,
   setOutcomes,
+  getActions,
+  setActions,
+  executeActionHook,
+  setEmployeeLanguage,
   getWorkflow,
   updateWorkflow,
   stepsFromWorkflow,

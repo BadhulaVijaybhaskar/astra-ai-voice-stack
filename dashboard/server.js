@@ -942,6 +942,9 @@ async function apiPhoneNumbersPatch(req, res, ctx) {
         outboundEnabled: b.outboundEnabled,
         inboundWorkflowId: b.inboundWorkflowId,
         outboundWorkflowId: b.outboundWorkflowId,
+        inboundGreeting: b.inboundGreeting !== undefined ? b.inboundGreeting : b.greeting,
+        inboundHours: b.inboundHours !== undefined ? b.inboundHours : b.hours,
+        answer: b.answer,
         resolveProviderWorkflowId: workflows.resolveProviderWorkflowId,
       });
       if (result.ok) {
@@ -962,6 +965,29 @@ async function apiPhoneNumbersPatch(req, res, ctx) {
   core.sendJson(res, 200, { number: serializePhoneNumber(result.number, ctx.tenant.id) });
 }
 
+function apiPhoneNumbersInboundGet(req, res, ctx) {
+  const result = phoneNumbers.getInboundConfig(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { inbound: result.inbound });
+}
+
+async function apiPhoneNumbersInboundPut(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = phoneNumbers.setInboundConfig(d, ctx.tenant.id, ctx.params.id, ctx.body || {});
+    if (result.ok) {
+      addAudit(d, ctx, 'phone_number.inbound_updated', 'phone_number', ctx.params.id, {
+        answer: result.inbound.answer,
+        hasGreeting: !!(result.inbound.greeting || ''),
+        hoursMode: result.inbound.hours && result.inbound.hours.mode,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { inbound: result.inbound });
+}
+
 async function apiPhoneNumbersPurchase(req, res) {
   try {
     await telephonyProvider.purchaseNumber();
@@ -978,6 +1004,8 @@ function matchPhoneNumberRoute(route) {
   if (assign) return { action: 'assign', id: decodeURIComponent(assign[1]) };
   const unassign = route.match(/^\/api\/phone-numbers\/([^/]+)\/unassign$/);
   if (unassign) return { action: 'unassign', id: decodeURIComponent(unassign[1]) };
+  const inbound = route.match(/^\/api\/phone-numbers\/([^/]+)\/inbound$/);
+  if (inbound) return { action: 'inbound', id: decodeURIComponent(inbound[1]) };
   const one = route.match(/^\/api\/phone-numbers\/([^/]+)$/);
   if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
   return null;
@@ -1380,10 +1408,12 @@ function apiWallet(req, res, ctx) {
   const ledger = d.ledger.filter((x) => x.tenantId === ctx.tenant.id).slice(-100).reverse();
   const usage = d.usage.filter((x) => x.tenantId === ctx.tenant.id).slice(-30);
   const plan = plans.publicPlan(ctx.tenant.plan || 'starter');
+  const entitlements = plans.publicEntitlements(d, ctx.tenant);
   core.sendJson(res, 200, {
     wallet: publicWallet(wallet || { id: null, tenantId: ctx.tenant.id, currency: 'INR', balancePaise: 0 }),
     ledger,
     plan,
+    entitlements,
     packs: Object.keys(CREDIT_PACKS).map((id) => ({
       id,
       amountInr: Number(CREDIT_PACKS[id].amount),
@@ -1393,7 +1423,14 @@ function apiWallet(req, res, ctx) {
     usageDays: usage,
     payuEnv: (payuConfig() && payuConfig().env) || (process.env.PAYU_ENV === 'production' ? 'production' : 'test'),
     payuConfigured: !!payuConfig(),
+    // Customer packaging never surfaces provider invoices.
+    providerInvoices: null,
   });
+}
+
+function apiBillingEntitlements(req, res, ctx) {
+  const entitlements = plans.publicEntitlements(core.db(), ctx.tenant);
+  core.sendJson(res, 200, { entitlements, plan: plans.publicPlan(ctx.tenant.plan || 'starter') });
 }
 
 function apiPlansList(req, res) {
@@ -2202,6 +2239,8 @@ async function apiLeadsCall(req, res, ctx) {
 function matchEmployeesRoute(route) {
   if (route === '/api/employees') return { action: 'list_or_create' };
   if (route === '/api/employees/templates') return { action: 'templates' };
+  if (route === '/api/employees/languages') return { action: 'languages' };
+  if (route === '/api/employees/action-types') return { action: 'action_types' };
   const pause = route.match(/^\/api\/employees\/([^/]+)\/pause$/);
   if (pause) return { action: 'pause', id: decodeURIComponent(pause[1]) };
   const resume = route.match(/^\/api\/employees\/([^/]+)\/resume$/);
@@ -2228,6 +2267,12 @@ function matchEmployeesRoute(route) {
   if (knowledge) return { action: 'knowledge', id: decodeURIComponent(knowledge[1]) };
   const outcomes = route.match(/^\/api\/employees\/([^/]+)\/outcomes$/);
   if (outcomes) return { action: 'outcomes', id: decodeURIComponent(outcomes[1]) };
+  const actions = route.match(/^\/api\/employees\/([^/]+)\/actions$/);
+  if (actions) return { action: 'actions', id: decodeURIComponent(actions[1]) };
+  const actionExec = route.match(/^\/api\/employees\/([^/]+)\/actions\/execute$/);
+  if (actionExec) return { action: 'actions_execute', id: decodeURIComponent(actionExec[1]) };
+  const language = route.match(/^\/api\/employees\/([^/]+)\/language$/);
+  if (language) return { action: 'language', id: decodeURIComponent(language[1]) };
   const empLeads = route.match(/^\/api\/employees\/([^/]+)\/leads$/);
   if (empLeads) return { action: 'leads', id: decodeURIComponent(empLeads[1]) };
   const one = route.match(/^\/api\/employees\/([^/]+)$/);
@@ -2237,6 +2282,14 @@ function matchEmployeesRoute(route) {
 
 function apiEmployeeTemplates(req, res, ctx) {
   core.sendJson(res, 200, { templates: employees.listJobTemplates() });
+}
+
+function apiEmployeeLanguages(req, res) {
+  core.sendJson(res, 200, { languages: employees.listSupportedLanguages() });
+}
+
+function apiEmployeeActionTypes(req, res) {
+  core.sendJson(res, 200, { types: employees.listActionTypes() });
 }
 
 function apiEmployeesList(req, res, ctx) {
@@ -2427,6 +2480,71 @@ async function apiEmployeesOutcomesPut(req, res, ctx) {
   });
   if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
   core.sendJson(res, 200, result.outcomes);
+}
+
+function apiEmployeesActionsGet(req, res, ctx) {
+  const result = employees.getActions(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.actions);
+}
+
+async function apiEmployeesActionsPut(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const list = (ctx.body || {}).actions != null ? (ctx.body || {}).actions : (ctx.body || {}).definitions;
+  let result;
+  await core.mutate((d) => {
+    result = employees.setActions(d, ctx.tenant.id, ctx.params.id, list);
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.actions_updated', 'employee', ctx.params.id, {
+        count: result.actions.count,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.actions);
+}
+
+async function apiEmployeesActionsExecute(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const result = employees.executeActionHook(core.db(), ctx.tenant.id, ctx.params.id, ctx.body || {});
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  // Foundation only: audit the hook intent without performing CRM I/O.
+  await core.mutate((d) => {
+    addAudit(d, ctx, 'employee.action_hook', 'employee', ctx.params.id, {
+      actionKey: result.execution.actionKey,
+      actionType: result.execution.actionType,
+      status: result.execution.status,
+    });
+  });
+  core.sendJson(res, 200, result.execution);
+}
+
+async function apiEmployeesLanguagePut(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const language = (ctx.body || {}).language != null
+    ? (ctx.body || {}).language
+    : (ctx.body || {}).id;
+  let result;
+  await core.mutate((d) => {
+    result = employees.setEmployeeLanguage(d, ctx.tenant.id, ctx.params.id, language);
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.language_updated', 'employee', ctx.params.id, {
+        language: result.language,
+      });
+    }
+  });
+  if (!result.ok) {
+    return core.sendJson(res, result.status, {
+      error: result.error,
+      code: result.code,
+      supported: result.supported,
+    });
+  }
+  core.sendJson(res, 200, {
+    employee: employees.publicEmployee(result.employee, core.db()),
+    language: result.language,
+    languages: result.languages,
+  });
 }
 
 function apiEmployeesLeadsList(req, res, ctx) {
@@ -2641,6 +2759,45 @@ async function apiAdminWalletAdjust(req, res, ctx) {
   core.sendJson(res, 201, { ledgerEntry: entry });
 }
 
+async function apiAdminTestCredits(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const tenantId = String(b.tenantId || '');
+  if (!core.db().tenants.some((t) => t.id === tenantId)) {
+    return core.sendJson(res, 404, { error: 'tenant not found', code: 'not_found' });
+  }
+  const amountPaise = Number(b.amountPaise != null ? b.amountPaise : b.creditsPaise);
+  const idempotencyKey = String(b.idempotencyKey || '').trim().slice(0, 120);
+  if (!idempotencyKey) {
+    return core.sendJson(res, 422, { error: 'idempotencyKey required', code: 'idempotency_required' });
+  }
+  let result;
+  try {
+    await core.mutate((d) => {
+      result = plans.grantTestCredits(
+        d,
+        tenantId,
+        amountPaise,
+        ctx.user.id,
+        `test:${idempotencyKey}`,
+        b.reason || 'test credits',
+        addLedgerEntry,
+      );
+      if (result.ok && result.ledgerEntry && !result.duplicate) {
+        addAudit(d, ctx, 'admin.wallet.test_credits', 'tenant', tenantId, {
+          amountPaise,
+          ledgerId: result.ledgerEntry.id,
+        });
+      }
+    });
+  } catch (e) {
+    return core.sendJson(res, 409, { error: e.message, code: 'wallet_rejected' });
+  }
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  if (result.duplicate) return core.sendJson(res, 200, { duplicate: true, ledgerEntry: result.ledgerEntry });
+  core.sendJson(res, 201, { ledgerEntry: result.ledgerEntry, grantKind: 'test' });
+}
+
 async function apiAdminTicketReply(req, res, ctx) {
   const b = ctx.body || {};
   const ticket = core.db().supportTickets.find((t) => t.id === String(b.ticketId || ''));
@@ -2753,6 +2910,9 @@ const server = http.createServer(async (req, res) => {
         if (pnGet) {
           if (pnGet.action === 'list') return core.requireAuth(req, res, apiPhoneNumbersList);
           if (pnGet.action === 'available') return core.requireAuth(req, res, apiPhoneNumbersAvailable);
+          if (pnGet.action === 'inbound') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersInboundGet(rq, rs, { ...ctx, params: { id: pnGet.id } }));
+          }
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
         const callsGet = matchCallsRoute(route);
@@ -2785,6 +2945,7 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/agent-types') return core.requireAuth(req, res, apiAgentTypes);
         if (route === '/api/wallet') return core.requireAuth(req, res, apiWallet);
         if (route === '/api/plans') return core.requireAuth(req, res, apiPlansList);
+        if (route === '/api/billing/entitlements') return core.requireAuth(req, res, apiBillingEntitlements);
         if (route === '/api/payment-intents') return core.requireAuth(req, res, apiPaymentIntents);
         if (route === '/api/support/tickets') return core.requireAuth(req, res, apiSupportList);
         if (route === '/api/byon') return core.requireAuth(req, res, apiByonList);
@@ -2829,6 +2990,8 @@ const server = http.createServer(async (req, res) => {
         const empGet = matchEmployeesRoute(route);
         if (empGet) {
           if (empGet.action === 'templates') return core.requireAuth(req, res, apiEmployeeTemplates);
+          if (empGet.action === 'languages') return core.requireAuth(req, res, apiEmployeeLanguages);
+          if (empGet.action === 'action_types') return core.requireAuth(req, res, apiEmployeeActionTypes);
           if (empGet.action === 'list_or_create') return core.requireAuth(req, res, apiEmployeesList);
           if (empGet.action === 'one') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
@@ -2848,6 +3011,9 @@ const server = http.createServer(async (req, res) => {
           if (empGet.action === 'outcomes') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
           }
+          if (empGet.action === 'actions') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesActionsGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
           if (empGet.action === 'leads') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLeadsList(rq, rs, { ...ctx, params: { id: empGet.id } }));
           }
@@ -2862,12 +3028,15 @@ const server = http.createServer(async (req, res) => {
       // ---- PATCH phone number toggles / workflow drafts / employees / leads ----
       if (req.method === 'PATCH') {
         const pnPatch = matchPhoneNumberRoute(route);
-        if (pnPatch && pnPatch.action === 'one') {
+        if (pnPatch && (pnPatch.action === 'one' || pnPatch.action === 'inbound')) {
           let body;
           try { body = await core.readBody(req); }
           catch (e) {
             const tooBig = /too large/.test(String(e.message));
             return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          if (pnPatch.action === 'inbound') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersInboundPut(rq, rs, { ...ctx, params: { id: pnPatch.id } }), body);
           }
           return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersPatch(rq, rs, { ...ctx, params: { id: pnPatch.id } }), body);
         }
@@ -2911,13 +3080,30 @@ const server = http.createServer(async (req, res) => {
           if (empPatch.action === 'outcomes') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
           }
+          if (empPatch.action === 'actions') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesActionsPut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
+          }
+          if (empPatch.action === 'language') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguagePut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
+          }
         }
         return core.sendJson(res, 405, { error: 'method not allowed', code: 'method' });
       }
 
       if (req.method === 'PUT') {
+        const pnPut = matchPhoneNumberRoute(route);
+        if (pnPut && pnPut.action === 'inbound') {
+          let body;
+          try { body = await core.readBody(req); }
+          catch (e) {
+            const tooBig = /too large/.test(String(e.message));
+            return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersInboundPut(rq, rs, { ...ctx, params: { id: pnPut.id } }), body);
+        }
         const empPut = matchEmployeesRoute(route);
-        if (empPut && (empPut.action === 'instructions' || empPut.action === 'outcomes' || empPut.action === 'workflow')) {
+        if (empPut && (empPut.action === 'instructions' || empPut.action === 'outcomes' || empPut.action === 'workflow'
+          || empPut.action === 'actions' || empPut.action === 'language')) {
           let body;
           try { body = await core.readBody(req, 256 * 1024); }
           catch (e) {
@@ -2929,6 +3115,12 @@ const server = http.createServer(async (req, res) => {
           }
           if (empPut.action === 'workflow') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesWorkflowPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
+          }
+          if (empPut.action === 'actions') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesActionsPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
+          }
+          if (empPut.action === 'language') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguagePut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
           }
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
         }
@@ -3068,6 +3260,15 @@ const server = http.createServer(async (req, res) => {
         if (empPost.action === 'outcomes') {
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
         }
+        if (empPost.action === 'actions') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesActionsPut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'actions_execute') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesActionsExecute(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'language') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguagePut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }
       if (route === '/api/byon') return core.requireRole(req, res, 'owner', apiByonSave, body);
@@ -3077,6 +3278,7 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/admin/users/status') return core.requireRole(req, res, 'super_admin', apiAdminUserStatus, body);
       if (route === '/api/admin/users/role') return core.requireRole(req, res, 'super_admin', apiAdminUserRole, body);
       if (route === '/api/admin/wallet/adjust') return core.requireRole(req, res, 'admin', apiAdminWalletAdjust, body);
+      if (route === '/api/admin/wallet/test-credits') return core.requireRole(req, res, 'admin', apiAdminTestCredits, body);
       if (route === '/api/admin/tickets/reply') return core.requireRole(req, res, 'admin', apiAdminTicketReply, body);
       if (route === '/api/admin/tickets/update') return core.requireRole(req, res, 'admin', apiAdminTicketUpdate, body);
       if (route === '/api/admin/impersonations') return core.requireRole(req, res, 'super_admin', apiAdminImpersonate, body);

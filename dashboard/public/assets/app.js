@@ -1364,7 +1364,7 @@ async function viewEmployeeStudio(root, id) {
   } else if (tab === 'number') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Assign Number'));
     body.appendChild(el('p', { class: 'muted' },
-      'Give this employee a Phone Number from your inventory. Astra pn_ ids only. Provider portals stay invisible.'));
+      'Give this employee a Phone Number from your inventory. Configure Inbound answer, greeting, and hours here. Provider portals stay invisible.'));
     const current = emp.assignedNumber;
     body.appendChild(el('div', { class: 'emp-meta', style: 'margin-bottom:16px' }, [
       el('div', {}, [
@@ -1403,6 +1403,62 @@ async function viewEmployeeStudio(root, id) {
         });
       };
       body.appendChild(unBtn);
+
+      // Phase 17: Inbound ownership on assigned Phone Number → Employee.
+      let inboundPayload;
+      try {
+        inboundPayload = await api('/api/phone-numbers/' + encodeURIComponent(mine[0].id) + '/inbound');
+      } catch (e) {
+        body.appendChild(el('p', { class: 'muted', style: 'margin-top:14px' },
+          'Could not load Inbound settings. ' + esc(e.message)));
+        inboundPayload = null;
+      }
+      if (inboundPayload && inboundPayload.inbound) {
+        const inbound = inboundPayload.inbound;
+        body.appendChild(el('h4', { class: 't-h3', style: 'margin-top:22px' }, 'Inbound'));
+        body.appendChild(el('p', { class: 'muted' },
+          'Answer, greeting, and hours for this Phone Number. Routed to this Employee.'));
+        const answerIn = el('input', { type: 'checkbox' });
+        answerIn.checked = inbound.answer !== false;
+        const greetingIn = el('textarea', { class: 'input textarea', rows: '3' });
+        greetingIn.value = inbound.greeting || '';
+        const hoursMode = el('select', { class: 'select' }, [
+          el('option', { value: 'always' }, 'Always answer'),
+          el('option', { value: 'schedule' }, 'Scheduled hours'),
+        ]);
+        hoursMode.value = (inbound.hours && inbound.hours.mode === 'schedule') ? 'schedule' : 'always';
+        const tzIn = el('input', { class: 'input', value: (inbound.hours && inbound.hours.timezone) || 'Asia/Kolkata' });
+        const saveInbound = el('button', { class: 'btn btn-primary' }, 'Save Inbound');
+        saveInbound.onclick = async () => {
+          saveInbound.disabled = true;
+          try {
+            await api('/api/phone-numbers/' + encodeURIComponent(mine[0].id) + '/inbound', {
+              method: 'PUT',
+              body: {
+                answer: !!answerIn.checked,
+                greeting: greetingIn.value,
+                hours: {
+                  timezone: tzIn.value.trim() || 'Asia/Kolkata',
+                  mode: hoursMode.value === 'schedule' ? 'schedule' : 'always',
+                  windows: (inbound.hours && inbound.hours.windows) || [],
+                },
+              },
+            });
+            State.loaded.phoneNumbers = false;
+            toast('Inbound saved.', 'ok');
+            onRoute();
+          } catch (e) { toast(e.message, 'err'); }
+          finally { saveInbound.disabled = false; }
+        };
+        body.appendChild(el('label', { class: 'muted', style: 'display:flex;gap:8px;align-items:center;margin:12px 0' }, [
+          answerIn,
+          document.createTextNode('Answer inbound calls'),
+        ]));
+        body.appendChild(field('Greeting', greetingIn));
+        body.appendChild(field('Hours', hoursMode));
+        body.appendChild(field('Timezone', tzIn));
+        body.appendChild(saveInbound);
+      }
     }
     if (!available.length && !mine.length) {
       body.appendChild(el('p', { class: 'muted', style: 'margin-top:14px' },
@@ -1473,12 +1529,122 @@ async function viewEmployeeStudio(root, id) {
     }, 'Open Instant Leads'));
     await refreshEmployeeLeads(listHost, emp.id);
   } else if (tab === 'actions') {
-    emptyStub(
-      'Actions',
-      'Action tools (calendar, CRM, payments) will appear here. Use Integrations for webhook delivery today. No Phase 2 webhooks in this release.',
-      'Open Integrations',
-      '#/integrations'
+    body.appendChild(el('h3', { class: 't-h3' }, 'Actions'));
+    body.appendChild(el('p', { class: 'muted' },
+      'Define what this Employee can do after or during a conversation. Live CRM calls are not enabled in this release.'));
+    let actionsPayload;
+    try {
+      actionsPayload = await api('/api/employees/' + encodeURIComponent(id) + '/actions');
+    } catch (e) {
+      body.appendChild(el('p', { class: 'muted' }, 'Could not load actions. ' + esc(e.message)));
+      return;
+    }
+    const defs = (actionsPayload.definitions || []).slice();
+    const types = actionsPayload.types || [];
+    const listHost = el('div', { class: 'emp-actions-editor' });
+    function renderActions() {
+      listHost.innerHTML = '';
+      if (!defs.length) {
+        listHost.appendChild(el('p', { class: 'muted' }, 'No actions configured. —'));
+        return;
+      }
+      defs.forEach((d, idx) => {
+        const labelIn = el('input', { class: 'input', value: d.label || d.key || '' });
+        const descIn = el('input', { class: 'input', value: d.description || '', placeholder: 'Optional description' });
+        const enabledIn = el('input', { type: 'checkbox' });
+        enabledIn.checked = d.enabled !== false;
+        const remove = el('button', { class: 'btn btn-ghost' }, 'Remove');
+        remove.onclick = () => { defs.splice(idx, 1); renderActions(); };
+        labelIn.oninput = () => { defs[idx].label = labelIn.value; };
+        descIn.oninput = () => { defs[idx].description = descIn.value; };
+        enabledIn.onchange = () => { defs[idx].enabled = enabledIn.checked; };
+        const extra = [];
+        if (d.type === 'crm_webhook') {
+          const urlIn = el('input', {
+            class: 'input',
+            value: (d.config && d.config.webhookUrl) || '',
+            placeholder: 'https://… (stored only, not called live)',
+          });
+          urlIn.oninput = () => {
+            defs[idx].config = Object.assign({}, defs[idx].config || {}, { webhookUrl: urlIn.value.trim() });
+          };
+          extra.push(field('Webhook URL', urlIn));
+        }
+        if (d.type === 'tag_outcome') {
+          const okIn = el('input', {
+            class: 'input',
+            value: (d.config && d.config.outcomeKey) || '',
+            placeholder: 'Outcome key (reuse Outcomes)',
+          });
+          okIn.oninput = () => {
+            defs[idx].config = Object.assign({}, defs[idx].config || {}, { outcomeKey: okIn.value.trim() });
+          };
+          extra.push(field('Outcome key', okIn));
+        }
+        listHost.appendChild(el('div', { class: 'emp-block' }, [
+          el('p', { class: 'muted' }, 'Type: ' + (d.type || '—') + ' · Key: ' + (d.key || '—')),
+          field('Label', labelIn),
+          field('Description', descIn),
+          el('label', { class: 'muted', style: 'display:flex;gap:8px;align-items:center;margin:8px 0' }, [
+            enabledIn,
+            document.createTextNode('Enabled'),
+          ]),
+          ...extra,
+          remove,
+        ]));
+      });
+    }
+    renderActions();
+    body.appendChild(listHost);
+    const typeSel = el('select', { class: 'select' },
+      [el('option', { value: '' }, 'Select action type')].concat(
+        types.map((t) => el('option', { value: t.type }, t.label || t.type))
+      )
     );
+    const addBtn = el('button', { class: 'btn btn-ghost' }, 'Add action');
+    addBtn.onclick = () => {
+      if (!typeSel.value) return toast('Pick an action type.', 'info');
+      const t = types.find((x) => x.type === typeSel.value) || { type: typeSel.value, label: typeSel.value };
+      if (defs.some((d) => d.key === t.type)) return toast('That action already exists.', 'info');
+      defs.push({
+        key: t.type,
+        type: t.type,
+        label: t.label || t.type,
+        description: t.description || '',
+        enabled: true,
+        config: {},
+      });
+      renderActions();
+    };
+    const save = el('button', { class: 'btn btn-primary' }, 'Save actions');
+    save.onclick = async () => {
+      save.disabled = true;
+      try {
+        await api('/api/employees/' + encodeURIComponent(id) + '/actions', {
+          method: 'PUT',
+          body: {
+            definitions: defs.map((d) => ({
+              key: d.key,
+              type: d.type,
+              label: d.label,
+              description: d.description || '',
+              enabled: d.enabled !== false,
+              config: d.config || {},
+            })),
+          },
+        });
+        toast('Actions saved.', 'ok');
+        onRoute();
+      } catch (e) { toast(e.message, 'err'); }
+      finally { save.disabled = false; }
+    };
+    body.appendChild(el('div', { class: 'flex gap-2', style: 'margin-top:12px;flex-wrap:wrap;align-items:flex-end' }, [
+      field('Add', typeSel),
+      addBtn,
+      save,
+    ]));
+    body.appendChild(el('p', { class: 'muted', style: 'margin-top:14px' },
+      'Execution hooks are foundation only (queued_foundation). No Phase 2 webhooks. Overlap with Outcomes is intentional for tag outcome.'));
   } else if (tab === 'outcomes') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Outcomes'));
     body.appendChild(el('p', { class: 'muted' },
@@ -1564,8 +1730,44 @@ async function viewEmployeeStudio(root, id) {
   } else if (tab === 'voice') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Voice'));
     const v = emp.voice || {};
-    body.appendChild(el('div', { class: 'emp-meta' }, [
-      el('div', {}, [el('span', { class: 'muted' }, 'Language'), el('b', {}, v.language || emp.language || 'en-IN')]),
+    body.appendChild(el('p', { class: 'muted' },
+      'Choose the Language this Employee speaks. Only supported languages are listed.'));
+    let languages = [];
+    try {
+      const langRes = await api('/api/employees/languages');
+      languages = langRes.languages || [];
+    } catch (_) {
+      languages = [
+        { id: 'en-IN', label: 'English (India)' },
+        { id: 'hi-IN', label: 'Hindi' },
+        { id: 'te-IN', label: 'Telugu' },
+        { id: 'ta-IN', label: 'Tamil' },
+      ];
+    }
+    const currentLang = v.language || emp.language || 'en-IN';
+    const langSel = el('select', { class: 'select' },
+      languages.map((l) => el('option', {
+        value: l.id,
+        selected: l.id === currentLang ? 'selected' : null,
+      }, l.label + (l.nativeLabel && l.nativeLabel !== l.label ? ' · ' + l.nativeLabel : '')))
+    );
+    const saveLang = el('button', { class: 'btn btn-primary' }, 'Save Language');
+    saveLang.onclick = async () => {
+      saveLang.disabled = true;
+      try {
+        await api('/api/employees/' + encodeURIComponent(emp.id) + '/language', {
+          method: 'PUT',
+          body: { language: langSel.value },
+        });
+        State.loaded.employees = false;
+        toast('Language saved.', 'ok');
+        onRoute();
+      } catch (e) { toast(e.message, 'err'); }
+      finally { saveLang.disabled = false; }
+    };
+    body.appendChild(field('Language', langSel));
+    body.appendChild(saveLang);
+    body.appendChild(el('div', { class: 'emp-meta', style: 'margin-top:18px' }, [
       el('div', {}, [el('span', { class: 'muted' }, 'Speaker'), el('b', {}, (v.speaker || 'speaker_1').replace(/_/g, ' '))]),
       el('div', {}, [el('span', { class: 'muted' }, 'Model'), el('b', {}, v.model || 'mulberry')]),
     ]));
@@ -3591,14 +3793,24 @@ function paintAssignedNumbers(host, numbers) {
       });
     };
 
+    const inboundBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Inbound');
+    inboundBtn.onclick = () => {
+      if (n.assignedEmployeeId) {
+        location.hash = '#/employees?id=' + encodeURIComponent(n.assignedEmployeeId) + '&tab=number';
+      } else {
+        toast('Assign this Phone Number to an Employee to edit Inbound greeting and hours.', 'info');
+      }
+    };
+
     host.appendChild(el('div', { class: 'did-row pn-row' }, [
       el('div', {}, [
         el('div', { class: 'num' }, n.e164),
         el('div', { class: 'exp' }, (n.label || 'Phone Number')
-          + (n.assignedEmployeeName ? ' · ' + n.assignedEmployeeName : (n.assignedAgentName ? ' · ' + n.assignedAgentName : ''))
+          + (n.assignedEmployeeName ? ' · Employee ' + n.assignedEmployeeName : (n.assignedAgentName ? ' · ' + n.assignedAgentName : ''))
+          + (n.inbound && n.inbound.answer === false ? ' · Inbound off' : '')
           + (n.inboundWorkflowName ? ' · ' + n.inboundWorkflowName : ''))
       ]),
-      el('div', { class: 'pn-actions' }, [inbound, outbound, unassignBtn])
+      el('div', { class: 'pn-actions' }, [inbound, outbound, inboundBtn, unassignBtn])
     ]));
   });
 }
@@ -4406,10 +4618,11 @@ async function viewTrainingHub(root) {
 }
 
 async function viewBilling(root) {
-  root.appendChild(viewHead('Billing', 'Plan, prepaid wallet balance, PayU top-up packs, and usage. Secrets stay in server .env. Use PAYU_ENV=test for sandbox.'));
+  root.appendChild(viewHead('Billing', 'Plan entitlements, prepaid wallet balance, and top-up packs. Provider invoices stay off this page.'));
   const host = el('div', { class: 'grid grid-12' }, [
     el('section', { class: 'card card-pad', id: 'walletSummary' }, skeleton('sk-card', 1)),
     el('section', { class: 'card card-pad', id: 'planPanel' }, skeleton('sk-card', 1)),
+    el('section', { class: 'card card-pad', id: 'entitlementsPanel' }, skeleton('sk-card', 1)),
     el('section', { class: 'card card-pad', id: 'usagePanel' }, skeleton('sk-card', 1)),
     el('section', { class: 'card card-pad', id: 'walletLedger' }, skeleton('sk-card', 1))
   ]);
@@ -4418,10 +4631,16 @@ async function viewBilling(root) {
     const [out, planCatalog] = await Promise.all([api('/api/wallet'), api('/api/plans')]);
     const wallet = out.wallet || {}; const rows = out.ledger || [];
     const plan = out.plan || {};
+    const ent = out.entitlements || {};
     const sum = $('#walletSummary'); sum.innerHTML = '';
     sum.appendChild(el('div', { class: 'muted' }, 'Available credit'));
-    sum.appendChild(el('div', { class: 'wallet-big' }, ['₹' + fmtInr(wallet.balanceInr != null ? wallet.balanceInr : (wallet.balancePaise || 0) / 100), el('small', {}, ' INR') ]));
-    sum.appendChild(el('p', { class: 'muted' }, 'Signup grants a ₹10 trial plus the Starter plan allowance. Top-ups use PayU ' + (out.payuEnv || 'test') + ' mode' + (out.payuConfigured ? '.' : ' (not configured yet).')));
+    const bal = wallet.balanceInr != null ? wallet.balanceInr : (wallet.balancePaise || 0) / 100;
+    sum.appendChild(el('div', { class: 'wallet-big' }, ['₹' + fmtInr(bal), el('small', {}, ' INR') ]));
+    if (!bal) {
+      sum.appendChild(el('p', { class: 'muted' }, 'Wallet is empty (₹0). Top up below, or ask Super Admin for test credits.'));
+    } else {
+      sum.appendChild(el('p', { class: 'muted' }, 'Signup grants a ₹10 trial plus the Starter plan allowance. Top-ups use PayU ' + (out.payuEnv || 'test') + ' mode' + (out.payuConfigured ? '.' : ' (not configured yet).')));
+    }
     const packs = out.packs && out.packs.length ? out.packs : [{ id: 'starter', amountInr: 200 }, { id: 'growth', amountInr: 500 }, { id: 'scale', amountInr: 1000 }];
     sum.appendChild(el('h3', { class: 't-h3', style: 'margin:16px 0 10px' }, 'Top-up packs'));
     sum.appendChild(el('div', { class: 'pack-row' }, packs.map((pack) => el('button', { class: 'btn btn-ghost', onclick: () => startRecharge(pack.id) }, 'Add ₹' + fmtInr(pack.amountInr != null ? pack.amountInr : pack.inr)))));
@@ -4429,7 +4648,28 @@ async function viewBilling(root) {
     const planPanel = $('#planPanel'); planPanel.innerHTML = '';
     planPanel.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:10px' }, 'Current plan'));
     planPanel.appendChild(el('div', { class: 'wallet-big', style: 'font-size:28px' }, plan.label || plan.id || 'Starter'));
-    planPanel.appendChild(el('p', { class: 'muted' }, 'Includes ₹' + fmtInr(plan.includedCreditsInr || 0) + ' credits and ' + (plan.includedNumbers || 1) + ' phone number(s).'));
+    planPanel.appendChild(el('p', { class: 'muted' },
+      'Includes ₹' + fmtInr(plan.includedCreditsInr || 0) + ' credits, '
+      + (plan.includedNumbers || 1) + ' number(s), '
+      + (plan.includedEmployees || 2) + ' employee(s), '
+      + (plan.includedMinutes || 100) + ' minute(s).'));
+
+    const entPanel = $('#entitlementsPanel'); entPanel.innerHTML = '';
+    entPanel.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:10px' }, 'Entitlements'));
+    const included = (ent && ent.included) || {};
+    const used = (ent && ent.used) || {};
+    [
+      ['Phone Numbers', used.numbers || 0, included.numbers != null ? included.numbers : (plan.includedNumbers || 1)],
+      ['Employees', used.employees || 0, included.employees != null ? included.employees : (plan.includedEmployees || 2)],
+      ['Minutes', used.minutes || 0, included.minutes != null ? included.minutes : (plan.includedMinutes || 100)],
+    ].forEach((row) => {
+      entPanel.appendChild(el('div', { class: 'ledger-row' }, [
+        el('div', {}, row[0]),
+        el('b', {}, String(row[1]) + ' / ' + String(row[2])),
+      ]));
+    });
+    entPanel.appendChild(el('p', { class: 'muted', style: 'margin-top:10px' },
+      'Usage counts come from real Phone Numbers, Employees, and call minutes only. Empty stays empty.'));
     const isOwner = State.me && ['super_admin', 'admin', 'owner'].includes(State.me.user.role);
     if (isOwner) {
       planPanel.appendChild(el('div', { class: 'pack-row', style: 'margin-top:12px' }, (planCatalog.plans || []).map((p) => {

@@ -132,6 +132,66 @@ function upsertProviderResource(db, number) {
   return row;
 }
 
+/**
+ * Customer Inbound config on an assigned Phone Number (Phase 17).
+ * Language: answer / greeting / hours. Never SIP, trunk, or provider jargon.
+ */
+function defaultInboundHours() {
+  return {
+    timezone: 'Asia/Kolkata',
+    mode: 'always',
+    windows: [],
+  };
+}
+
+function normalizeInboundHours(raw, existing) {
+  const base = existing && typeof existing === 'object' ? existing : defaultInboundHours();
+  if (raw === undefined) return {
+    timezone: String(base.timezone || 'Asia/Kolkata').slice(0, 64),
+    mode: base.mode === 'schedule' ? 'schedule' : 'always',
+    windows: Array.isArray(base.windows) ? base.windows.slice(0, 14) : [],
+  };
+  if (raw === null) return defaultInboundHours();
+  const b = raw && typeof raw === 'object' ? raw : {};
+  const mode = b.mode === 'schedule' ? 'schedule' : 'always';
+  const timezone = String(b.timezone != null ? b.timezone : base.timezone || 'Asia/Kolkata').trim().slice(0, 64)
+    || 'Asia/Kolkata';
+  const windows = [];
+  const src = Array.isArray(b.windows) ? b.windows : (mode === 'schedule' && Array.isArray(base.windows) ? base.windows : []);
+  for (const w of src.slice(0, 14)) {
+    if (!w || typeof w !== 'object') continue;
+    const days = Array.isArray(w.days)
+      ? w.days.map((d) => Number(d)).filter((d) => d >= 0 && d <= 6).slice(0, 7)
+      : [];
+    const start = String(w.start || '09:00').trim().slice(0, 8);
+    const end = String(w.end || '18:00').trim().slice(0, 8);
+    if (!/^\d{1,2}:\d{2}$/.test(start) || !/^\d{1,2}:\d{2}$/.test(end)) continue;
+    windows.push({ days, start, end });
+  }
+  return { timezone, mode, windows };
+}
+
+function normalizeInboundConfig(number, agent) {
+  const answer = number && number.inboundEnabled !== false;
+  let greeting = '';
+  if (number && number.inboundGreeting != null) {
+    greeting = String(number.inboundGreeting).slice(0, 300);
+  } else if (agent && agent.greeting != null) {
+    greeting = String(agent.greeting).slice(0, 300);
+  }
+  const hours = normalizeInboundHours(number && number.inboundHours, null);
+  return {
+    answer: !!answer,
+    greeting,
+    hours,
+    employeeId: number && number.assignedEmployeeId ? number.assignedEmployeeId : null,
+  };
+}
+
+function publicInboundConfig(number, agent) {
+  return normalizeInboundConfig(number, agent);
+}
+
 /** Client-safe shape. Never includes API keys or raw Dograh resource ids. */
 function publicPhoneNumber(n, agentsById, workflowsById, employeesById) {
   if (!n) return null;
@@ -141,6 +201,7 @@ function publicPhoneNumber(n, agentsById, workflowsById, employeesById) {
     : null;
   const inboundWf = n.inboundWorkflowId && workflowsById ? workflowsById.get(n.inboundWorkflowId) : null;
   const outboundWf = n.outboundWorkflowId && workflowsById ? workflowsById.get(n.outboundWorkflowId) : null;
+  const inbound = publicInboundConfig(n, agent);
   return {
     id: n.id,
     e164: n.e164,
@@ -159,6 +220,7 @@ function publicPhoneNumber(n, agentsById, workflowsById, employeesById) {
     outboundWorkflowId: n.outboundWorkflowId || null,
     inboundWorkflowName: inboundWf ? inboundWf.name : null,
     outboundWorkflowName: outboundWf ? outboundWf.name : null,
+    inbound,
     createdAt: n.createdAt,
     updatedAt: n.updatedAt,
   };
@@ -440,6 +502,7 @@ function unassignNumber(db, { numberId, tenantId }) {
 function patchNumber(db, {
   numberId, tenantId, inboundEnabled, outboundEnabled,
   inboundWorkflowId, outboundWorkflowId, resolveProviderWorkflowId,
+  inboundGreeting, inboundHours, answer,
 }) {
   const number = findNumber(db, numberId);
   if (!number || number.status === 'released') {
@@ -449,11 +512,25 @@ function patchNumber(db, {
     return { ok: false, status: 403, code: 'forbidden', error: 'phone number belongs to another workspace' };
   }
   const hasWorkflowPatch = inboundWorkflowId !== undefined || outboundWorkflowId !== undefined;
-  if (inboundEnabled === undefined && outboundEnabled === undefined && !hasWorkflowPatch) {
-    return { ok: false, status: 422, code: 'no_changes', error: 'provide inboundEnabled, outboundEnabled, and/or workflow ids' };
+  const hasInboundConfig = inboundGreeting !== undefined || inboundHours !== undefined
+    || answer !== undefined;
+  if (inboundEnabled === undefined && outboundEnabled === undefined && !hasWorkflowPatch && !hasInboundConfig) {
+    return {
+      ok: false,
+      status: 422,
+      code: 'no_changes',
+      error: 'provide inboundEnabled, outboundEnabled, inbound fields, and/or workflow ids',
+    };
   }
+  if (answer !== undefined) number.inboundEnabled = !!answer;
   if (inboundEnabled !== undefined) number.inboundEnabled = !!inboundEnabled;
   if (outboundEnabled !== undefined) number.outboundEnabled = !!outboundEnabled;
+  if (inboundGreeting !== undefined) {
+    number.inboundGreeting = String(inboundGreeting || '').slice(0, 300);
+  }
+  if (inboundHours !== undefined) {
+    number.inboundHours = normalizeInboundHours(inboundHours, number.inboundHours);
+  }
   if (hasWorkflowPatch) {
     const bind = applyWorkflowBindings(db, number, tenantId, {
       inboundWorkflowId, outboundWorkflowId, resolveProviderWorkflowId,
@@ -462,6 +539,80 @@ function patchNumber(db, {
   }
   number.updatedAt = nowIso();
   return { ok: true, number };
+}
+
+/**
+ * Get customer Inbound config for an assigned Phone Number.
+ * Reuses Employee + agent greeting when number greeting is unset.
+ */
+function getInboundConfig(db, tenantId, numberId) {
+  const number = findNumber(db, numberId);
+  if (!number || number.status === 'released') {
+    return { ok: false, status: 404, code: 'not_found', error: 'phone number not found' };
+  }
+  if (number.tenantId !== tenantId) {
+    return { ok: false, status: 403, code: 'forbidden', error: 'phone number belongs to another workspace' };
+  }
+  const agent = number.assignedAgentId
+    ? (db.agents || []).find((a) => a.id === number.assignedAgentId && a.tenantId === tenantId)
+    : null;
+  const employee = number.assignedEmployeeId
+    ? (db.employees || []).find((e) => e.id === number.assignedEmployeeId && e.tenantId === tenantId)
+    : null;
+  return {
+    ok: true,
+    inbound: {
+      ...publicInboundConfig(number, agent),
+      employeeId: number.assignedEmployeeId || null,
+      employeeName: employee ? employee.name : null,
+      phoneNumberId: number.id,
+      e164: number.e164,
+    },
+  };
+}
+
+/**
+ * Persist Inbound ownership on the Phone Number and optionally sync greeting
+ * onto the linked Employee's agent. No provider portal calls.
+ */
+function setInboundConfig(db, tenantId, numberId, body) {
+  const number = findNumber(db, numberId);
+  if (!number || number.status === 'released') {
+    return { ok: false, status: 404, code: 'not_found', error: 'phone number not found' };
+  }
+  if (number.tenantId !== tenantId) {
+    return { ok: false, status: 403, code: 'forbidden', error: 'phone number belongs to another workspace' };
+  }
+  const b = body && typeof body === 'object' ? body : {};
+  if (b.answer === undefined && b.inboundEnabled === undefined
+    && b.greeting === undefined && b.inboundGreeting === undefined
+    && b.hours === undefined && b.inboundHours === undefined) {
+    return {
+      ok: false,
+      status: 422,
+      code: 'no_changes',
+      error: 'provide answer, greeting, and/or hours',
+    };
+  }
+  if (b.answer !== undefined) number.inboundEnabled = !!b.answer;
+  if (b.inboundEnabled !== undefined) number.inboundEnabled = !!b.inboundEnabled;
+  if (b.greeting !== undefined || b.inboundGreeting !== undefined) {
+    const greeting = b.greeting !== undefined ? b.greeting : b.inboundGreeting;
+    number.inboundGreeting = String(greeting || '').slice(0, 300);
+    // Sync onto linked agent so Instructions / inbound answer stay aligned.
+    if (number.assignedAgentId) {
+      const agent = (db.agents || []).find((a) => a.id === number.assignedAgentId && a.tenantId === tenantId);
+      if (agent) agent.greeting = number.inboundGreeting;
+    }
+  }
+  if (b.hours !== undefined || b.inboundHours !== undefined) {
+    number.inboundHours = normalizeInboundHours(
+      b.hours !== undefined ? b.hours : b.inboundHours,
+      number.inboundHours,
+    );
+  }
+  number.updatedAt = nowIso();
+  return getInboundConfig(db, tenantId, numberId);
 }
 
 function softReleaseNumber(db, { numberId, tenantId }) {
@@ -527,6 +678,12 @@ module.exports = {
   SEED_INVENTORY,
   seedPlatformInventory,
   publicPhoneNumber,
+  publicInboundConfig,
+  normalizeInboundConfig,
+  normalizeInboundHours,
+  defaultInboundHours,
+  getInboundConfig,
+  setInboundConfig,
   listTenantNumbers,
   listAvailableInventory,
   findNumber,
