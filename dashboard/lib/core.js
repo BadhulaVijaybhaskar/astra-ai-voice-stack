@@ -161,7 +161,7 @@ const DB_TMP = `${DB_FILE}.tmp`;
 
 function defaultDb() {
   return {
-    schemaVersion: 9,
+    schemaVersion: 10,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
@@ -181,10 +181,33 @@ const COLLECTIONS = [
   'workflows', 'leads', 'callJobs', 'employees',
 ];
 
+/**
+ * Normalize legacy string outcome labels into structured outcome defs (v10).
+ * Idempotent: objects with key/label pass through.
+ */
+function normalizeOutcomeDef(raw) {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const key = String(raw.key || raw.id || raw.label || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+    if (!key) return null;
+    const label = String(raw.label || raw.name || key).trim().slice(0, 80) || key;
+    const description = String(raw.description || '').trim().slice(0, 400);
+    const success = raw.success === true
+      || ['qualified', 'booked', 'converted', 'resolved', 'completed', 'promised_to_pay'].includes(key);
+    return { key, label, description, success: !!success };
+  }
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  const key = s.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  if (!key) return null;
+  const label = s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 80);
+  const success = ['qualified', 'booked', 'converted', 'resolved', 'completed', 'promised_to_pay'].includes(key);
+  return { key, label, description: '', success };
+}
+
 function migrateDb(parsed) {
   const out = Object.assign(defaultDb(), parsed || {});
   for (const k of COLLECTIONS) if (!Array.isArray(out[k])) out[k] = [];
-  out.schemaVersion = Math.max(9, Number(out.schemaVersion) || 0);
+  out.schemaVersion = Math.max(10, Number(out.schemaVersion) || 0);
   for (const tenant of out.tenants) {
     if (!tenant.status) tenant.status = 'active';
     if (!tenant.privacyMode) tenant.privacyMode = 'standard';
@@ -197,6 +220,19 @@ function migrateDb(parsed) {
   for (const user of out.users) {
     if (!['super_admin', 'admin', 'owner', 'member'].includes(user.role)) user.role = 'member';
     if (!user.status) user.status = 'active';
+  }
+  // v10: structured employee outcomes + lead.employeeId formalization.
+  for (const emp of out.employees) {
+    if (!Array.isArray(emp.knowledgeIds)) emp.knowledgeIds = [];
+    if (Array.isArray(emp.outcomes)) {
+      emp.outcomes = emp.outcomes.map(normalizeOutcomeDef).filter(Boolean).slice(0, 24);
+    } else {
+      emp.outcomes = [];
+    }
+  }
+  for (const lead of out.leads) {
+    if (lead.employeeId === undefined) lead.employeeId = null;
+    if (!lead.status) lead.status = 'new';
   }
   return out;
 }
@@ -480,6 +516,7 @@ module.exports = {
   htmlEscape,
   db, mutate, loadDb, defaultDb, migrateDb,
   hashPassword, verifyPassword,
+  normalizeOutcomeDef,
   createSession, createImpersonationSession, destroySession, getSession, requireAuth, requireRole, hasRole,
   sessionCookie, clearCookie, COOKIE_NAME,
   rateOk,

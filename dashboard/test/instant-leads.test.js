@@ -63,6 +63,7 @@ test('publicLead never exposes provider ids or Dograh fields', () => {
   const pub = leads.publicLead(row);
   assert.equal(pub.id, 'lead_1');
   assert.equal(pub.phone, '+919811111111');
+  assert.equal(pub.employeeId, null);
   assert.equal(pub.meta.note, 'vip');
   assert.equal('providerRunId' in pub, false);
   assert.equal('dograhWorkflowId' in pub, false);

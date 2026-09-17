@@ -1995,6 +1995,8 @@ function apiLeadsList(req, res, ctx) {
   const url = new URL(req.url || '/', 'http://localhost');
   const list = leads.listLeads(core.db(), ctx.tenant.id, {
     status: url.searchParams.get('status') || undefined,
+    employeeId: url.searchParams.get('employeeId') || undefined,
+    agentId: url.searchParams.get('agentId') || undefined,
     limit: url.searchParams.get('limit') || undefined,
   });
   core.sendJson(res, 200, { leads: list });
@@ -2006,7 +2008,10 @@ async function apiLeadsCreate(req, res, ctx) {
   await core.mutate((d) => {
     result = leads.createLead(d, ctx.tenant.id, ctx.body || {}, ctx.user.id);
     if (result.ok && result.created) {
-      addAudit(d, ctx, 'lead.created', 'lead', result.lead.id, { phone: result.lead.phone });
+      addAudit(d, ctx, 'lead.created', 'lead', result.lead.id, {
+        phone: result.lead.phone,
+        employeeId: result.lead.employeeId || null,
+      });
     }
   });
   if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
@@ -2023,6 +2028,22 @@ function apiLeadsGet(req, res, ctx) {
   core.sendJson(res, 200, { lead: leads.publicLead(lead), jobs });
 }
 
+async function apiLeadsPatch(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = leads.updateLead(d, ctx.tenant.id, ctx.params.id, ctx.body || {});
+    if (result.ok) {
+      addAudit(d, ctx, 'lead.updated', 'lead', result.lead.id, {
+        status: result.lead.status,
+        employeeId: result.lead.employeeId || null,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { lead: leads.publicLead(result.lead) });
+}
+
 async function apiLeadsCall(req, res, ctx) {
   if (rejectImpersonated(res, ctx)) return;
   const b = ctx.body || {};
@@ -2035,7 +2056,17 @@ async function apiLeadsCall(req, res, ctx) {
   const lead = leads.findLead(core.db(), ctx.tenant.id, ctx.params.id);
   if (!lead) return core.sendJson(res, 404, { error: 'lead not found', code: 'not_found' });
 
-  const agentId = b.agentId ? String(b.agentId) : lead.agentId;
+  let agentId = b.agentId ? String(b.agentId) : lead.agentId;
+  let workflowId = b.workflowId ? String(b.workflowId) : lead.workflowId;
+  let phoneNumberId = b.phoneNumberId ? String(b.phoneNumberId) : lead.phoneNumberId;
+  if (lead.employeeId && (!agentId || !workflowId)) {
+    const emp = employees.findEmployee(core.db(), ctx.tenant.id, lead.employeeId);
+    if (emp) {
+      if (!agentId) agentId = emp.agentId || null;
+      if (!workflowId) workflowId = emp.workflowId || null;
+      if (!phoneNumberId) phoneNumberId = emp.phoneNumberId || null;
+    }
+  }
   if (agentId) {
     const agent = core.db().agents.find((a) => a.id === agentId && a.tenantId === ctx.tenant.id);
     if (!agent) return core.sendJson(res, 404, { error: 'agent not found', code: 'agent_not_found' });
@@ -2057,10 +2088,8 @@ async function apiLeadsCall(req, res, ctx) {
     userId: ctx.user.id,
     toE164: lead.phone,
     agentId,
-    workflowId: b.workflowId
-      ? String(b.workflowId)
-      : (lead.workflowId || privacyWorkflowId || null),
-    phoneNumberId: b.phoneNumberId ? String(b.phoneNumberId) : lead.phoneNumberId,
+    workflowId: workflowId || privacyWorkflowId || null,
+    phoneNumberId,
     leadId: lead.id,
     source: 'instant',
     idempotencyKey: b.idempotencyKey ? String(b.idempotencyKey) : null,
@@ -2095,6 +2124,24 @@ function matchEmployeesRoute(route) {
   if (resume) return { action: 'resume', id: decodeURIComponent(resume[1]) };
   const status = route.match(/^\/api\/employees\/([^/]+)\/status$/);
   if (status) return { action: 'status', id: decodeURIComponent(status[1]) };
+  const instructions = route.match(/^\/api\/employees\/([^/]+)\/instructions$/);
+  if (instructions) return { action: 'instructions', id: decodeURIComponent(instructions[1]) };
+  const training = route.match(/^\/api\/employees\/([^/]+)\/training$/);
+  if (training) return { action: 'training', id: decodeURIComponent(training[1]) };
+  const knowledgeOne = route.match(/^\/api\/employees\/([^/]+)\/knowledge\/([^/]+)$/);
+  if (knowledgeOne) {
+    return {
+      action: 'knowledge_one',
+      id: decodeURIComponent(knowledgeOne[1]),
+      knowledgeId: decodeURIComponent(knowledgeOne[2]),
+    };
+  }
+  const knowledge = route.match(/^\/api\/employees\/([^/]+)\/knowledge$/);
+  if (knowledge) return { action: 'knowledge', id: decodeURIComponent(knowledge[1]) };
+  const outcomes = route.match(/^\/api\/employees\/([^/]+)\/outcomes$/);
+  if (outcomes) return { action: 'outcomes', id: decodeURIComponent(outcomes[1]) };
+  const empLeads = route.match(/^\/api\/employees\/([^/]+)\/leads$/);
+  if (empLeads) return { action: 'leads', id: decodeURIComponent(empLeads[1]) };
   const one = route.match(/^\/api\/employees\/([^/]+)$/);
   if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
   return null;
@@ -2203,6 +2250,111 @@ async function apiEmployeesResume(req, res, ctx) {
   });
   if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
   core.sendJson(res, 200, { employee: employees.publicEmployee(result.employee, core.db()) });
+}
+
+function apiEmployeesInstructionsGet(req, res, ctx) {
+  const result = employees.getInstructions(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.instructions);
+}
+
+async function apiEmployeesInstructionsPut(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = employees.updateInstructions(d, ctx.tenant.id, ctx.params.id, ctx.body || {});
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.instructions_updated', 'employee', ctx.params.id, {});
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.instructions);
+}
+
+function apiEmployeesTrainingGet(req, res, ctx) {
+  const result = employees.listTraining(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.training);
+}
+
+async function apiEmployeesKnowledgePost(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  let result;
+  await core.mutate((d) => {
+    if (b.create === true || (b.title && (b.content || b.sourceUrl))) {
+      result = employees.createAndAttachKnowledge(d, ctx.tenant.id, ctx.params.id, b, ctx.user.id);
+      if (result.ok) {
+        addAudit(d, ctx, 'employee.knowledge_created', 'employee', ctx.params.id, {
+          knowledgeId: result.entry.id,
+        });
+      }
+    } else {
+      result = employees.attachKnowledge(d, ctx.tenant.id, ctx.params.id, b.knowledgeId || b.id);
+      if (result.ok) {
+        addAudit(d, ctx, 'employee.knowledge_attached', 'employee', ctx.params.id, {
+          knowledgeId: b.knowledgeId || b.id,
+        });
+      }
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  const payload = { training: result.training };
+  if (result.entry) payload.entry = knowledge.publicKnowledgeEntry(result.entry);
+  core.sendJson(res, result.entry ? 201 : 200, payload);
+}
+
+async function apiEmployeesKnowledgeDetach(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = employees.detachKnowledge(d, ctx.tenant.id, ctx.params.id, ctx.params.knowledgeId);
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.knowledge_detached', 'employee', ctx.params.id, {
+        knowledgeId: ctx.params.knowledgeId,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { training: result.training });
+}
+
+function apiEmployeesOutcomesGet(req, res, ctx) {
+  const result = employees.getOutcomes(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.outcomes);
+}
+
+async function apiEmployeesOutcomesPut(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const list = (ctx.body || {}).outcomes != null ? (ctx.body || {}).outcomes : (ctx.body || {}).definitions;
+  let result;
+  await core.mutate((d) => {
+    result = employees.setOutcomes(d, ctx.tenant.id, ctx.params.id, list);
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.outcomes_updated', 'employee', ctx.params.id, {
+        count: result.outcomes.count,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.outcomes);
+}
+
+function apiEmployeesLeadsList(req, res, ctx) {
+  const row = employees.findEmployee(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!row) return core.sendJson(res, 404, { error: 'employee not found', code: 'not_found' });
+  const url = new URL(req.url || '/', 'http://localhost');
+  const list = leads.listLeads(core.db(), ctx.tenant.id, {
+    employeeId: row.id,
+    status: url.searchParams.get('status') || undefined,
+    limit: url.searchParams.get('limit') || 50,
+  });
+  core.sendJson(res, 200, {
+    employeeId: row.id,
+    leads: list,
+    count: list.length,
+  });
 }
 
 function apiCampaignsLeads(req, res, ctx) {
@@ -2507,6 +2659,18 @@ const server = http.createServer(async (req, res) => {
           if (empGet.action === 'one') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
           }
+          if (empGet.action === 'instructions') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesInstructionsGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
+          if (empGet.action === 'training') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesTrainingGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
+          if (empGet.action === 'outcomes') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
+          if (empGet.action === 'leads') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLeadsList(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
         if (route === '/api/hvac/desk') return core.requireAuth(req, res, apiHvacDesk);
@@ -2515,7 +2679,7 @@ const server = http.createServer(async (req, res) => {
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }
 
-      // ---- PATCH phone number toggles / workflow drafts ----
+      // ---- PATCH phone number toggles / workflow drafts / employees / leads ----
       if (req.method === 'PATCH') {
         const pnPatch = matchPhoneNumberRoute(route);
         if (pnPatch && pnPatch.action === 'one') {
@@ -2537,15 +2701,61 @@ const server = http.createServer(async (req, res) => {
           }
           return core.requireAuth(req, res, (rq, rs, ctx) => apiWorkflowsPatch(rq, rs, { ...ctx, params: { id: wfPatch.id } }), body);
         }
-        const empPatch = matchEmployeesRoute(route);
-        if (empPatch && empPatch.action === 'one') {
+        const leadsPatch = matchLeadsRoute(route);
+        if (leadsPatch && leadsPatch.action === 'one') {
           let body;
           try { body = await core.readBody(req); }
           catch (e) {
             const tooBig = /too large/.test(String(e.message));
             return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
           }
-          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPatch(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiLeadsPatch(rq, rs, { ...ctx, params: { id: leadsPatch.id } }), body);
+        }
+        const empPatch = matchEmployeesRoute(route);
+        if (empPatch) {
+          let body;
+          try { body = await core.readBody(req, 256 * 1024); }
+          catch (e) {
+            const tooBig = /too large/.test(String(e.message));
+            return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          if (empPatch.action === 'one') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPatch(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
+          }
+          if (empPatch.action === 'instructions') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesInstructionsPut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
+          }
+          if (empPatch.action === 'outcomes') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
+          }
+        }
+        return core.sendJson(res, 405, { error: 'method not allowed', code: 'method' });
+      }
+
+      if (req.method === 'PUT') {
+        const empPut = matchEmployeesRoute(route);
+        if (empPut && (empPut.action === 'instructions' || empPut.action === 'outcomes')) {
+          let body;
+          try { body = await core.readBody(req, 256 * 1024); }
+          catch (e) {
+            const tooBig = /too large/.test(String(e.message));
+            return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          if (empPut.action === 'instructions') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesInstructionsPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
+          }
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
+        }
+        return core.sendJson(res, 405, { error: 'method not allowed', code: 'method' });
+      }
+
+      if (req.method === 'DELETE') {
+        const empDel = matchEmployeesRoute(route);
+        if (empDel && empDel.action === 'knowledge_one') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesKnowledgeDetach(rq, rs, {
+            ...ctx,
+            params: { id: empDel.id, knowledgeId: empDel.knowledgeId },
+          }));
         }
         return core.sendJson(res, 405, { error: 'method not allowed', code: 'method' });
       }
@@ -2661,6 +2871,15 @@ const server = http.createServer(async (req, res) => {
         }
         if (empPost.action === 'resume') {
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesResume(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'knowledge') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesKnowledgePost(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'instructions') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesInstructionsPut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'outcomes') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
         }
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }

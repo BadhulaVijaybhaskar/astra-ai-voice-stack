@@ -190,6 +190,46 @@ function normalizeVoice(input, existing) {
   return { language, model, speaker, f0_up_key: f0 };
 }
 
+/**
+ * Structured outcome definition. Customers define what success looks like after
+ * a conversation. Call/lead pipelines may write matching outcome keys later.
+ */
+function normalizeOutcomeDef(raw) {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const key = String(raw.key || raw.id || raw.label || '')
+      .trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+    if (!key) return null;
+    const label = String(raw.label || raw.name || key).trim().slice(0, 80) || key;
+    const description = String(raw.description || '').trim().slice(0, 400);
+    let success = raw.success === true;
+    if (raw.success === undefined) {
+      success = ['qualified', 'booked', 'converted', 'resolved', 'completed', 'promised_to_pay'].includes(key);
+    }
+    return { key, label, description, success: !!success };
+  }
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  const key = s.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  if (!key) return null;
+  const label = s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 80);
+  const success = ['qualified', 'booked', 'converted', 'resolved', 'completed', 'promised_to_pay'].includes(key);
+  return { key, label, description: '', success };
+}
+
+function normalizeOutcomesList(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    const def = normalizeOutcomeDef(item);
+    if (!def || seen.has(def.key)) continue;
+    seen.add(def.key);
+    out.push(def);
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
 function isQualifiedCall(call) {
   const outcome = String(call.outcome || '').toLowerCase();
   if (outcome.includes('qualif') || outcome === 'booked' || outcome === 'converted') return true;
@@ -289,7 +329,7 @@ function publicEmployee(row, db, opts = {}) {
     knowledgeIds: Array.isArray(row.knowledgeIds) ? row.knowledgeIds.slice() : [],
     phoneNumberId: row.phoneNumberId || null,
     voice: normalizeVoice(row.voice),
-    outcomes: Array.isArray(row.outcomes) ? row.outcomes.slice() : [],
+    outcomes: normalizeOutcomesList(row.outcomes),
     language: (row.voice && row.voice.language) || 'en-IN',
     assignedNumber: number,
     agentName: names.agentName,
@@ -478,7 +518,9 @@ function createEmployee(db, tenantId, input, actorUserId, opts = {}) {
     knowledgeIds,
     phoneNumberId,
     voice,
-    outcomes: Array.isArray(b.outcomes) ? b.outcomes.map(String).slice(0, 24) : template.outcomes.slice(),
+    outcomes: normalizeOutcomesList(
+      Array.isArray(b.outcomes) ? b.outcomes : template.outcomes.slice(),
+    ),
     lastActiveAt: null,
     createdBy: actorUserId || null,
     createdAt: ts,
@@ -507,8 +549,11 @@ function updateEmployee(db, tenantId, id, patch) {
   if (b.description !== undefined) row.description = String(b.description || '').trim().slice(0, 4000);
   if (b.channel !== undefined) row.channel = normalizeChannel(b.channel, row.channel);
   if (b.voice !== undefined) row.voice = normalizeVoice(b.voice, row.voice);
-  if (b.outcomes !== undefined && Array.isArray(b.outcomes)) {
-    row.outcomes = b.outcomes.map(String).slice(0, 24);
+  if (b.outcomes !== undefined) {
+    if (!Array.isArray(b.outcomes)) {
+      return { ok: false, status: 422, error: 'outcomes must be an array', code: 'bad_outcomes' };
+    }
+    row.outcomes = normalizeOutcomesList(b.outcomes);
   }
 
   const refs = validateRefs(db, tenantId, b);
@@ -566,6 +611,207 @@ function resumeEmployee(db, tenantId, id) {
   return setEmployeeStatus(db, tenantId, id, 'LIVE');
 }
 
+/**
+ * Customer Instructions (Teach). Reads greeting + instructions from the linked
+ * agent persona fields, plus the employee brief. No prompt-engineering jargon.
+ */
+function getInstructions(db, tenantId, id) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const agent = row.agentId
+    ? (db.agents || []).find((a) => a.id === row.agentId && a.tenantId === tenantId)
+    : null;
+  const workflow = row.workflowId
+    ? (db.workflows || []).find((w) => w.id === row.workflowId && w.tenantId === tenantId)
+    : null;
+  const steps = [];
+  if (workflow && workflow.graphJson && Array.isArray(workflow.graphJson.nodes)) {
+    for (const n of workflow.graphJson.nodes) {
+      if (!n || n.type === 'start' || n.type === 'end') continue;
+      steps.push({
+        id: n.id || null,
+        name: n.name || n.id || 'Step',
+        type: n.type || 'node',
+        guidance: n.prompt || '',
+      });
+    }
+  }
+  return {
+    ok: true,
+    instructions: {
+      employeeId: row.id,
+      agentId: row.agentId || null,
+      workflowId: row.workflowId || null,
+      brief: row.description || '',
+      greeting: agent ? (agent.greeting || '') : '',
+      instructions: agent ? (agent.persona || '') : '',
+      steps,
+      hasAgent: !!agent,
+      hasWorkflow: !!workflow,
+    },
+  };
+}
+
+/**
+ * Persist Instructions edits onto the linked agent (greeting/persona) and
+ * employee brief. Optionally updates workflow step guidance by node id.
+ */
+function updateInstructions(db, tenantId, id, patch) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const b = patch && typeof patch === 'object' ? patch : {};
+
+  if (b.brief !== undefined) {
+    row.description = String(b.brief || '').trim().slice(0, 4000);
+  }
+
+  if (b.greeting !== undefined || b.instructions !== undefined) {
+    if (!row.agentId) {
+      return { ok: false, status: 422, error: 'employee has no linked agent', code: 'no_agent' };
+    }
+    const agent = (db.agents || []).find((a) => a.id === row.agentId && a.tenantId === tenantId);
+    if (!agent) {
+      return { ok: false, status: 404, error: 'agent not found', code: 'agent_not_found' };
+    }
+    if (b.greeting !== undefined) agent.greeting = String(b.greeting || '').slice(0, 300);
+    if (b.instructions !== undefined) agent.persona = String(b.instructions || '').slice(0, 1500);
+  }
+
+  if (b.steps !== undefined) {
+    if (!Array.isArray(b.steps)) {
+      return { ok: false, status: 422, error: 'steps must be an array', code: 'bad_steps' };
+    }
+    if (!row.workflowId) {
+      return { ok: false, status: 422, error: 'employee has no linked workflow', code: 'no_workflow' };
+    }
+    const workflow = (db.workflows || []).find((w) => w.id === row.workflowId && w.tenantId === tenantId);
+    if (!workflow) {
+      return { ok: false, status: 404, error: 'workflow not found', code: 'workflow_not_found' };
+    }
+    if (!workflow.graphJson || !Array.isArray(workflow.graphJson.nodes)) {
+      return { ok: false, status: 422, error: 'workflow has no editable steps', code: 'no_steps' };
+    }
+    const byId = new Map(b.steps.map((s) => [String(s.id || ''), s]));
+    for (const node of workflow.graphJson.nodes) {
+      const patchStep = byId.get(String(node.id || ''));
+      if (!patchStep) continue;
+      if (patchStep.guidance !== undefined) {
+        node.prompt = String(patchStep.guidance || '').slice(0, 2000);
+      }
+      if (patchStep.name !== undefined) {
+        node.name = String(patchStep.name || node.name || '').slice(0, 80);
+      }
+    }
+    workflow.updatedAt = nowIso();
+  }
+
+  row.updatedAt = nowIso();
+  return getInstructions(db, tenantId, id);
+}
+
+/**
+ * Training: resolve attached knowledge entries for an employee.
+ */
+function listTraining(db, tenantId, id) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const ids = Array.isArray(row.knowledgeIds) ? row.knowledgeIds : [];
+  const entries = [];
+  for (const kid of ids) {
+    const entry = (db.knowledgeEntries || []).find((k) => k.id === kid && k.tenantId === tenantId);
+    if (entry) {
+      entries.push({
+        id: entry.id,
+        title: entry.title || '',
+        content: entry.content || '',
+        sourceUrl: entry.sourceUrl || '',
+        status: entry.status || 'draft',
+        tags: Array.isArray(entry.tags) ? entry.tags.slice() : [],
+        updatedAt: entry.updatedAt || null,
+      });
+    }
+  }
+  return {
+    ok: true,
+    training: {
+      employeeId: row.id,
+      knowledgeIds: ids.slice(),
+      entries,
+      count: entries.length,
+    },
+  };
+}
+
+function attachKnowledge(db, tenantId, id, knowledgeId) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const kid = String(knowledgeId || '').trim();
+  if (!kid) return { ok: false, status: 422, error: 'knowledgeId required', code: 'bad_knowledge' };
+  const entry = (db.knowledgeEntries || []).find((k) => k.id === kid && k.tenantId === tenantId);
+  if (!entry) return { ok: false, status: 404, error: 'knowledge entry not found', code: 'knowledge_not_found' };
+  if (!Array.isArray(row.knowledgeIds)) row.knowledgeIds = [];
+  if (!row.knowledgeIds.includes(kid)) {
+    if (row.knowledgeIds.length >= 40) {
+      return { ok: false, status: 422, error: 'knowledge limit reached', code: 'knowledge_limit' };
+    }
+    row.knowledgeIds.push(kid);
+  }
+  row.updatedAt = nowIso();
+  return listTraining(db, tenantId, id);
+}
+
+function detachKnowledge(db, tenantId, id, knowledgeId) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const kid = String(knowledgeId || '').trim();
+  if (!Array.isArray(row.knowledgeIds)) row.knowledgeIds = [];
+  row.knowledgeIds = row.knowledgeIds.filter((x) => x !== kid);
+  row.updatedAt = nowIso();
+  return listTraining(db, tenantId, id);
+}
+
+/**
+ * Create a knowledge entry and attach it to the employee in one step.
+ */
+function createAndAttachKnowledge(db, tenantId, id, input, actorUserId) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const knowledge = require('./knowledge');
+  const created = knowledge.createEntry(db, tenantId, input, actorUserId);
+  if (!created.ok) return created;
+  const attached = attachKnowledge(db, tenantId, id, created.entry.id);
+  if (!attached.ok) return attached;
+  return { ok: true, entry: created.entry, training: attached.training };
+}
+
+function getOutcomes(db, tenantId, id) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const defs = normalizeOutcomesList(row.outcomes);
+  return {
+    ok: true,
+    outcomes: {
+      employeeId: row.id,
+      definitions: defs,
+      count: defs.length,
+      // Foundation only. Live conversation results are not invented here.
+      resultsAvailable: false,
+      results: [],
+    },
+  };
+}
+
+function setOutcomes(db, tenantId, id, list) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  if (!Array.isArray(list)) {
+    return { ok: false, status: 422, error: 'outcomes must be an array', code: 'bad_outcomes' };
+  }
+  row.outcomes = normalizeOutcomesList(list);
+  row.updatedAt = nowIso();
+  return getOutcomes(db, tenantId, id);
+}
+
 module.exports = {
   STATUSES,
   CHANNELS,
@@ -577,6 +823,8 @@ module.exports = {
   normalizeStatus,
   normalizeChannel,
   normalizeVoice,
+  normalizeOutcomeDef,
+  normalizeOutcomesList,
   computeMetrics,
   publicEmployee,
   findEmployee,
@@ -588,5 +836,13 @@ module.exports = {
   resumeEmployee,
   canTransition,
   deriveStatusAfterCompose,
+  getInstructions,
+  updateInstructions,
+  listTraining,
+  attachKnowledge,
+  detachKnowledge,
+  createAndAttachKnowledge,
+  getOutcomes,
+  setOutcomes,
   genId,
 };

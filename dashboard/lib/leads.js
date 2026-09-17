@@ -1,6 +1,7 @@
 /**
- * Astra AI. Instant leads (tenant-scoped). CRUD + E.164 normalize for IN.
+ * Astra AI. Formal Lead entity (tenant-scoped).
  *
+ * Links: Lead → Employee (emp_) and/or Agent (ag_) → CallJob → Call.
  * Public shapes never expose Dograh / VoBiz / provider ids. Idempotency keys
  * are tenant-scoped so retries do not create duplicate leads.
  *
@@ -10,7 +11,8 @@
 
 const crypto = require('crypto');
 
-const LEAD_STATUSES = new Set(['new', 'calling', 'called', 'failed']);
+const LEAD_STATUSES = Object.freeze(['new', 'assigned', 'calling', 'called', 'failed', 'qualified', 'closed']);
+const LEAD_STATUS_SET = new Set(LEAD_STATUSES);
 
 function genId(prefix) {
   return prefix + crypto.randomBytes(8).toString('hex');
@@ -45,6 +47,11 @@ function isValidE164(phone) {
   return /^\+[1-9]\d{6,14}$/.test(String(phone || ''));
 }
 
+function normalizeLeadStatus(value, fallback = 'new') {
+  const s = String(value || '').trim().toLowerCase();
+  return LEAD_STATUS_SET.has(s) ? s : fallback;
+}
+
 /**
  * Client-safe lead. Never includes provider ids or Dograh fields.
  */
@@ -55,12 +62,14 @@ function publicLead(row) {
     name: row.name || '',
     phone: row.phone,
     status: row.status || 'new',
+    employeeId: row.employeeId || null,
     agentId: row.agentId || null,
     workflowId: row.workflowId || null,
     phoneNumberId: row.phoneNumberId || null,
     lastCallJobId: row.lastCallJobId || null,
     lastCallId: row.lastCallId || null,
     lastError: row.lastError || null,
+    outcomeKey: row.outcomeKey || null,
     meta: row.meta && typeof row.meta === 'object' ? { ...row.meta } : {},
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -76,6 +85,8 @@ function listLeads(db, tenantId, opts = {}) {
   ensureLeads(db);
   let rows = (db.leads || []).filter((l) => l.tenantId === tenantId);
   if (opts.status) rows = rows.filter((l) => l.status === String(opts.status));
+  if (opts.employeeId) rows = rows.filter((l) => l.employeeId === String(opts.employeeId));
+  if (opts.agentId) rows = rows.filter((l) => l.agentId === String(opts.agentId));
   rows.sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
   const limit = Math.max(1, Math.min(200, Number(opts.limit) || 50));
   return rows.slice(0, limit).map(publicLead);
@@ -90,8 +101,24 @@ function findByIdempotencyKey(db, tenantId, key) {
 }
 
 /**
+ * Resolve employee links into agent / workflow / phone when creating or updating.
+ */
+function resolveEmployeeLinks(db, tenantId, employeeId) {
+  if (!employeeId) return { ok: true, employeeId: null, agentId: null, workflowId: null, phoneNumberId: null };
+  const emp = (db.employees || []).find((e) => e.id === String(employeeId) && e.tenantId === tenantId);
+  if (!emp) return { ok: false, status: 404, error: 'employee not found', code: 'employee_not_found' };
+  return {
+    ok: true,
+    employeeId: emp.id,
+    agentId: emp.agentId || null,
+    workflowId: emp.workflowId || null,
+    phoneNumberId: emp.phoneNumberId || null,
+  };
+}
+
+/**
  * Create a lead. Supports idempotencyKey (tenant-scoped). On key hit, returns
- * the existing lead with created:false.
+ * the existing lead with created:false. Prefer employeeId for Instant Leads.
  */
 function createLead(db, tenantId, input, actorUserId) {
   ensureLeads(db);
@@ -114,23 +141,38 @@ function createLead(db, tenantId, input, actorUserId) {
     return { ok: false, status: 422, error: 'name required', code: 'bad_name' };
   }
 
+  let employeeId = b.employeeId ? String(b.employeeId) : null;
   let agentId = b.agentId ? String(b.agentId) : null;
+  let workflowId = b.workflowId ? String(b.workflowId) : null;
+  let phoneNumberId = b.phoneNumberId ? String(b.phoneNumberId) : null;
+
+  if (employeeId) {
+    const linked = resolveEmployeeLinks(db, tenantId, employeeId);
+    if (!linked.ok) return linked;
+    employeeId = linked.employeeId;
+    if (!agentId) agentId = linked.agentId;
+    if (!workflowId) workflowId = linked.workflowId;
+    if (!phoneNumberId) phoneNumberId = linked.phoneNumberId;
+  }
+
   if (agentId) {
     const agent = (db.agents || []).find((a) => a.id === agentId && a.tenantId === tenantId);
     if (!agent) return { ok: false, status: 404, error: 'agent not found', code: 'agent_not_found' };
   }
 
-  let workflowId = b.workflowId ? String(b.workflowId) : null;
   if (workflowId) {
     const wf = (db.workflows || []).find((w) => w.id === workflowId && w.tenantId === tenantId);
     if (!wf) return { ok: false, status: 404, error: 'workflow not found', code: 'workflow_not_found' };
   }
 
-  let phoneNumberId = b.phoneNumberId ? String(b.phoneNumberId) : null;
   if (phoneNumberId) {
     const num = (db.phoneNumbers || []).find((n) => n.id === phoneNumberId && n.tenantId === tenantId);
     if (!num) return { ok: false, status: 404, error: 'phone number not found', code: 'number_not_found' };
   }
+
+  const status = employeeId
+    ? normalizeLeadStatus(b.status, 'assigned')
+    : normalizeLeadStatus(b.status, 'new');
 
   const ts = nowIso();
   const row = {
@@ -138,13 +180,15 @@ function createLead(db, tenantId, input, actorUserId) {
     tenantId,
     name,
     phone,
-    status: 'new',
+    status,
+    employeeId,
     agentId,
     workflowId,
     phoneNumberId,
     lastCallJobId: null,
     lastCallId: null,
     lastError: null,
+    outcomeKey: null,
     meta: b.meta && typeof b.meta === 'object' ? { ...b.meta } : {},
     idempotencyKey,
     createdBy: actorUserId || null,
@@ -172,10 +216,22 @@ function updateLead(db, tenantId, id, patch) {
     lead.phone = phone;
   }
   if (b.status !== undefined) {
-    if (!LEAD_STATUSES.has(String(b.status))) {
-      return { ok: false, status: 422, error: 'bad lead status', code: 'bad_status' };
+    const next = normalizeLeadStatus(b.status, '');
+    if (!next) return { ok: false, status: 422, error: 'bad lead status', code: 'bad_status' };
+    lead.status = next;
+  }
+  if (b.employeeId !== undefined) {
+    if (b.employeeId) {
+      const linked = resolveEmployeeLinks(db, tenantId, b.employeeId);
+      if (!linked.ok) return linked;
+      lead.employeeId = linked.employeeId;
+      if (b.agentId === undefined && linked.agentId) lead.agentId = linked.agentId;
+      if (b.workflowId === undefined && linked.workflowId) lead.workflowId = linked.workflowId;
+      if (b.phoneNumberId === undefined && linked.phoneNumberId) lead.phoneNumberId = linked.phoneNumberId;
+      if (lead.status === 'new') lead.status = 'assigned';
+    } else {
+      lead.employeeId = null;
     }
-    lead.status = String(b.status);
   }
   if (b.agentId !== undefined) {
     if (b.agentId) {
@@ -191,6 +247,9 @@ function updateLead(db, tenantId, id, patch) {
   if (b.lastCallJobId !== undefined) lead.lastCallJobId = b.lastCallJobId || null;
   if (b.lastCallId !== undefined) lead.lastCallId = b.lastCallId || null;
   if (b.lastError !== undefined) lead.lastError = b.lastError ? String(b.lastError).slice(0, 240) : null;
+  if (b.outcomeKey !== undefined) {
+    lead.outcomeKey = b.outcomeKey ? String(b.outcomeKey).trim().slice(0, 40) : null;
+  }
   if (b.meta && typeof b.meta === 'object') lead.meta = { ...b.meta };
   lead.updatedAt = nowIso();
   return { ok: true, lead };
@@ -198,12 +257,15 @@ function updateLead(db, tenantId, id, patch) {
 
 module.exports = {
   LEAD_STATUSES,
+  LEAD_STATUS_SET,
   normalizePhoneIN,
   isValidE164,
+  normalizeLeadStatus,
   publicLead,
   findLead,
   listLeads,
   findByIdempotencyKey,
+  resolveEmployeeLinks,
   createLead,
   updateLead,
   ensureLeads,

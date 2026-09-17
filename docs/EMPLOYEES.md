@@ -1,4 +1,4 @@
-# AI Employees (Phases 1 to 4)
+# AI Employees (Phases 1 to 8)
 
 Customer-facing **Employee** product layer. An employee is a composition of relationships, not a duplicated agent/workflow blob.
 
@@ -14,6 +14,7 @@ Customer-facing **Employee** product layer. An employee is a composition of rela
 | `voice` | language / speaker / model (no provider brand names in UI copy) |
 | `status` | `DRAFT` \| `READY` \| `LIVE` \| `PAUSED` \| `ARCHIVED` |
 | `channel` | `inbound` \| `instant_lead` \| `campaign` \| `outbound` \| `both` |
+| `outcomes` | Structured outcome defs (`key`, `label`, `description`, `success`) |
 
 Lifecycle: create composes Agent + Workflow from a job template → usually `READY`. Go live / pause / resume / archive via status APIs. Metrics (`callsToday`, `leads`, `qualified`, `lastActiveAt`) come from real Call/Lead rows or honest zeros. Never fake analytics.
 
@@ -35,6 +36,12 @@ Each maps onto existing workflow templates and agent presets (reuse).
 | `POST` | `/api/employees/:id/status` | Lifecycle transition. |
 | `POST` | `/api/employees/:id/pause` | LIVE → PAUSED. |
 | `POST` | `/api/employees/:id/resume` | PAUSED → LIVE. |
+| `GET` / `PUT` | `/api/employees/:id/instructions` | Teach: brief, greeting, instructions, step guidance. See [INSTRUCTIONS.md](./INSTRUCTIONS.md). |
+| `GET` | `/api/employees/:id/training` | Attached knowledge. |
+| `POST` | `/api/employees/:id/knowledge` | Attach existing `kb_` or create+attach. |
+| `DELETE` | `/api/employees/:id/knowledge/:kbId` | Detach. |
+| `GET` / `PUT` | `/api/employees/:id/outcomes` | Outcome definitions. See [OUTCOMES.md](./OUTCOMES.md). |
+| `GET` | `/api/employees/:id/leads` | Connected leads. See [LEADS.md](./LEADS.md). |
 
 Public JSON never includes Dograh / VoBiz / Deepgram / Groq / Rumik terms.
 
@@ -42,12 +49,16 @@ Public JSON never includes Dograh / VoBiz / Deepgram / Groq / Rumik terms.
 
 - **My Employees**: cards, filters, Open / Test / Pause / Resume, + New Employee.
 - **Create Employee**: templates + brief → compose.
-- **Employee Studio**: header actions + tabs (Overview, Instructions, Workflow, Training, Actions, Outcomes, Voice, Settings). Tabs wire to existing modules or honest empty stubs.
+- **Employee Studio**: header actions + tabs (Overview, Instructions, Workflow, Training, Leads, Actions, Outcomes, Voice, Settings).
+  - Instructions / Training / Outcomes / Leads are real editors (Phases 5–8).
+  - Actions remains an honest stub (no Phase 2 webhooks).
+
+North star: Create → Teach → Test → Assign Number → Connect Leads → Go Live.
 
 ## Schema
 
-Additive migration to **schemaVersion 9**: collection `employees`.
+Additive migration to **schemaVersion 10**: structured `outcomes`, `lead.employeeId`, collections unchanged from v9 plus formalization.
 
 ## Out of scope
 
-Phase 2 webhooks, fake analytics, unauthorized live dials, collapsing Agent/Workflow modules.
+Phase 2 webhooks, fake analytics, unauthorized live dials, collapsing Agent/Workflow modules, billing.
