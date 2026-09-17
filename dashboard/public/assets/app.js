@@ -277,8 +277,9 @@ function resetData() {
   State.wallet = null; State.presets = []; State.agentTypes = []; State.tickets = [];
   State.demoLinks = [];
   State.workflows = null; State.workflowTemplates = null;
+  State.employees = null; State.employeeTemplates = null;
   State.createDraft = null;
-  State.loaded = { agents: false, providers: false, usage: false, telephony: false, phoneNumbers: false, calls: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false, workflows: false, workflowTemplates: false };
+  State.loaded = { agents: false, providers: false, usage: false, telephony: false, phoneNumbers: false, calls: false, wallet: false, presets: false, agentTypes: false, tickets: false, demoLinks: false, workflows: false, workflowTemplates: false, employees: false, employeeTemplates: false };
   State.activeAgentId = null;
 }
 
@@ -287,6 +288,7 @@ function resetData() {
    =========================================================================== */
 const ROUTES = [
   { id: 'overview', label: 'Overview', icon: 'grid', group: 'HOME' },
+  { id: 'employees', label: 'My Employees', icon: 'users', group: 'BUILD' },
   { id: 'agents', label: 'Agents', icon: 'users', group: 'BUILD' },
   { id: 'workflows', label: 'Workflows', icon: 'flow', group: 'BUILD' },
   { id: 'presets', label: 'Presets', icon: 'template', group: 'BUILD' },
@@ -477,7 +479,7 @@ function onRoute() {
   const wrap = el('div', { class: 'view' });
   view.appendChild(wrap);
   ({
-    overview: viewOverview, agents: viewAgents, workflows: viewWorkflows, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
+    overview: viewOverview, employees: viewEmployees, agents: viewAgents, workflows: viewWorkflows, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
     talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, calls: viewCalls, leads: viewInstantLeads,
     knowledge: viewKnowledge, integrations: viewIntegrations, campaigns: viewCampaigns, analytics: viewAnalytics, billing: viewBilling,
     support: viewSupport, admin: viewAdmin, settings: viewSettings
@@ -510,6 +512,7 @@ async function viewOverview(root) {
       el('h3', {}, 'Quick actions'),
       el('div', { class: 'qa-row' }, [
         el('button', { class: 'btn btn-primary', onclick: () => startDeployWizard() }, 'Deploy from preset'),
+        el('button', { class: 'btn btn-ghost', onclick: () => goto('employees') }, 'My Employees'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('agents') }, 'Build an agent'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('studio') }, 'Open Voice Studio'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('talk') }, 'Talk to it'),
@@ -702,6 +705,526 @@ async function ensureTelephony(force) {
   State.telephony = res;
   State.loaded.telephony = true;
   return State.telephony;
+}
+
+/* ===========================================================================
+   MY EMPLOYEES (Phases 1 to 4)
+   =========================================================================== */
+async function ensureEmployees(force) {
+  if (State.loaded.employees && !force) return State.employees || [];
+  const res = await api('/api/employees');
+  State.employees = res.employees || [];
+  State.loaded.employees = true;
+  return State.employees;
+}
+
+async function ensureEmployeeTemplates(force) {
+  if (State.loaded.employeeTemplates && !force) return State.employeeTemplates || [];
+  const res = await api('/api/employees/templates');
+  State.employeeTemplates = res.templates || [];
+  State.loaded.employeeTemplates = true;
+  return State.employeeTemplates;
+}
+
+function employeeFilterFromHash() {
+  const params = new URLSearchParams((location.hash.split('?')[1] || ''));
+  return String(params.get('filter') || 'all').toLowerCase();
+}
+
+function employeeIdFromHash() {
+  const params = new URLSearchParams((location.hash.split('?')[1] || ''));
+  return params.get('id') || '';
+}
+
+function employeeCreateMode() {
+  const params = new URLSearchParams((location.hash.split('?')[1] || ''));
+  return params.get('create') === '1';
+}
+
+function channelLabel(ch) {
+  const map = {
+    inbound: 'Inbound',
+    instant_lead: 'Instant Lead',
+    campaign: 'Campaign',
+    outbound: 'Outbound',
+    both: 'Multi-channel',
+  };
+  return map[ch] || ch || '-';
+}
+
+function fmtMetric(n) {
+  if (n == null || n === '') return '0';
+  return String(n);
+}
+
+function fmtLastActive(iso) {
+  if (!iso) return '-';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '-';
+    return d.toLocaleString();
+  } catch (_) { return '-'; }
+}
+
+async function viewEmployees(root) {
+  const id = employeeIdFromHash();
+  if (id) return viewEmployeeStudio(root, id);
+  if (employeeCreateMode()) return viewEmployeeCreate(root);
+
+  root.appendChild(viewHead(
+    'My Employees',
+    'AI employees are composed from your agents, workflows, knowledge, and phone numbers. Metrics are real or empty, never invented.'
+  ));
+
+  const filters = ['all', 'inbound', 'instant_lead', 'campaign', 'draft', 'ready', 'live', 'paused'];
+  const filterLabels = {
+    all: 'All', inbound: 'Inbound', instant_lead: 'Instant Lead', campaign: 'Campaign',
+    draft: 'Draft', ready: 'Ready', live: 'Live', paused: 'Paused',
+  };
+  let activeFilter = employeeFilterFromHash();
+  if (!filters.includes(activeFilter)) activeFilter = 'all';
+
+  const toolbar = el('div', { class: 'emp-toolbar' }, [
+    el('div', { class: 'emp-filters', id: 'empFilters' }),
+    el('button', {
+      class: 'btn btn-primary',
+      onclick: () => { location.hash = '#/employees?create=1'; },
+    }, '+ New Employee'),
+  ]);
+  root.appendChild(toolbar);
+
+  const host = el('div', { id: 'empGrid', class: 'emp-grid' }, skeleton('sk-card', 3));
+  root.appendChild(host);
+
+  function renderFilters() {
+    const box = $('#empFilters');
+    if (!box) return;
+    box.innerHTML = '';
+    filters.forEach((f) => {
+      const btn = el('button', {
+        class: 'emp-filter' + (f === activeFilter ? ' is-active' : ''),
+        onclick: () => {
+          activeFilter = f;
+          location.hash = f === 'all' ? '#/employees' : '#/employees?filter=' + encodeURIComponent(f);
+          renderFilters();
+          loadEmpGrid();
+        },
+      }, filterLabels[f] || f);
+      box.appendChild(btn);
+    });
+  }
+
+  async function loadEmpGrid() {
+    try {
+      const q = activeFilter && activeFilter !== 'all' ? ('?filter=' + encodeURIComponent(activeFilter)) : '';
+      const out = await api('/api/employees' + q);
+      State.employees = out.employees || [];
+      State.loaded.employees = true;
+      host.innerHTML = '';
+      if (!State.employees.length) {
+        host.appendChild(el('div', { class: 'card card-pad empty emp-empty' }, [
+          el('div', { class: 'ttl' }, 'No employees yet'),
+          el('p', { class: 'muted' }, 'Create an AI employee from a job template. Astra composes an agent and workflow for you.'),
+          el('button', {
+            class: 'btn btn-primary',
+            onclick: () => { location.hash = '#/employees?create=1'; },
+          }, '+ New Employee'),
+        ]));
+        return;
+      }
+      State.employees.forEach((emp) => host.appendChild(employeeCard(emp)));
+    } catch (e) {
+      host.innerHTML = '';
+      host.appendChild(el('div', { class: 'card card-pad muted' }, 'Could not load employees. ' + esc(e.message)));
+    }
+  }
+
+  renderFilters();
+  await loadEmpGrid();
+}
+
+function employeeCard(emp) {
+  const open = el('button', { class: 'btn btn-primary' }, 'Open');
+  open.onclick = () => { location.hash = '#/employees?id=' + encodeURIComponent(emp.id); };
+  const testBtn = el('button', { class: 'btn btn-ghost' }, 'Test');
+  testBtn.onclick = () => {
+    if (emp.agentId) State.activeAgentId = emp.agentId;
+    toast('Opening Talk to it with this employee agent. No live dial.', 'info');
+    goto('talk');
+  };
+  const pauseResume = el('button', { class: 'btn btn-ghost' },
+    emp.status === 'LIVE' ? 'Pause' : (emp.status === 'PAUSED' ? 'Resume' : 'Go live'));
+  pauseResume.onclick = async () => {
+    try {
+      if (emp.status === 'LIVE') {
+        await api('/api/employees/' + encodeURIComponent(emp.id) + '/pause', { method: 'POST', body: {} });
+        toast('Employee paused.', 'ok');
+      } else if (emp.status === 'PAUSED') {
+        await api('/api/employees/' + encodeURIComponent(emp.id) + '/resume', { method: 'POST', body: {} });
+        toast('Employee resumed.', 'ok');
+      } else if (emp.status === 'READY' || emp.status === 'DRAFT') {
+        await api('/api/employees/' + encodeURIComponent(emp.id) + '/status', {
+          method: 'POST', body: { status: 'LIVE' },
+        });
+        toast('Employee is live.', 'ok');
+      } else {
+        toast('Archived employees cannot go live directly.', 'info');
+        return;
+      }
+      State.loaded.employees = false;
+      onRoute();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+
+  const numberLabel = (emp.assignedNumber && (emp.assignedNumber.e164 || emp.assignedNumber.label))
+    || 'No number';
+  const voiceLabel = (emp.language || 'en-IN') + (emp.voice && emp.voice.speaker ? ' · ' + emp.voice.speaker.replace(/_/g, ' ') : '');
+
+  return el('article', { class: 'card emp-card' }, [
+    el('div', { class: 'emp-card-top' }, [
+      el('div', {}, [
+        el('h3', { class: 't-h3' }, emp.name || 'Employee'),
+        el('p', { class: 'muted' }, (emp.role || 'Role') + ' · ' + channelLabel(emp.channel)),
+      ]),
+      el('span', { class: 'pill emp-status emp-status-' + String(emp.status || '').toLowerCase() }, emp.status || 'DRAFT'),
+    ]),
+    el('div', { class: 'emp-meta' }, [
+      el('div', {}, [el('span', { class: 'muted' }, 'Voice / language'), el('b', {}, voiceLabel)]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Assigned number'), el('b', {}, numberLabel)]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Calls today'), el('b', {}, fmtMetric(emp.callsToday))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Leads'), el('b', {}, fmtMetric(emp.leads))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Qualified'), el('b', {}, fmtMetric(emp.qualified))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Last active'), el('b', {}, fmtLastActive(emp.lastActiveAt))]),
+    ]),
+    el('div', { class: 'flex gap-2 emp-card-actions' }, [open, testBtn, pauseResume]),
+  ]);
+}
+
+async function viewEmployeeCreate(root) {
+  root.appendChild(viewHead(
+    'Create Employee',
+    'Pick a job template, describe what this employee should do, and Astra composes an agent and workflow. No provider setup for normal users.'
+  ));
+  root.appendChild(el('button', {
+    class: 'btn btn-ghost',
+    style: 'margin-bottom:14px',
+    onclick: () => { location.hash = '#/employees'; },
+  }, '← Back to My Employees'));
+
+  const templates = await ensureEmployeeTemplates(true).catch(() => []);
+  let selectedKey = (templates[0] && templates[0].key) || 'custom';
+
+  const name = el('input', { class: 'input', placeholder: 'Front Desk Maya' });
+  const brief = el('textarea', {
+    class: 'input textarea',
+    placeholder: 'Describe what this employee should do. Example: Answer inbound calls for AstraNova, take messages, and book callbacks.',
+  });
+  const tplHost = el('div', { class: 'emp-template-grid' });
+  const create = el('button', { class: 'btn btn-primary' }, 'Create employee');
+
+  function renderTemplates() {
+    tplHost.innerHTML = '';
+    (templates || []).forEach((t) => {
+      const card = el('button', {
+        type: 'button',
+        class: 'emp-template' + (t.key === selectedKey ? ' is-active' : ''),
+        onclick: () => {
+          selectedKey = t.key;
+          if (!name.value.trim()) name.placeholder = t.name;
+          renderTemplates();
+        },
+      }, [
+        el('b', {}, t.name),
+        el('span', { class: 'muted' }, t.description || ''),
+        el('span', { class: 'pill' }, channelLabel(t.channel)),
+      ]);
+      tplHost.appendChild(card);
+    });
+  }
+  renderTemplates();
+
+  create.onclick = async () => {
+    create.disabled = true;
+    try {
+      const out = await api('/api/employees', {
+        method: 'POST',
+        body: {
+          templateKey: selectedKey,
+          name: name.value.trim() || undefined,
+          description: brief.value.trim(),
+        },
+      });
+      State.loaded.employees = false;
+      State.loaded.agents = false;
+      State.loaded.workflows = false;
+      toast('Employee created' + (out.composed ? ' with agent and workflow.' : '.'), 'ok');
+      location.hash = '#/employees?id=' + encodeURIComponent(out.employee.id);
+    } catch (e) { toast(e.message, 'err'); }
+    finally { create.disabled = false; }
+  };
+
+  root.appendChild(el('section', { class: 'card card-pad' }, [
+    el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, 'Job template'),
+    tplHost,
+    field('Name', name),
+    field('Describe what this employee should do', brief),
+    create,
+  ]));
+}
+
+async function viewEmployeeStudio(root, id) {
+  let detail;
+  try {
+    detail = await api('/api/employees/' + encodeURIComponent(id));
+  } catch (e) {
+    root.appendChild(viewHead('Employee', 'Could not open this employee.'));
+    root.appendChild(el('div', { class: 'card card-pad muted' }, e.message));
+    root.appendChild(el('button', { class: 'btn btn-ghost', onclick: () => { location.hash = '#/employees'; } }, 'Back'));
+    return;
+  }
+  const emp = detail.employee || {};
+  const agent = detail.agent || null;
+  const workflow = detail.workflow || null;
+  const knowledgeEntries = detail.knowledge || [];
+
+  const params = new URLSearchParams((location.hash.split('?')[1] || ''));
+  let tab = String(params.get('tab') || 'overview').toLowerCase();
+  const tabs = [
+    ['overview', 'Overview'],
+    ['instructions', 'Instructions'],
+    ['workflow', 'Workflow'],
+    ['training', 'Training'],
+    ['actions', 'Actions'],
+    ['outcomes', 'Outcomes'],
+    ['voice', 'Voice'],
+    ['settings', 'Settings'],
+  ];
+  if (!tabs.some((t) => t[0] === tab)) tab = 'overview';
+
+  const numberLabel = (emp.assignedNumber && (emp.assignedNumber.e164 || emp.assignedNumber.label)) || 'No number assigned';
+  const header = el('div', { class: 'emp-studio-head card card-pad' }, [
+    el('div', { class: 'emp-studio-title' }, [
+      el('button', { class: 'btn btn-ghost', onclick: () => { location.hash = '#/employees'; } }, '← My Employees'),
+      el('h2', {}, emp.name || 'Employee'),
+      el('p', { class: 'muted' }, [
+        document.createTextNode((emp.role || 'Role') + ' · '),
+        el('span', { class: 'pill emp-status emp-status-' + String(emp.status || '').toLowerCase() }, emp.status || 'DRAFT'),
+        document.createTextNode(' · ' + channelLabel(emp.channel) + ' · ' + (emp.language || 'en-IN') + ' · ' + numberLabel),
+      ]),
+    ]),
+    el('div', { class: 'flex gap-2 emp-studio-actions' }, [
+      el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => {
+          if (emp.agentId) State.activeAgentId = emp.agentId;
+          goto('talk');
+        },
+      }, 'Talk'),
+      el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => {
+          if (emp.agentId) State.activeAgentId = emp.agentId;
+          toast('Chat uses the Talk to it text path with this employee agent.', 'info');
+          goto('talk');
+        },
+      }, 'Chat'),
+      el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => {
+          if (emp.agentId) State.activeAgentId = emp.agentId;
+          toast('Test call opens Talk to it. Live outbound dials require Instant Leads confirm.', 'info');
+          goto('talk');
+        },
+      }, 'Test Call'),
+      el('button', {
+        class: 'btn btn-primary',
+        onclick: async () => {
+          try {
+            if (emp.status === 'LIVE') {
+              await api('/api/employees/' + encodeURIComponent(emp.id) + '/pause', { method: 'POST', body: {} });
+            } else if (emp.status === 'PAUSED') {
+              await api('/api/employees/' + encodeURIComponent(emp.id) + '/resume', { method: 'POST', body: {} });
+            } else {
+              await api('/api/employees/' + encodeURIComponent(emp.id) + '/status', {
+                method: 'POST', body: { status: 'LIVE' },
+              });
+            }
+            onRoute();
+          } catch (e) { toast(e.message, 'err'); }
+        },
+      }, emp.status === 'LIVE' ? 'Pause' : (emp.status === 'PAUSED' ? 'Resume' : 'Go live')),
+    ]),
+  ]);
+  root.appendChild(header);
+
+  const tabBar = el('div', { class: 'emp-tabs' });
+  tabs.forEach(([key, label]) => {
+    tabBar.appendChild(el('button', {
+      class: 'emp-tab' + (key === tab ? ' is-active' : ''),
+      onclick: () => {
+        location.hash = '#/employees?id=' + encodeURIComponent(id) + '&tab=' + encodeURIComponent(key);
+        onRoute();
+      },
+    }, label));
+  });
+  root.appendChild(tabBar);
+
+  const body = el('div', { class: 'emp-studio-body card card-pad' });
+  root.appendChild(body);
+
+  function emptyStub(title, hint, ctaLabel, ctaHash) {
+    body.appendChild(el('div', { class: 'emp-stub' }, [
+      el('h3', { class: 't-h3' }, title),
+      el('p', { class: 'muted' }, hint),
+      ctaLabel ? el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => { location.hash = ctaHash; },
+      }, ctaLabel) : null,
+    ]));
+  }
+
+  if (tab === 'overview') {
+    body.appendChild(el('h3', { class: 't-h3' }, 'Overview'));
+    body.appendChild(el('p', {}, emp.description || 'No brief yet. Add one under Instructions or recreate from a template.'));
+    body.appendChild(el('div', { class: 'emp-meta', style: 'margin-top:16px' }, [
+      el('div', {}, [el('span', { class: 'muted' }, 'Calls today'), el('b', {}, fmtMetric(emp.callsToday))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Leads'), el('b', {}, fmtMetric(emp.leads))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Qualified'), el('b', {}, fmtMetric(emp.qualified))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Last active'), el('b', {}, fmtLastActive(emp.lastActiveAt))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Agent'), el('b', {}, emp.agentName || emp.agentId || '-')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Workflow'), el('b', {}, emp.workflowName || emp.workflowId || '-')]),
+    ]));
+  } else if (tab === 'instructions') {
+    body.appendChild(el('h3', { class: 't-h3' }, 'Instructions'));
+    if (agent) {
+      body.appendChild(el('p', { class: 'muted' }, 'Persona and greeting from the linked agent.'));
+      body.appendChild(el('div', { class: 'emp-block' }, [
+        el('b', {}, 'Greeting'),
+        el('p', {}, agent.greeting || 'No greeting set.'),
+      ]));
+      body.appendChild(el('div', { class: 'emp-block' }, [
+        el('b', {}, 'Persona'),
+        el('p', {}, agent.persona || 'No persona set.'),
+      ]));
+      body.appendChild(el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => goto('agents'),
+      }, 'Open Agents'));
+    } else {
+      emptyStub('No agent linked', 'This employee has no agent yet. Create one from Agents or recreate the employee with a template.', 'Open Agents', '#/agents');
+    }
+  } else if (tab === 'workflow') {
+    body.appendChild(el('h3', { class: 't-h3' }, 'Workflow'));
+    if (workflow) {
+      body.appendChild(el('p', {}, workflow.name || 'Linked workflow'));
+      body.appendChild(el('p', { class: 'muted' }, (workflow.description || '') + ' · ' + (workflow.status || 'draft') + ' · ' + (workflow.direction || '')));
+      const nodes = (workflow.graphJson && workflow.graphJson.nodes) || [];
+      if (nodes.length) {
+        nodes.forEach((n) => {
+          body.appendChild(el('div', { class: 'emp-block' }, [
+            el('b', {}, (n.name || n.id || 'Step') + ' · ' + (n.type || 'node')),
+            el('p', { class: 'muted' }, n.prompt || ''),
+          ]));
+        });
+      } else {
+        body.appendChild(el('p', { class: 'muted' }, 'Workflow graph is empty.'));
+      }
+      body.appendChild(el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => { location.hash = '#/workflows?id=' + encodeURIComponent(workflow.id); },
+      }, 'Open Workflow'));
+    } else {
+      emptyStub('No workflow linked', 'Compose a workflow from Workflows, then link it in Settings.', 'Open Workflows', '#/workflows');
+    }
+  } else if (tab === 'training') {
+    body.appendChild(el('h3', { class: 't-h3' }, 'Training'));
+    if (knowledgeEntries.length) {
+      knowledgeEntries.forEach((k) => {
+        body.appendChild(el('div', { class: 'emp-block' }, [
+          el('b', {}, k.title || 'Entry'),
+          el('p', { class: 'muted' }, (k.content || '').slice(0, 220) || k.sourceUrl || ''),
+        ]));
+      });
+    } else {
+      emptyStub(
+        'No knowledge linked yet',
+        'Attach published Knowledge entries to ground this employee. Nothing is invented here.',
+        'Open Knowledge',
+        '#/knowledge'
+      );
+    }
+  } else if (tab === 'actions') {
+    emptyStub(
+      'Actions',
+      'Action tools (calendar, CRM, payments) will appear here. Use Integrations for webhook delivery today. No Phase 2 webhooks in this release.',
+      'Open Integrations',
+      '#/integrations'
+    );
+  } else if (tab === 'outcomes') {
+    body.appendChild(el('h3', { class: 't-h3' }, 'Outcomes'));
+    const outs = emp.outcomes || [];
+    if (!outs.length) {
+      body.appendChild(el('p', { class: 'muted' }, 'No outcome labels configured for this template.'));
+    } else {
+      outs.forEach((o) => body.appendChild(el('div', { class: 'pill', style: 'margin:4px 6px 4px 0;display:inline-flex' }, String(o).replace(/_/g, ' '))));
+    }
+    body.appendChild(el('p', { class: 'muted', style: 'margin-top:14px' },
+      'Qualified count on the card uses real call outcomes only. Current qualified: ' + fmtMetric(emp.qualified) + '.'));
+  } else if (tab === 'voice') {
+    body.appendChild(el('h3', { class: 't-h3' }, 'Voice'));
+    const v = emp.voice || {};
+    body.appendChild(el('div', { class: 'emp-meta' }, [
+      el('div', {}, [el('span', { class: 'muted' }, 'Language'), el('b', {}, v.language || emp.language || 'en-IN')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Speaker'), el('b', {}, (v.speaker || 'speaker_1').replace(/_/g, ' '))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Model'), el('b', {}, v.model || 'mulberry')]),
+    ]));
+    body.appendChild(el('p', { class: 'muted', style: 'margin-top:12px' },
+      'Voice preview and tuning live in Voice Studio and the linked agent. Provider names are not shown here.'));
+    body.appendChild(el('div', { class: 'flex gap-2', style: 'margin-top:12px' }, [
+      el('button', { class: 'btn btn-ghost', onclick: () => goto('studio') }, 'Open Voice Studio'),
+      el('button', { class: 'btn btn-ghost', onclick: () => goto('agents') }, 'Open Agents'),
+    ]));
+  } else if (tab === 'settings') {
+    body.appendChild(el('h3', { class: 't-h3' }, 'Settings'));
+    const nameIn = el('input', { class: 'input', value: emp.name || '' });
+    const roleIn = el('input', { class: 'input', value: emp.role || '' });
+    const descIn = el('textarea', { class: 'input textarea' });
+    descIn.value = emp.description || '';
+    const save = el('button', { class: 'btn btn-primary' }, 'Save');
+    save.onclick = async () => {
+      try {
+        await api('/api/employees/' + encodeURIComponent(emp.id), {
+          method: 'PATCH',
+          body: { name: nameIn.value.trim(), role: roleIn.value.trim(), description: descIn.value.trim() },
+        });
+        toast('Saved.', 'ok');
+        onRoute();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    const archive = el('button', { class: 'btn btn-ghost' }, 'Archive');
+    archive.onclick = async () => {
+      try {
+        await api('/api/employees/' + encodeURIComponent(emp.id) + '/status', {
+          method: 'POST', body: { status: 'ARCHIVED' },
+        });
+        toast('Archived.', 'ok');
+        location.hash = '#/employees';
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    body.appendChild(field('Name', nameIn));
+    body.appendChild(field('Role', roleIn));
+    body.appendChild(field('Brief', descIn));
+    body.appendChild(el('div', { class: 'flex gap-2' }, [save, archive]));
+    body.appendChild(el('p', { class: 'muted', style: 'margin-top:16px' },
+      'Phone assignment stays in Phone Numbers. Linked ids: agent ' + (emp.agentId || '-')
+      + ', workflow ' + (emp.workflowId || '-')
+      + ', number ' + (emp.phoneNumberId || '-') + '.'));
+    body.appendChild(el('button', {
+      class: 'btn btn-ghost',
+      style: 'margin-top:10px',
+      onclick: () => goto('numbers'),
+    }, 'Open Phone Numbers'));
+  }
 }
 
 /* ===========================================================================
@@ -3102,14 +3625,17 @@ function createFromPreset(preset) {
 async function viewInstantLeads(root) {
   root.appendChild(viewHead(
     'Instant Leads',
-    'Add a lead, pick an employee (agent), and place a real outbound call with an explicit confirm. Job status updates here. Open Calls for the call row.'
+    'Add a lead, pick an employee, and place a real outbound call with an explicit confirm. Job status updates here. Open Calls for the call row.'
   ));
-  await ensureAgents();
+  await Promise.all([ensureAgents().catch(() => []), ensureEmployees().catch(() => [])]);
   const name = el('input', { class: 'input', placeholder: 'Lead name' });
   const phone = el('input', { class: 'input', placeholder: 'Phone (+91... or 10-digit IN)' });
+  const empOptions = (State.employees || []).filter((e) => e.agentId && e.status !== 'ARCHIVED');
   const agent = el('select', { class: 'select' },
-    [el('option', { value: '' }, 'Select employee / agent')].concat(
-      (State.agents || []).map((a) => el('option', { value: a.id }, a.name))
+    [el('option', { value: '' }, 'Select employee')].concat(
+      empOptions.length
+        ? empOptions.map((e) => el('option', { value: e.agentId }, e.name + (e.role ? ' · ' + e.role : '')))
+        : (State.agents || []).map((a) => el('option', { value: a.id }, a.name))
     )
   );
   const list = el('div', { class: 'ticket-list' }, skeleton('sk-card', 2));
@@ -3137,7 +3663,7 @@ async function viewInstantLeads(root) {
       el('h3', { class: 't-h3' }, 'New lead'),
       field('Name', name),
       field('Phone', phone),
-      field('Employee / agent', agent),
+      field('Employee', agent),
       create,
     ]),
     list,
@@ -3186,7 +3712,7 @@ async function loadInstantLeads(host) {
           el('h3', { class: 't-h3' }, lead.name || 'Lead'),
           el('span', { class: 'pill' }, lead.status || 'new'),
         ]),
-        el('p', { class: 'muted' }, (lead.phone || '') + (lead.agentId ? ' · agent linked' : '')),
+        el('p', { class: 'muted' }, (lead.phone || '') + (lead.agentId ? ' · employee linked' : '')),
         el('p', { class: 'muted' }, statusBits),
         el('div', { class: 'flex gap-2' }, [callBtn, callsLink]),
       ]));
