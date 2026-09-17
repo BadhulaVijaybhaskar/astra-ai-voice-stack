@@ -92,6 +92,42 @@ function providerHealthSummary(described) {
 }
 
 /**
+ * Public / customer readiness only. No provider ids, labels, or model names.
+ */
+function publicHealthPayload() {
+  return { ok: true };
+}
+
+/**
+ * Super-admin detailed readiness from providers.describeProviders().
+ * Includes provider ids and selected models. Call assertNoSecretValues before sending.
+ */
+function detailedHealthPayload(described) {
+  const providerHealth = (layer) => Object.fromEntries((described[layer] || []).map((item) => [item.id, item.live]));
+  const selected = (layer) => (described[layer] || []).find((item) => item.selected) || (described[layer] || [])[0] || {};
+  const selectedStt = selected('stt');
+  const selectedTts = selected('tts');
+  const selectedLlm = selected('llm');
+  const selectedTelephony = selected('telephony');
+  return {
+    ok: true,
+    providers: {
+      stt: providerHealth('stt'),
+      tts: providerHealth('tts'),
+      llm: providerHealth('llm'),
+      telephony: providerHealth('telephony'),
+    },
+    models: { stt: selectedStt.model, llm: selectedLlm.model, tts: selectedTts.model },
+    selected: {
+      stt: { provider: selectedStt.id, model: selectedStt.model },
+      tts: { provider: selectedTts.id, model: selectedTts.model },
+      llm: { provider: selectedLlm.id, model: selectedLlm.model },
+      telephony: { provider: selectedTelephony.id },
+    },
+  };
+}
+
+/**
  * Assert a JSON payload never contains raw secret-looking values for known env keys.
  * Used in tests and defensive admin serialization.
  */
@@ -133,6 +169,8 @@ module.exports = {
   publicWorkspace,
   sanitizeTenantUpdate,
   providerHealthSummary,
+  publicHealthPayload,
+  detailedHealthPayload,
   assertNoSecretValues,
   publicAuditEvent,
 };

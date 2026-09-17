@@ -1812,28 +1812,18 @@ function apiProviders(req, res) {
   core.sendJson(res, 200, providers.describeProviders());
 }
 
-// GET /api/health -> readiness + which provider keys are present.
-function apiHealth(req, res) {
-  const described = providers.describeProviders();
-  const providerHealth = (layer) => Object.fromEntries((described[layer] || []).map((item) => [item.id, item.live]));
-  const selected = (layer) => (described[layer] || []).find((item) => item.selected) || (described[layer] || [])[0] || {};
-  const selectedStt = selected('stt'); const selectedTts = selected('tts'); const selectedLlm = selected('llm'); const selectedTelephony = selected('telephony');
-  core.sendJson(res, 200, {
-    ok: true,
-    providers: {
-      stt: providerHealth('stt'),
-      tts: providerHealth('tts'),
-      llm: providerHealth('llm'),
-      telephony: providerHealth('telephony'),
-    },
-    models: { stt: selectedStt.model, llm: selectedLlm.model, tts: selectedTts.model },
-    selected: {
-      stt: { provider: selectedStt.id, model: selectedStt.model },
-      tts: { provider: selectedTts.id, model: selectedTts.model },
-      llm: { provider: selectedLlm.id, model: selectedLlm.model },
-      telephony: { provider: selectedTelephony.id },
-    },
-  });
+// GET /api/health -> public readiness only. Provider inventory is super_admin only.
+async function apiHealth(req, res) {
+  const ctx = await core.getSession(req);
+  if (!ctx || ctx.user.role !== 'super_admin') {
+    return core.sendJson(res, 200, org.publicHealthPayload());
+  }
+  const payload = org.detailedHealthPayload(providers.describeProviders());
+  const check = org.assertNoSecretValues(payload);
+  if (!check.ok) {
+    return core.sendJson(res, 500, { error: 'provider health refused to leak secrets', code: 'secret_guard' });
+  }
+  core.sendJson(res, 200, payload);
 }
 
 /* ==========================================================================
@@ -2073,6 +2063,17 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && route.startsWith('/demo/')) {
       req.url = '/demo.html';
     }
+
+    // Ops console is Super Admin only. Anonymous and customer sessions go to the product app.
+    if ((req.method === 'GET' || req.method === 'HEAD') && (route === '/console.html' || route === '/console')) {
+      const ctx = await core.getSession(req);
+      if (!(ctx && ctx.user && ctx.user.role === 'super_admin')) {
+        res.writeHead(302, { Location: '/app.html', 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+      req.url = '/console.html';
+    }
+
     // Everything else is a static file from public/.
     core.serveStatic(req, res);
   } catch (e) {
