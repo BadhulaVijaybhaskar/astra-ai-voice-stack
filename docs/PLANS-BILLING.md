@@ -44,8 +44,9 @@ returns never credit the wallet. Only verified PayU callbacks do.
 
 - `POST /api/admin/wallet/adjust` existing signed adjustment
 - `POST /api/admin/wallet/test-credits` `{ tenantId, amountPaise, idempotencyKey, reason }` grants positive test credits (`test_credit` ledger type)
+- Diagnostics console exposes a dedicated **Test credits** action for Super Admin (Phase 21). Customers see balance only.
 
-Customers never see provider invoices on Billing.
+Customers never see provider invoices on Billing. See [SUPER-ADMIN.md](./SUPER-ADMIN.md).
 
 ## Usage debits
 

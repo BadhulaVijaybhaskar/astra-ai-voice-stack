@@ -355,7 +355,8 @@ function renderShell() {
     const label = groupLabels[group];
     if (label) navChildren.push(el('div', { class: 'nav-group' }, label));
     items.forEach((r) => {
-      navChildren.push(el('a', { href: '#/' + r.id, 'data-route': r.id, html: navIcon(r.icon) + '<span>' + esc(r.label) + '</span>' }));
+      const label = (r.id === 'admin' && u.role === 'super_admin') ? 'Diagnostics' : r.label;
+      navChildren.push(el('a', { href: '#/' + r.id, 'data-route': r.id, html: navIcon(r.icon) + '<span>' + esc(label) + '</span>' }));
     });
   });
   const nav = el('nav', { class: 'nav' }, navChildren);
@@ -4927,7 +4928,12 @@ function ticketCard(t, admin) {
 async function viewAdmin(root) {
   if (!State.me || !['super_admin', 'admin'].includes(State.me.user.role)) { goto('overview'); return; }
   const superAdmin = State.me.user.role === 'super_admin';
-  root.appendChild(viewHead(superAdmin ? 'Super admin' : 'Operations admin', 'Users, workspaces, provider health, billing, support, and immutable audit history. Secrets stay in .env.'));
+  root.appendChild(viewHead(
+    superAdmin ? 'Diagnostics console' : 'Operations admin',
+    superAdmin
+      ? 'Super Admin only. Provider health, tenant overview, test credits, and audit. Customers never see this console. Secrets stay in .env.'
+      : 'Support tickets, PayU events, and platform audit. Provider inventory and tenant controls require Super Admin.'
+  ));
   const stats = el('div', { class: 'grid grid-3' }, skeleton('sk-stat', 5));
   const healthHost = el('div', { class: 'card card-pad admin-table' }, skeleton('sk-card', 1));
   const tenantHost = el('div', { class: 'card card-pad admin-table' }, skeleton('sk-card', 1));
@@ -4940,35 +4946,56 @@ async function viewAdmin(root) {
   root.appendChild(eventHost);
   root.appendChild(auditHost);
   try {
-    const calls = [api('/api/admin/tickets'), api('/api/admin/payment-events'), api('/api/admin/providers'), api('/api/admin/audit')];
-    if (superAdmin) calls.unshift(api('/api/admin/overview'), api('/api/admin/tenants'), api('/api/admin/users'));
+    const calls = [api('/api/admin/tickets'), api('/api/admin/payment-events'), api('/api/admin/audit')];
+    if (superAdmin) {
+      calls.unshift(
+        api('/api/admin/overview'),
+        api('/api/admin/tenants'),
+        api('/api/admin/users'),
+        api('/api/admin/diagnostics')
+      );
+    }
     const data = await Promise.all(calls);
     const o = superAdmin ? data[0] : { totals: {} };
     const ts = superAdmin ? data[1] : { tenants: [] };
     const users = superAdmin ? data[2] : { users: [] };
-    const offset = superAdmin ? 3 : 0;
+    const diagnostics = superAdmin ? data[3] : null;
+    const offset = superAdmin ? 4 : 0;
     const tickets = data[offset];
     const events = data[offset + 1];
-    const health = data[offset + 2];
-    const audit = data[offset + 3];
+    const audit = data[offset + 2];
     stats.innerHTML = '';
     const totals = o.totals || {};
-    [['Workspaces', totals.tenants || 'Restricted'], ['Users', totals.users || 'Restricted'], ['Open tickets', totals.openTickets != null ? totals.openTickets : (tickets.tickets || []).filter((t) => t.status !== 'closed').length], ['Wallet total', superAdmin ? '₹' + fmtInr((totals.walletPaise || 0) / 100) : 'Restricted'], ['Calls', superAdmin ? totals.calls : 'Restricted']].forEach((x) => stats.appendChild(statCard(x[0], String(x[1] || 0), 'All workspaces')));
+    const overview = (diagnostics && diagnostics.diagnostics && diagnostics.diagnostics.overview) || {};
+    [['Workspaces', totals.tenants != null ? totals.tenants : (overview.tenants || 'Restricted')], ['Users', totals.users != null ? totals.users : (overview.users || 'Restricted')], ['Open tickets', totals.openTickets != null ? totals.openTickets : (tickets.tickets || []).filter((t) => t.status !== 'closed').length], ['Wallet total', superAdmin ? '₹' + fmtInr((totals.walletPaise || 0) / 100) : 'Restricted'], ['Calls', superAdmin ? (totals.calls != null ? totals.calls : overview.calls) : 'Restricted']].forEach((x) => stats.appendChild(statCard(x[0], String(x[1] || 0), 'All workspaces')));
     healthHost.innerHTML = '';
-    healthHost.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, 'Provider health'));
-    healthHost.appendChild(el('p', { class: 'muted', style: 'margin-bottom:12px' }, 'Configured true/false only. API key values are never returned.'));
-    const layers = health.providers || {};
-    Object.keys(layers).forEach((layer) => {
-      (layers[layer] || []).forEach((p) => {
-        healthHost.appendChild(el('div', { class: 'admin-row' }, [
-          el('div', {}, [el('b', {}, (p.label || p.id) + ' · ' + layer), el('small', { class: 'muted' }, (p.needs || []).join(', ') || 'No env keys')]),
-          el('span', { class: 'pill' }, p.configured ? 'configured' : 'missing')
-        ]));
+    if (superAdmin) {
+      healthHost.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, 'Provider health'));
+      healthHost.appendChild(el('p', { class: 'muted', style: 'margin-bottom:12px' }, 'Super Admin diagnostics. Configured true/false and env key names only. Never shown to customers.'));
+      const diag = diagnostics && diagnostics.diagnostics ? diagnostics.diagnostics : null;
+      const layers = (diag && diag.providers) || {};
+      Object.keys(layers).forEach((layer) => {
+        (layers[layer] || []).forEach((p) => {
+          healthHost.appendChild(el('div', { class: 'admin-row' }, [
+            el('div', {}, [el('b', {}, (p.label || p.id) + ' · ' + layer), el('small', { class: 'muted' }, (p.needs || []).join(', ') || 'No env keys')]),
+            el('span', { class: 'pill' }, p.configured ? 'configured' : 'missing')
+          ]));
+        });
       });
-    });
+      if (diag && diag.deploy) {
+        healthHost.appendChild(el('p', { class: 'muted', style: 'margin-top:12px' },
+          'Deploy ' + (diag.deploy.gitSha || 'unknown sha') +
+          (diag.deploy.version ? (' · v' + diag.deploy.version) : '') +
+          (diag.schemaVersion != null ? (' · schema v' + diag.schemaVersion) : '')
+        ));
+      }
+    } else {
+      healthHost.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, 'Provider health'));
+      healthHost.appendChild(el('div', { class: 'muted' }, 'Provider inventory is Super Admin only. Operations admins use tickets, PayU events, and audit below.'));
+    }
     tenantHost.innerHTML = ''; tenantHost.appendChild(el('h3', { class: 't-h3' }, 'Workspaces'));
     if (superAdmin) (ts.tenants || []).forEach((t) => tenantHost.appendChild(adminTenantRow(t, (users.users || []).filter((u) => u.tenantId === t.id))));
-    else tenantHost.appendChild(el('div', { class: 'muted' }, 'Workspace controls require super admin access.'));
+    else tenantHost.appendChild(el('div', { class: 'muted' }, 'Workspace controls require Super Admin access.'));
     if (superAdmin) {
       const usersCard = el('div', { class: 'card card-pad', style: 'margin-top:12px' }, [el('h3', { class: 't-h3' }, 'Users')]);
       (users.users || []).slice(0, 40).forEach((u) => usersCard.appendChild(el('div', { class: 'admin-row' }, [
@@ -5000,10 +5027,11 @@ function adminTenantRow(t, users) {
     toast('Tenant set to ' + status + '.', 'ok'); onRoute();
   };
   const credit = el('button', { class: 'btn btn-ghost', onclick: () => adjustWallet(t) }, 'Adjust credit');
+  const testCredit = el('button', { class: 'btn btn-ghost', onclick: () => grantTestCredits(t) }, 'Test credits');
   const inspect = el('button', { class: 'btn btn-primary', onclick: () => inspectTenant(t, users || []) }, 'Open workspace');
   return el('div', { class: 'admin-row' }, [
     el('div', {}, [el('b', {}, t.name), el('small', { class: 'muted' }, (t.users || 0) + ' users, ₹' + fmtInr((wallet.balancePaise || 0) / 100))]),
-    el('span', { class: 'pill' }, t.status || 'active'), el('div', { class: 'flex gap-2' }, [inspect, credit, toggle])
+    el('span', { class: 'pill' }, t.status || 'active'), el('div', { class: 'flex gap-2' }, [inspect, testCredit, credit, toggle])
   ]);
 }
 
@@ -5039,6 +5067,29 @@ function adjustWallet(t) {
     const paise = Math.round(Number(amount.value) * 100);
     await api('/api/admin/wallet/adjust', { method: 'POST', body: { tenantId: t.id, amountPaise: paise, reason: reason.value.trim(), idempotencyKey: 'ui_' + Date.now() + '_' + Math.random().toString(36).slice(2) } });
     toast('Wallet adjusted.', 'ok'); onRoute();
+  }});
+}
+
+function grantTestCredits(t) {
+  const amount = el('input', { class: 'input', type: 'number', step: '0.01', min: '0.01', placeholder: '50.00' });
+  const reason = el('input', { class: 'input', placeholder: 'QA / sandbox test credits' });
+  modal({ title: 'Grant test credits to ' + t.name, body: el('div', {}, [
+    el('p', { class: 'muted' }, 'Positive test credits only. Customers see balance, not this Super Admin grant path.'),
+    field('Amount in INR', amount),
+    field('Reason', reason),
+  ]), confirmText: 'Grant test credits', onConfirm: async () => {
+    const paise = Math.round(Number(amount.value) * 100);
+    if (!Number.isInteger(paise) || paise <= 0) throw new Error('Enter a positive INR amount.');
+    await api('/api/admin/wallet/test-credits', {
+      method: 'POST',
+      body: {
+        tenantId: t.id,
+        amountPaise: paise,
+        reason: reason.value.trim() || 'test credits',
+        idempotencyKey: 'ui_test_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+      },
+    });
+    toast('Test credits granted.', 'ok'); onRoute();
   }});
 }
 
