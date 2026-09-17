@@ -315,11 +315,12 @@ class DograhVobizProvider extends TelephonyProvider {
       };
     }
 
-    // Minimal safe upsert when Dograh returned a run id. publicCall hides
-    // providerRunId. Full-Stack owns customer-facing dial response shaping.
+    // Minimal safe upsert when Dograh returned a run id. The Call row stays
+    // server-side; publicCall never includes providerRunId.
+    let upsertedCall = null;
     if (result.providerRunId && this.core && tenantId) {
       await this.core.mutate((db) => {
-        calls.upsertCallFromProvider(db, tenantId, {
+        const up = calls.upsertCallFromProvider(db, tenantId, {
           providerRunId: result.providerRunId,
           direction: 'outbound',
           toE164: /^\+[1-9]\d{6,14}$/.test(asE164) ? asE164 : null,
@@ -328,10 +329,19 @@ class DograhVobizProvider extends TelephonyProvider {
           status: (result.data && (result.data.status || result.data.state)) || 'queued',
           source: 'outbound_dial',
         });
+        if (up && up.ok !== false) upsertedCall = up.call;
       });
     }
 
-    return result;
+    // Server-only return for the dial route. Strip providerRunId before any
+    // customer JSON (route must respond with { call: publicCall(...) } only).
+    return {
+      status: result.status,
+      data: result.data,
+      providerRunId: result.providerRunId != null ? result.providerRunId : null,
+      ok: true,
+      call: upsertedCall,
+    };
   }
 
   /**

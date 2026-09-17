@@ -71,6 +71,8 @@ test('publicCall hides provider secrets and uses Astra recording path', () => {
   assert.equal(pub.dograhWorkflowId, undefined);
   assert.equal(JSON.stringify(pub).includes('secret'), false);
   assert.equal(JSON.stringify(pub).includes('dograh'), false);
+  assert.equal(JSON.stringify(pub).includes('providerRunId'), false);
+  assert.equal(JSON.stringify(pub).includes('run_x'), false);
   assert.deepEqual(pub.extractedData, { x: 1 });
   assert.equal(pub.latency.totalMs, 100);
 });

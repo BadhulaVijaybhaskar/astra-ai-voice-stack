@@ -25,6 +25,7 @@ const payu = require('./lib/payu');
 const demoLinks = require('./lib/demo-links');
 const callback = require('./lib/callback');
 const phoneNumbers = require('./lib/phone-numbers');
+const calls = require('./lib/calls');
 const { createDefaultTelephonyProvider, TelephonyProviderError } = require('./lib/telephony-provider');
 const { AGENT_TYPES, seedPresets, publicPreset, applyPresetToAgent, normalizeAgentType } = require('./lib/agent-types');
 const org = require('./lib/org');
@@ -778,17 +779,40 @@ async function apiTelephonyDial(req, res, ctx) {
     }
   }
   try {
-    // Provider returns { status, data, providerRunId, ok }. Full-Stack should
-    // persist via providerRunId (already upserted when present) and must not
-    // forward raw Dograh ids in the customer response. Keep r.data for now
-    // until the public dial contract is rewritten.
-    const r = await telephonyProvider.createOutboundCall(ctx.tenant.id, b.number, { workflowId });
+    // Provider returns server-only { status, data, providerRunId, ok, call }.
+    // Customer response is { call: publicCall(...) } only. Never forward
+    // providerRunId, Dograh ids, or raw upstream data.
+    const r = await telephonyProvider.createOutboundCall(ctx.tenant.id, b.number, {
+      workflowId: b.workflowId || workflowId,
+      phoneNumberId: b.phoneNumberId,
+    });
     // Count the dial attempt against today's usage.
     bumpUsage(ctx.tenant.id, 'calls', 1).catch(() => {});
     core.mutate((d) => {
       plans.debitUsage(d, ctx.tenant.id, { chars: 0, calls: 1 }, ctx.user.id, addLedgerEntry);
     }).catch(() => {});
-    core.sendJson(res, r.status, r.data);
+
+    let callRow = r.call || null;
+    if (!callRow && r.providerRunId) {
+      await core.mutate((d) => {
+        const up = calls.upsertCallFromProvider(d, ctx.tenant.id, {
+          providerRunId: r.providerRunId,
+          direction: 'outbound',
+          toE164: phoneNumbers.normalizeE164(b.number) || null,
+          status: (r.data && (r.data.status || r.data.state)) || 'queued',
+          source: 'outbound_dial',
+        });
+        if (up && up.ok !== false) callRow = up.call;
+      });
+    }
+    if (!callRow) {
+      return core.sendJson(res, 502, {
+        error: 'Call was placed but could not be tracked',
+        code: 'call_not_tracked',
+      });
+    }
+    const pub = calls.publicCall(callRow, agentsMapForTenant(ctx.tenant.id));
+    core.sendJson(res, 200, { call: pub });
   } catch (e) {
     handleProviderError(res, e);
   }

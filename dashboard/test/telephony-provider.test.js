@@ -134,16 +134,24 @@ test('createOutboundCall prefers explicit Astra phoneNumberId and workflowId', a
   assert.equal(seenOpts.options.fromPhoneNumberId, 55);
   assert.equal(seenOpts.options.workflowId, 77);
   assert.equal(result.providerRunId, 'nested_ok');
+  assert.ok(result.call);
+  assert.equal(result.call.providerRunId, 'nested_ok');
 
   // Minimal upsert for Full-Stack: Call exists under Astra id, public shape hides Dograh.
   const listed = calls.listTenantCalls(db, 't1', { limit: 10 });
   assert.equal(listed.length, 1);
   assert.equal(listed[0].providerRunId, 'nested_ok');
   const pub = calls.publicCall(listed[0]);
+  assert.equal(pub.id, result.call.id);
   assert.equal(pub.providerRunId, undefined);
   assert.equal(pub.providerMetadata, undefined);
   assert.equal(JSON.stringify(pub).includes('dograh'), false);
   assert.equal(JSON.stringify(pub).includes('nested_ok'), false);
+  assert.equal(JSON.stringify(pub).includes('providerRunId'), false);
+  // Customer dial response contract: { call: publicCall(...) } only.
+  const dialBody = { call: pub };
+  assert.equal(Object.keys(dialBody).join(','), 'call');
+  assert.equal(JSON.stringify(dialBody).includes('providerRunId'), false);
 });
 
 test('createOutboundCall keeps numeric Dograh workflowId override', async () => {
