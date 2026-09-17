@@ -92,22 +92,37 @@ function providerHealthSummary(described) {
 }
 
 /**
+ * Deploy identity from env (and optional VERSION file contents). Never invents a SHA.
+ * Accepts GIT_SHA, GITHUB_SHA, or a trimmed VERSION file string as gitSha.
+ */
+function deployIdentity(env = process.env, opts = {}) {
+  let gitSha = String(env.GIT_SHA || env.GITHUB_SHA || '').trim() || null;
+  if (!gitSha && opts.versionFileText != null) {
+    const line = String(opts.versionFileText).trim().split(/\r?\n/)[0] || '';
+    gitSha = line.trim() || null;
+  }
+  const deployedAt = String(env.DEPLOYED_AT || env.BUILT_AT || '').trim() || null;
+  const ref = String(env.GIT_REF || env.GITHUB_REF || '').trim() || null;
+  return { gitSha, deployedAt, ref };
+}
+
+/**
  * Deploy proof payload for authenticated GET /api/version.
  * Reads GIT_SHA (or GITHUB_SHA) from the environment. Never invents a SHA.
  */
 function versionPayload(env = process.env, meta = {}) {
-  const raw = String(env.GIT_SHA || env.GITHUB_SHA || '').trim();
-  const built = String(env.BUILT_AT || '').trim();
+  const id = deployIdentity(env, meta);
   return {
-    gitSha: raw || null,
+    gitSha: id.gitSha,
+    ref: id.ref,
     version: meta.version != null && String(meta.version).trim() ? String(meta.version).trim() : null,
-    builtAt: built || null,
+    builtAt: id.deployedAt,
   };
 }
 
 /**
  * Public / customer readiness only. No provider ids, labels, or model names.
- * Optional uptime (seconds) and version when the server supplies them.
+ * May include deploy identity (gitSha / deployedAt) for DevOps proof without SSH.
  */
 function publicHealthPayload(meta = {}) {
   const out = { ok: true };
@@ -116,6 +131,12 @@ function publicHealthPayload(meta = {}) {
   }
   if (meta.version != null && String(meta.version).trim()) {
     out.version = String(meta.version).trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(meta, 'gitSha')) {
+    out.gitSha = meta.gitSha == null || meta.gitSha === '' ? null : String(meta.gitSha);
+  }
+  if (Object.prototype.hasOwnProperty.call(meta, 'deployedAt')) {
+    out.deployedAt = meta.deployedAt == null || meta.deployedAt === '' ? null : String(meta.deployedAt);
   }
   return out;
 }
@@ -228,6 +249,7 @@ module.exports = {
   publicHealthPayload,
   detailedHealthPayload,
   publicTelephonyStatus,
+  deployIdentity,
   versionPayload,
   assertNoSecretValues,
   publicAuditEvent,

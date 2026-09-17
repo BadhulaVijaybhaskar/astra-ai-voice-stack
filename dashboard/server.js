@@ -28,14 +28,26 @@ const phoneNumbers = require('./lib/phone-numbers');
 const { createDefaultTelephonyProvider, TelephonyProviderError } = require('./lib/telephony-provider');
 const { AGENT_TYPES, seedPresets, publicPreset, applyPresetToAgent, normalizeAgentType } = require('./lib/agent-types');
 const org = require('./lib/org');
-const pkg = require('./package.json');
-const STARTED_AT_MS = Date.now();
-const APP_VERSION = String((pkg && pkg.version) || '1.0.0');
 const knowledge = require('./lib/knowledge');
 const integrations = require('./lib/integrations');
 const campaigns = require('./lib/campaigns');
 const analytics = require('./lib/analytics');
 const plans = require('./lib/plans');
+const pkg = require('./package.json');
+const STARTED_AT_MS = Date.now();
+const APP_VERSION = String((pkg && pkg.version) || '1.0.0');
+
+function readVersionFileText() {
+  try {
+    return fs.readFileSync(path.join(__dirname, 'VERSION'), 'utf8');
+  } catch (_) {
+    return null;
+  }
+}
+
+function currentDeployIdentity() {
+  return org.deployIdentity(process.env, { versionFileText: readVersionFileText() });
+}
 const workflows = require('./lib/workflows');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
@@ -1830,21 +1842,32 @@ function apiProviders(req, res, ctx) {
 
 // GET /api/version -> authenticated deploy proof (gitSha from env, never invented).
 function apiVersion(req, res) {
-  core.sendJson(res, 200, org.versionPayload(process.env, { version: APP_VERSION }));
+  const id = currentDeployIdentity();
+  core.sendJson(res, 200, {
+    gitSha: id.gitSha,
+    ref: id.ref,
+    version: APP_VERSION,
+    builtAt: id.deployedAt,
+  });
 }
 
-// GET /api/health -> public readiness only. Provider inventory is super_admin only.
+// GET /api/health -> public readiness + deploy identity. Provider inventory is super_admin only.
 async function apiHealth(req, res) {
+  const id = currentDeployIdentity();
   const ctx = await core.getSession(req);
   if (!ctx || ctx.user.role !== 'super_admin') {
     return core.sendJson(res, 200, org.publicHealthPayload({
       uptime: (Date.now() - STARTED_AT_MS) / 1000,
       version: APP_VERSION,
+      gitSha: id.gitSha,
+      deployedAt: id.deployedAt,
     }));
   }
   const payload = org.detailedHealthPayload(providers.describeProviders());
   payload.uptime = Math.floor((Date.now() - STARTED_AT_MS) / 1000);
   payload.version = APP_VERSION;
+  payload.gitSha = id.gitSha;
+  payload.deployedAt = id.deployedAt;
   const check = org.assertNoSecretValues(payload);
   if (!check.ok) {
     return core.sendJson(res, 500, { error: 'provider health refused to leak secrets', code: 'secret_guard' });

@@ -11,15 +11,29 @@ const org = require('../lib/org');
 const PROVIDER_BRAND_RE = /vobiz|dograh|deepgram|rumik|groq/i;
 
 test('publicHealthPayload has no provider brand strings', () => {
-  const body = org.publicHealthPayload({ uptime: 12.7, version: '1.0.0' });
+  const body = org.publicHealthPayload({
+    uptime: 12.7,
+    version: '1.0.0',
+    gitSha: 'abc123def',
+    deployedAt: '2026-09-17T09:00:00Z',
+  });
   assert.equal(body.ok, true);
   assert.equal(body.uptime, 12);
   assert.equal(body.version, '1.0.0');
+  assert.equal(body.gitSha, 'abc123def');
+  assert.equal(body.deployedAt, '2026-09-17T09:00:00Z');
   assert.equal(body.providers, undefined);
   assert.equal(body.models, undefined);
   assert.equal(body.selected, undefined);
   const blob = JSON.stringify(body);
   assert.equal(PROVIDER_BRAND_RE.test(blob), false);
+});
+
+test('deployIdentity never invents a SHA', () => {
+  assert.deepEqual(org.deployIdentity({}), { gitSha: null, deployedAt: null, ref: null });
+  assert.equal(org.deployIdentity({ GIT_SHA: ' deadbeef ' }).gitSha, 'deadbeef');
+  assert.equal(org.deployIdentity({}, { versionFileText: 'cafe0123\n' }).gitSha, 'cafe0123');
+  assert.equal(org.deployIdentity({ DEPLOYED_AT: '2026-09-17T01:02:03Z' }).deployedAt, '2026-09-17T01:02:03Z');
 });
 
 test('detailedHealthPayload keeps provider inventory for super_admin path', () => {
@@ -63,6 +77,7 @@ test('publicTelephonyStatus strips provider and orchestrator branding', () => {
 test('versionPayload reads GIT_SHA from env and never invents', () => {
   assert.deepEqual(org.versionPayload({}, { version: '1.0.0' }), {
     gitSha: null,
+    ref: null,
     version: '1.0.0',
     builtAt: null,
   });
@@ -70,6 +85,7 @@ test('versionPayload reads GIT_SHA from env and never invents', () => {
   assert.equal(org.versionPayload({ GITHUB_SHA: 'def456' }).gitSha, 'def456');
   assert.equal(org.versionPayload({ GIT_SHA: 'abc', GITHUB_SHA: 'def' }).gitSha, 'abc');
   assert.equal(org.versionPayload({ BUILT_AT: '2026-09-17T00:00:00Z' }).builtAt, '2026-09-17T00:00:00Z');
+  assert.equal(org.versionPayload({ GIT_REF: 'refs/heads/main' }).ref, 'refs/heads/main');
 });
 
 test('unauthenticated GET /api/version is auth-gated (401)', async (t) => {
@@ -151,10 +167,17 @@ test('unauthenticated GET /api/version is auth-gated (401)', async (t) => {
 
 test('unauthenticated health serializer shape never advertises brands', () => {
   // Mirrors apiHealth for anonymous / non-super_admin callers.
-  const payload = org.publicHealthPayload();
+  const payload = org.publicHealthPayload({
+    uptime: 1,
+    version: '1.0.0',
+    gitSha: 'abc',
+    deployedAt: null,
+  });
   const text = JSON.stringify(payload);
   assert.match(text, /"ok":true/);
+  assert.match(text, /"gitSha":"abc"/);
   assert.doesNotMatch(text, PROVIDER_BRAND_RE);
+  assert.equal(payload.providers, undefined);
 });
 
 test('unauthenticated GET /api/providers is auth-gated (401)', async (t) => {

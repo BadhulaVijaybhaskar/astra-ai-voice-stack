@@ -10,6 +10,7 @@ if [ -z "${GIT_SHA:-}" ] && command -v git >/dev/null 2>&1; then
 fi
 export GIT_SHA="${GIT_SHA:-}"
 export BUILT_AT="${BUILT_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+export DEPLOYED_AT="${DEPLOYED_AT:-$BUILT_AT}"
 rsh "mkdir -p /opt/rapidx-voice"
 rsync -a -e "ssh -o StrictHostKeyChecking=no -i $SSH_KEY" \
   --exclude .env --exclude data --exclude node_modules \
@@ -26,7 +27,7 @@ for k in [
     "RUMIK_API_KEY", "GEMINI_API_KEY", "GEMINI_MODEL",
     "DOGRAH_BASE_URL", "DOGRAH_API_KEY", "DOGRAH_WORKFLOW_ID",
     "DOGRAH_TELEPHONY_CONFIG_ID", "DOGRAH_PHONE_NUMBER_ID", "VOBIZ_NUMBER",
-    "GIT_SHA", "BUILT_AT",
+    "GIT_SHA", "BUILT_AT", "DEPLOYED_AT", "GIT_REF",
 ]:
     v=os.environ.get(k,"")
     if v: print(f"{k}={v}")
