@@ -26,11 +26,13 @@ test('campaign leads parse and enqueue requires confirm with rate limit', () => 
 test('analytics aggregates outcomes directions and conversion metrics', () => {
   const db = {
     agents: [{ id: 'ag_1', tenantId: 't_a', name: 'Desk' }],
+    employees: [],
     calls: [
       { tenantId: 't_a', agentId: 'ag_1', direction: 'inbound', outcome: 'booked', status: 'completed', durationSec: 40, extractedData: { booked: true } },
       { tenantId: 't_a', agentId: 'ag_1', direction: 'outbound', outcome: 'no_answer', status: 'completed', durationSec: 20, extractedData: {} },
       { tenantId: 't_b', agentId: 'ag_x', direction: 'inbound', outcome: 'booked', status: 'completed', durationSec: 99, extractedData: { booked: true } },
     ],
+    leads: [],
     campaigns: [{ id: 'c1', tenantId: 't_a', status: 'running' }],
     campaignLeads: [{ id: 'l1', tenantId: 't_a', campaignId: 'c1', status: 'pending' }],
   };
@@ -41,4 +43,20 @@ test('analytics aggregates outcomes directions and conversion metrics', () => {
   assert.equal(dash.calls.byAgent.Desk, 2);
   assert.equal(dash.campaigns.leads, 1);
   assert.equal(JSON.stringify(dash).includes('t_b'), false);
+});
+
+test('campaign create accepts employeeId and public shape hides provider ids', () => {
+  const db = {
+    campaigns: [],
+    campaignLeads: [],
+    agents: [{ id: 'ag_1', tenantId: 't_a', name: 'Out' }],
+    employees: [{ id: 'emp_1', tenantId: 't_a', name: 'Ria', agentId: 'ag_1', status: 'LIVE' }],
+  };
+  const created = campaigns.createCampaign(db, 't_a', { name: 'Emp batch', employeeId: 'emp_1' });
+  assert.equal(created.ok, true);
+  assert.equal(created.campaign.employeeId, 'emp_1');
+  assert.equal(created.campaign.agentId, 'ag_1');
+  const pub = campaigns.publicCampaign(created.campaign, campaigns.countLeads(db, created.campaign.id));
+  assert.equal(pub.employeeId, 'emp_1');
+  assert.equal(JSON.stringify(pub).includes('dograh'), false);
 });

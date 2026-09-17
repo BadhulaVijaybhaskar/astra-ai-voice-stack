@@ -287,25 +287,27 @@ function resetData() {
    CONSOLE SHELL
    =========================================================================== */
 const ROUTES = [
-  { id: 'overview', label: 'Overview', icon: 'grid', group: 'HOME' },
-  { id: 'employees', label: 'My Employees', icon: 'users', group: 'BUILD' },
-  { id: 'agents', label: 'Agents', icon: 'users', group: 'BUILD' },
-  { id: 'workflows', label: 'Workflows', icon: 'flow', group: 'BUILD' },
-  { id: 'presets', label: 'Presets', icon: 'template', group: 'BUILD' },
-  { id: 'studio', label: 'Voice Studio', icon: 'wave', group: 'BUILD' },
-  { id: 'demos', label: 'Demo links', icon: 'link', ownerOnly: true, group: 'BUILD' },
-  { id: 'talk', label: 'Talk to it', icon: 'mic', group: 'BUILD' },
-  { id: 'numbers', label: 'Phone Numbers', icon: 'phone', group: 'OPERATE' },
-  { id: 'calls', label: 'Conversations', icon: 'calls', group: 'OPERATE' },
-  { id: 'leads', label: 'Instant Leads', icon: 'leads', group: 'OPERATE' },
-  { id: 'knowledge', label: 'Knowledge', icon: 'book', group: 'OPERATE' },
-  { id: 'integrations', label: 'Integrations', icon: 'plug', group: 'OPERATE' },
-  { id: 'campaigns', label: 'Campaigns', icon: 'megaphone', group: 'OPERATE' },
-  { id: 'analytics', label: 'Analytics', icon: 'chart', group: 'OPERATE' },
+  { id: 'overview', label: 'Home', icon: 'grid', group: 'HOME' },
+  { id: 'employees', label: 'My Employees', icon: 'users', group: 'JOURNEY' },
+  { id: 'leads', label: 'Instant Leads', icon: 'leads', group: 'JOURNEY' },
+  { id: 'campaigns', label: 'Campaigns', icon: 'megaphone', group: 'JOURNEY' },
+  { id: 'calls', label: 'Conversations', icon: 'calls', group: 'JOURNEY' },
+  { id: 'training', label: 'Training', icon: 'book', group: 'JOURNEY' },
+  { id: 'numbers', label: 'Phone Numbers', icon: 'phone', group: 'JOURNEY' },
+  { id: 'analytics', label: 'Performance', icon: 'chart', group: 'JOURNEY' },
   { id: 'billing', label: 'Billing', icon: 'wallet', group: 'ACCOUNT' },
   { id: 'support', label: 'Support', icon: 'support', group: 'ACCOUNT' },
+  { id: 'settings', label: 'Account', icon: 'gear', group: 'ACCOUNT' },
   { id: 'admin', label: 'Admin', icon: 'shield', adminOnly: true, group: 'ACCOUNT' },
-  { id: 'settings', label: 'Settings', icon: 'gear', group: 'ACCOUNT' }
+  // Provider-era modules demoted. Super Admin keeps diagnostics.
+  { id: 'agents', label: 'Agents', icon: 'users', group: 'ADVANCED', advanced: true },
+  { id: 'workflows', label: 'Workflows', icon: 'flow', group: 'ADVANCED', advanced: true },
+  { id: 'presets', label: 'Presets', icon: 'template', group: 'ADVANCED', advanced: true },
+  { id: 'studio', label: 'Voice Studio', icon: 'wave', group: 'ADVANCED', advanced: true },
+  { id: 'demos', label: 'Demo links', icon: 'link', ownerOnly: true, group: 'ADVANCED', advanced: true },
+  { id: 'talk', label: 'Talk to it', icon: 'mic', group: 'ADVANCED', advanced: true },
+  { id: 'knowledge', label: 'Knowledge', icon: 'book', group: 'ADVANCED', advanced: true },
+  { id: 'integrations', label: 'Integrations', icon: 'plug', group: 'ADVANCED', advanced: true },
 ];
 
 function navIcon(name) {
@@ -341,14 +343,17 @@ function renderShell() {
   const visibleRoutes = ROUTES.filter((r) => {
     if (r.adminOnly && !['super_admin', 'admin'].includes(u.role)) return false;
     if (r.ownerOnly && !['super_admin', 'admin', 'owner'].includes(u.role)) return false;
+    if (r.advanced && u.role !== 'super_admin') return false;
     return true;
   });
-  const groupOrder = ['HOME', 'BUILD', 'OPERATE', 'ACCOUNT'];
+  const groupOrder = ['HOME', 'JOURNEY', 'ACCOUNT', 'ADVANCED'];
+  const groupLabels = { HOME: null, JOURNEY: 'JOURNEY', ACCOUNT: 'ACCOUNT', ADVANCED: 'DIAGNOSTICS' };
   const navChildren = [];
   groupOrder.forEach((group) => {
     const items = visibleRoutes.filter((r) => (r.group || 'HOME') === group);
     if (!items.length) return;
-    if (group !== 'HOME') navChildren.push(el('div', { class: 'nav-group' }, group));
+    const label = groupLabels[group];
+    if (label) navChildren.push(el('div', { class: 'nav-group' }, label));
     items.forEach((r) => {
       navChildren.push(el('a', { href: '#/' + r.id, 'data-route': r.id, html: navIcon(r.icon) + '<span>' + esc(r.label) + '</span>' }));
     });
@@ -472,7 +477,7 @@ function onRoute() {
   const id = currentRoute();
   $$('.nav a').forEach((a) => a.classList.toggle('active', a.getAttribute('data-route') === id));
   const r = ROUTES.find((x) => x.id === id);
-  const tt = $('#routeTitle'); if (tt) tt.textContent = r ? r.label : 'Overview';
+  const tt = $('#routeTitle'); if (tt) tt.textContent = r ? r.label : 'Home';
   $('.shell') && $('.shell').classList.remove('nav-open');
   const view = $('#view');
   view.innerHTML = '';
@@ -481,7 +486,8 @@ function onRoute() {
   ({
     overview: viewOverview, employees: viewEmployees, agents: viewAgents, workflows: viewWorkflows, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
     talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, calls: viewCalls, leads: viewInstantLeads,
-    knowledge: viewKnowledge, integrations: viewIntegrations, campaigns: viewCampaigns, analytics: viewAnalytics, billing: viewBilling,
+    knowledge: viewKnowledge, integrations: viewIntegrations, campaigns: viewCampaigns, analytics: viewAnalytics,
+    training: viewTrainingHub, billing: viewBilling,
     support: viewSupport, admin: viewAdmin, settings: viewSettings
   }[id] || viewOverview)(wrap);
 }
@@ -499,7 +505,7 @@ async function viewOverview(root) {
   const name = State.me.user.name || State.me.user.email;
   root.appendChild(viewHead(
     'Welcome back, ' + name + '.',
-    'Your voice stack at a glance. Provider health, usage, and the fastest way into a build.',
+    'Create an AI Employee, teach, assign a Phone Number, connect leads, and go live.',
     'overview-hero'
   ));
 
@@ -511,13 +517,12 @@ async function viewOverview(root) {
     el('div', { class: 'card qa-card', id: 'qaHost' }, [
       el('h3', {}, 'Quick actions'),
       el('div', { class: 'qa-row' }, [
-        el('button', { class: 'btn btn-primary', onclick: () => startDeployWizard() }, 'Deploy from preset'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('employees') }, 'My Employees'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('agents') }, 'Build an agent'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('studio') }, 'Open Voice Studio'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('talk') }, 'Talk to it'),
+        el('button', { class: 'btn btn-primary', onclick: () => goto('employees') }, 'My Employees'),
+        el('button', { class: 'btn btn-ghost', onclick: () => goto('leads') }, 'Instant Leads'),
+        el('button', { class: 'btn btn-ghost', onclick: () => goto('campaigns') }, 'Campaigns'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('numbers') }, 'Phone Numbers'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('calls') }, 'Conversations')
+        el('button', { class: 'btn btn-ghost', onclick: () => goto('calls') }, 'Conversations'),
+        el('button', { class: 'btn btn-ghost', onclick: () => goto('analytics') }, 'Performance')
       ]),
       el('div', { class: 'qa-foot', id: 'provMini' }, 'Checking providers...')
     ])
@@ -994,6 +999,7 @@ async function viewEmployeeStudio(root, id) {
     ['instructions', 'Instructions'],
     ['workflow', 'Workflow'],
     ['training', 'Training'],
+    ['number', 'Assign Number'],
     ['leads', 'Leads'],
     ['timeline', 'Timeline'],
     ['actions', 'Actions'],
@@ -1355,6 +1361,79 @@ async function viewEmployeeStudio(root, id) {
       field('Content', contentIn),
       createBtn,
     ]));
+  } else if (tab === 'number') {
+    body.appendChild(el('h3', { class: 't-h3' }, 'Assign Number'));
+    body.appendChild(el('p', { class: 'muted' },
+      'Give this employee a Phone Number from your inventory. Astra pn_ ids only. Provider portals stay invisible.'));
+    const current = emp.assignedNumber;
+    body.appendChild(el('div', { class: 'emp-meta', style: 'margin-bottom:16px' }, [
+      el('div', {}, [
+        el('span', { class: 'muted' }, 'Current Phone Number'),
+        el('b', {}, current && current.e164 ? current.e164 : '—'),
+      ]),
+      el('div', {}, [
+        el('span', { class: 'muted' }, 'Astra id'),
+        el('b', {}, emp.phoneNumberId || '—'),
+      ]),
+    ]));
+    let pnData;
+    try {
+      pnData = await ensurePhoneNumbers(true);
+    } catch (e) {
+      body.appendChild(el('p', { class: 'muted' }, 'Could not load Phone Numbers. ' + esc(e.message)));
+      return;
+    }
+    const available = pnData.available || [];
+    const mine = (pnData.numbers || []).filter((n) => n.assignedEmployeeId === emp.id || n.id === emp.phoneNumberId);
+    if (mine.length) {
+      const unBtn = el('button', { class: 'btn btn-ghost' }, 'Unassign Phone Number');
+      unBtn.onclick = () => {
+        modal({
+          title: 'Unassign Phone Number',
+          body: el('p', {}, 'Release this Phone Number back to inventory?'),
+          confirmText: 'Unassign',
+          confirmKind: 'danger',
+          onConfirm: async () => {
+            await api('/api/phone-numbers/' + encodeURIComponent(mine[0].id) + '/unassign', { method: 'POST', body: {} });
+            State.loaded.phoneNumbers = false;
+            State.loaded.employees = false;
+            toast('Phone Number unassigned.', 'ok');
+            onRoute();
+          },
+        });
+      };
+      body.appendChild(unBtn);
+    }
+    if (!available.length && !mine.length) {
+      body.appendChild(el('p', { class: 'muted', style: 'margin-top:14px' },
+        'No Phone Numbers available. Open Phone Numbers to manage inventory.'));
+      body.appendChild(el('button', {
+        class: 'btn btn-ghost', style: 'margin-top:10px', onclick: () => goto('numbers'),
+      }, 'Open Phone Numbers'));
+    } else if (available.length) {
+      const sel = el('select', { class: 'select' }, [
+        el('option', { value: '' }, 'Select Phone Number'),
+      ].concat(available.map((n) => el('option', { value: n.id }, (n.e164 || n.id) + (n.label ? ' · ' + n.label : '')))));
+      const assignBtn = el('button', { class: 'btn btn-primary' }, 'Assign Number');
+      assignBtn.onclick = async () => {
+        if (!sel.value) { toast('Choose a Phone Number.', 'err'); return; }
+        if (!emp.agentId) { toast('Employee needs a linked agent before assign.', 'err'); return; }
+        assignBtn.disabled = true;
+        try {
+          await api('/api/phone-numbers/' + encodeURIComponent(sel.value) + '/assign', {
+            method: 'POST',
+            body: { employeeId: emp.id, inboundEnabled: true, outboundEnabled: true },
+          });
+          State.loaded.phoneNumbers = false;
+          State.loaded.employees = false;
+          toast('Phone Number assigned.', 'ok');
+          onRoute();
+        } catch (e) { toast(e.message, 'err'); }
+        finally { assignBtn.disabled = false; }
+      };
+      body.appendChild(field('Available Phone Numbers', sel));
+      body.appendChild(assignBtn);
+    }
   } else if (tab === 'leads') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Connect Leads'));
     body.appendChild(el('p', { class: 'muted' },
@@ -1528,14 +1607,14 @@ async function viewEmployeeStudio(root, id) {
     body.appendChild(field('Brief', descIn));
     body.appendChild(el('div', { class: 'flex gap-2' }, [save, archive]));
     body.appendChild(el('p', { class: 'muted', style: 'margin-top:16px' },
-      'Phone assignment stays in Phone Numbers. Linked ids: agent ' + (emp.agentId || '—')
+      'Phone Number assignment lives on the Assign Number tab. Linked ids: agent ' + (emp.agentId || '—')
       + ', workflow ' + (emp.workflowId || '—')
       + ', number ' + (emp.phoneNumberId || '—') + '.'));
     body.appendChild(el('button', {
       class: 'btn btn-ghost',
       style: 'margin-top:10px',
-      onclick: () => goto('numbers'),
-    }, 'Open Phone Numbers'));
+      onclick: () => { location.hash = '#/employees?id=' + encodeURIComponent(emp.id) + '&tab=number'; },
+    }, 'Open Assign Number'));
   }
 }
 
@@ -3401,24 +3480,47 @@ async function ensurePhoneNumbers(force) {
 async function viewPhoneNumbers(root) {
   root.appendChild(viewHead(
     'Phone Numbers',
-    'Assign Astra numbers to your agents. Inbound and outbound stay under your control.'
+    'List, search, and assign Phone Numbers to Employees. Provider portals stay invisible.'
   ));
 
+  const search = el('input', {
+    class: 'input',
+    placeholder: 'Search by number, label, or employee',
+    style: 'max-width:360px;margin-bottom:14px',
+  });
   const assignedHost = el('div', { class: 'card card-pad', id: 'pnAssigned' }, skeleton('sk-line', 4));
   const availableHost = el('div', { class: 'card card-pad', id: 'pnAvailable' }, skeleton('sk-line', 3));
   const dialHost = el('div', { class: 'card card-pad' }, dialForm());
+  root.appendChild(search);
   root.appendChild(el('div', { class: 'tel-grid' }, [assignedHost, availableHost]));
   root.appendChild(el('div', { style: 'margin-top:18px' }, dialHost));
 
-  try {
-    const data = await ensurePhoneNumbers(true);
-    paintAssignedNumbers(assignedHost, data.numbers);
-    paintAvailableNumbers(availableHost, data.available);
-  } catch (e) {
-    assignedHost.innerHTML = '';
-    assignedHost.appendChild(el('div', { class: 'muted' }, 'Could not load phone numbers. ' + esc(e.message)));
-    availableHost.innerHTML = '';
+  async function reload(q) {
+    try {
+      await ensureEmployees();
+      const [mine, avail] = await Promise.all([
+        api('/api/phone-numbers' + (q ? ('?q=' + encodeURIComponent(q)) : '')),
+        api('/api/phone-numbers/available'),
+      ]);
+      State.phoneNumbers = mine.numbers || [];
+      State.availableNumbers = avail.numbers || [];
+      State.loaded.phoneNumbers = true;
+      paintAssignedNumbers(assignedHost, State.phoneNumbers);
+      paintAvailableNumbers(availableHost, State.availableNumbers);
+    } catch (e) {
+      assignedHost.innerHTML = '';
+      assignedHost.appendChild(el('div', { class: 'muted' }, 'Could not load Phone Numbers. ' + esc(e.message)));
+      availableHost.innerHTML = '';
+    }
   }
+
+  let searchTimer = null;
+  search.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => reload(search.value.trim()), 220);
+  });
+
+  await reload('');
 }
 
 function paintAssignedNumbers(host, numbers) {
@@ -3433,8 +3535,8 @@ function paintAssignedNumbers(host, numbers) {
 
   if (!numbers || !numbers.length) {
     host.appendChild(el('div', { class: 'empty', style: 'padding:28px 12px' }, [
-      el('div', { class: 'ttl' }, 'No numbers assigned yet'),
-      el('p', {}, 'Pick a number from available inventory and assign it to an agent.')
+      el('div', { class: 'ttl' }, 'No Phone Numbers assigned yet'),
+      el('p', {}, 'Pick a Phone Number from available inventory and assign it to an employee.')
     ]));
     return;
   }
@@ -3492,8 +3594,8 @@ function paintAssignedNumbers(host, numbers) {
     host.appendChild(el('div', { class: 'did-row pn-row' }, [
       el('div', {}, [
         el('div', { class: 'num' }, n.e164),
-        el('div', { class: 'exp' }, (n.label || 'Astra number')
-          + (n.assignedAgentName ? ' · ' + n.assignedAgentName : '')
+        el('div', { class: 'exp' }, (n.label || 'Phone Number')
+          + (n.assignedEmployeeName ? ' · ' + n.assignedEmployeeName : (n.assignedAgentName ? ' · ' + n.assignedAgentName : ''))
           + (n.inboundWorkflowName ? ' · ' + n.inboundWorkflowName : ''))
       ]),
       el('div', { class: 'pn-actions' }, [inbound, outbound, unassignBtn])
@@ -3511,49 +3613,38 @@ function paintAvailableNumbers(host, numbers) {
     ])
   ]));
   host.appendChild(el('p', { class: 'muted', style: 'font-size:.84rem;margin:0 0 12px;line-height:1.5' },
-    'Platform-owned numbers for testing. Purchase is not available yet.'));
+    'Platform-owned Phone Numbers for testing. Purchase is not available yet.'));
 
   if (!numbers || !numbers.length) {
     host.appendChild(el('div', { class: 'empty', style: 'padding:28px 12px' }, [
       el('div', { class: 'ttl' }, 'No inventory right now'),
-      el('p', {}, 'All test numbers are assigned. Unassign one to free it for another agent.')
+      el('p', {}, 'All test Phone Numbers are assigned. Unassign one to free it for another employee.')
     ]));
     return;
   }
 
+  const employees = (State.employees || []).filter((e) => e.status !== 'ARCHIVED');
   numbers.forEach((n) => {
-    const agentSel = el('select', { class: 'select' }, [
-      el('option', { value: '' }, 'Select agent')
-    ].concat((State.agents || []).map((a) => el('option', { value: a.id }, a.name))));
-    const inboundWf = (State.workflows || []).filter((w) => w.status !== 'archived' && (w.direction === 'inbound' || w.direction === 'both'));
-    const outboundWf = (State.workflows || []).filter((w) => w.status !== 'archived' && (w.direction === 'outbound' || w.direction === 'both'));
-    const inSel = el('select', { class: 'select' }, [
-      el('option', { value: '' }, 'Inbound workflow')
-    ].concat(inboundWf.map((w) => el('option', { value: w.id }, w.name))));
-    const outSel = el('select', { class: 'select' }, [
-      el('option', { value: '' }, 'Outbound workflow')
-    ].concat(outboundWf.map((w) => el('option', { value: w.id }, w.name))));
-    const seeded = (State.workflows || []).find((w) => w.name === 'AstraNova Receptionist' && w.status === 'published');
-    if (seeded) inSel.value = seeded.id;
+    const empSel = el('select', { class: 'select' }, [
+      el('option', { value: '' }, 'Select employee')
+    ].concat(employees.map((e) => el('option', { value: e.id }, e.name || e.id))));
     const assignBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Assign');
     assignBtn.onclick = async () => {
-      const agentId = agentSel.value;
-      if (!agentId) { toast('Choose an agent first.', 'err'); return; }
+      const employeeId = empSel.value;
+      if (!employeeId) { toast('Choose an employee first.', 'err'); return; }
       assignBtn.disabled = true;
       try {
         await api('/api/phone-numbers/' + encodeURIComponent(n.id) + '/assign', {
           method: 'POST',
           body: {
-            agentId,
+            employeeId,
             inboundEnabled: true,
             outboundEnabled: true,
-            inboundWorkflowId: inSel.value || undefined,
-            outboundWorkflowId: outSel.value || undefined
           }
         });
         State.loaded.phoneNumbers = false;
-        State.loaded.agents = false;
-        toast('Assigned ' + n.e164 + ' to agent.', 'ok');
+        State.loaded.employees = false;
+        toast('Assigned ' + n.e164 + ' to employee.', 'ok');
         if (currentRoute() === 'numbers') onRoute();
         else goto('numbers');
       } catch (ex) {
@@ -3566,9 +3657,9 @@ function paintAvailableNumbers(host, numbers) {
     host.appendChild(el('div', { class: 'did-row pn-row pn-row-assign' }, [
       el('div', {}, [
         el('div', { class: 'num' }, n.e164),
-        el('div', { class: 'exp' }, n.label || 'Available Astra number')
+        el('div', { class: 'exp' }, n.label || 'Available Phone Number')
       ]),
-      el('div', { class: 'pn-assign' }, [agentSel, inSel, outSel, assignBtn])
+      el('div', { class: 'pn-assign' }, [empSel, assignBtn])
     ]));
   });
 }
@@ -4148,17 +4239,22 @@ async function loadInstantLeads(host) {
 }
 
 async function viewCampaigns(root) {
-  root.appendChild(viewHead('Campaigns', 'Outbound lead lists with rate limits. Enqueue requires an explicit confirm flag. No accidental mass dial.'));
-  await ensureAgents();
+  root.appendChild(viewHead('Campaigns', 'Attach an Employee, paste leads, and enqueue through the same CallJob dial path as Instant Leads. Confirm is required.'));
+  await ensureEmployees();
   const name = el('input', { class: 'input', placeholder: 'March callbacks' });
-  const agent = el('select', { class: 'select' }, [el('option', { value: '' }, 'No agent linked')].concat((State.agents || []).map((a) => el('option', { value: a.id }, a.name))));
+  const empSel = el('select', { class: 'select' }, [
+    el('option', { value: '' }, 'Select employee'),
+  ].concat((State.employees || []).filter((e) => e.status !== 'ARCHIVED').map((e) => el('option', { value: e.id }, e.name || e.id))));
   const leads = el('textarea', { class: 'input textarea', placeholder: '+9198XXXXXXXX, Name\n+9199XXXXXXXX, Name' });
   const list = el('div', { class: 'ticket-list' }, skeleton('sk-card', 2));
   const create = el('button', { class: 'btn btn-primary' }, 'Create campaign');
   create.onclick = async () => {
     create.disabled = true;
     try {
-      const out = await api('/api/campaigns', { method: 'POST', body: { name: name.value.trim(), agentId: agent.value || null } });
+      const out = await api('/api/campaigns', {
+        method: 'POST',
+        body: { name: name.value.trim(), employeeId: empSel.value || null },
+      });
       if (leads.value.trim()) {
         await api('/api/campaigns/leads', { method: 'POST', body: { campaignId: out.campaign.id, text: leads.value } });
       }
@@ -4168,7 +4264,7 @@ async function viewCampaigns(root) {
   root.appendChild(el('div', { class: 'support-layout' }, [
     el('section', { class: 'card card-pad support-compose' }, [
       el('h3', { class: 't-h3' }, 'New campaign'),
-      field('Name', name), field('Outbound agent', agent), field('Lead list (phone, name)', leads), create
+      field('Name', name), field('Employee', empSel), field('Lead list (phone, name)', leads), create
     ]),
     list
   ]));
@@ -4177,8 +4273,13 @@ async function viewCampaigns(root) {
 
 async function loadCampaigns(host) {
   try {
+    await ensureEmployees();
     const out = await api('/api/campaigns');
     host.innerHTML = '';
+    const empName = (id) => {
+      const e = (State.employees || []).find((x) => x.id === id);
+      return e ? e.name : (id || '—');
+    };
     (out.campaigns || []).forEach((c) => {
       const pause = el('button', { class: 'btn btn-ghost' }, c.status === 'paused' ? 'Resume' : 'Pause');
       pause.onclick = async () => {
@@ -4187,12 +4288,29 @@ async function loadCampaigns(host) {
           await loadCampaigns(host);
         } catch (e) { toast(e.message, 'err'); }
       };
+      const attach = el('select', { class: 'select' }, [
+        el('option', { value: '' }, 'Attach employee'),
+      ].concat((State.employees || []).filter((e) => e.status !== 'ARCHIVED').map((e) =>
+        el('option', { value: e.id, selected: c.employeeId === e.id ? 'selected' : null }, e.name || e.id))));
+      if (c.employeeId) attach.value = c.employeeId;
+      attach.onchange = async () => {
+        try {
+          await api('/api/campaigns/employee', {
+            method: 'POST',
+            body: { campaignId: c.id, employeeId: attach.value || null },
+          });
+          toast(attach.value ? 'Employee attached.' : 'Employee cleared.', 'ok');
+          await loadCampaigns(host);
+        } catch (e) { toast(e.message, 'err'); }
+      };
       const enqueue = el('button', { class: 'btn btn-primary' }, 'Enqueue batch');
       enqueue.onclick = () => {
         modal({
           title: 'Confirm outbound enqueue',
           body: el('div', {}, [
-            el('p', {}, 'This queues up to ' + (c.ratePerMinute || 10) + ' dials for "' + c.name + '". Each lead uses the same outbound dial path as Instant Leads. Confirm is required.')
+            el('p', {}, 'This queues up to ' + (c.ratePerMinute || 10) + ' CallJobs for "' + c.name + '"'
+              + (c.employeeId ? (' via ' + empName(c.employeeId)) : '')
+              + '. Same dial path as Instant Leads. Confirm is required.')
           ]),
           confirmText: 'Confirm enqueue',
           onConfirm: async () => {
@@ -4204,47 +4322,87 @@ async function loadCampaigns(host) {
       };
       host.appendChild(el('article', { class: 'card ticket-card' }, [
         el('div', { class: 'flex items-center justify-between gap-2' }, [el('h3', { class: 't-h3' }, c.name), el('span', { class: 'pill' }, c.status)]),
-        el('p', { class: 'muted' }, (c.leadCount || 0) + ' leads · ' + (c.dialedCount || 0) + ' dialed · rate ' + (c.ratePerMinute || 10) + '/min'),
-        el('div', { class: 'flex gap-2' }, [enqueue, pause])
+        el('p', { class: 'muted' }, (c.leadCount || 0) + ' leads · ' + (c.dialedCount || 0) + ' dialed · employee ' + empName(c.employeeId) + ' · rate ' + (c.ratePerMinute || 10) + '/min'),
+        el('div', { class: 'flex gap-2', style: 'flex-wrap:wrap;align-items:center' }, [attach, enqueue, pause])
       ]));
     });
     if (!(out.campaigns || []).length) host.appendChild(el('div', { class: 'card card-pad muted' }, 'No campaigns yet.'));
   } catch (e) { host.innerHTML = ''; host.appendChild(el('div', { class: 'card card-pad muted' }, e.message)); }
 }
 
+function fmtPerf(value, emptyDash) {
+  if (value == null || value === '') return emptyDash ? '—' : '0';
+  return String(value);
+}
+
 async function viewAnalytics(root) {
-  root.appendChild(viewHead('Analytics', 'Call outcomes, direction, agent mix, and conversion-ish metrics from extracted data.'));
+  root.appendChild(viewHead('Performance', 'Real Call, Lead, and Outcome aggregates only. Empty values stay — or zero. No invented charts.'));
   const stats = el('div', { class: 'grid grid-3' }, skeleton('sk-stat', 4));
   const tables = el('div', { class: 'grid grid-12', style: 'margin-top:14px' });
   root.appendChild(stats);
   root.appendChild(tables);
   try {
-    const out = await api('/api/analytics');
-    const a = out.analytics || {};
+    const out = await api('/api/performance');
+    const a = out.performance || out.analytics || {};
     const calls = a.calls || {};
     const totals = calls.totals || {};
+    const leadTotals = (a.leads && a.leads.totals) || {};
     stats.innerHTML = '';
     [
-      ['Calls', totals.calls || 0, 'Tenant scoped'],
-      ['Converted', totals.converted || 0, (totals.conversionRatePct || 0) + '% rate'],
-      ['Avg duration', (totals.avgDurationSec || 0) + 's', 'Completed samples'],
-      ['Campaign leads', (a.campaigns && a.campaigns.leads) || 0, String((a.campaigns && a.campaigns.campaigns) || 0) + ' campaigns']
+      ['Calls', fmtPerf(totals.calls || 0), 'Tenant scoped'],
+      ['Converted', fmtPerf(totals.converted || 0), totals.conversionRatePct == null ? '— rate' : (totals.conversionRatePct + '% rate')],
+      ['Leads', fmtPerf(leadTotals.leads || 0), (leadTotals.connected || 0) + ' connected'],
+      ['Campaign leads', fmtPerf((a.campaigns && a.campaigns.leads) || 0), String((a.campaigns && a.campaigns.campaigns) || 0) + ' campaigns']
     ].forEach((row) => stats.appendChild(statCard(row[0], String(row[1]), row[2])));
     tables.innerHTML = '';
     function tableCard(title, map) {
       const card = el('section', { class: 'card card-pad' }, [el('h3', { class: 't-h3', style: 'margin-bottom:12px' }, title)]);
       const entries = Object.entries(map || {});
-      if (!entries.length) card.appendChild(el('div', { class: 'muted' }, 'No data yet.'));
+      if (!entries.length) card.appendChild(el('div', { class: 'muted' }, '—'));
       entries.sort((x, y) => y[1] - x[1]).forEach(([k, v]) => {
         card.appendChild(el('div', { class: 'ledger-row' }, [el('div', {}, k), el('b', {}, String(v))]));
       });
       return card;
     }
     tables.appendChild(tableCard('By outcome', calls.byOutcome));
-    tables.appendChild(tableCard('By direction', calls.byDirection));
-    tables.appendChild(tableCard('By agent', calls.byAgent));
-    tables.appendChild(tableCard('Campaign status', (a.campaigns && a.campaigns.byStatus) || {}));
+    tables.appendChild(tableCard('By employee', calls.byEmployee));
+    tables.appendChild(tableCard('Lead status', (a.leads && a.leads.byStatus) || {}));
+    tables.appendChild(tableCard('Outcome keys', (a.outcomes && a.outcomes.byKey) || {}));
   } catch (e) { stats.innerHTML = ''; stats.appendChild(el('div', { class: 'card card-pad muted' }, e.message)); }
+}
+
+async function viewTrainingHub(root) {
+  root.appendChild(viewHead('Training', 'Teach each Employee with knowledge notes and FAQs. Opens the Studio Training tab.'));
+  const host = el('div', { class: 'ticket-list' }, skeleton('sk-card', 3));
+  root.appendChild(host);
+  try {
+    await ensureEmployees(true);
+    host.innerHTML = '';
+    const rows = (State.employees || []).filter((e) => e.status !== 'ARCHIVED');
+    if (!rows.length) {
+      host.appendChild(el('div', { class: 'card card-pad muted' }, 'No employees yet. Create one, then add training.'));
+      return;
+    }
+    rows.forEach((emp) => {
+      const open = el('button', { class: 'btn btn-primary btn-sm' }, 'Open Training');
+      open.onclick = () => {
+        location.hash = '#/employees?id=' + encodeURIComponent(emp.id) + '&tab=training';
+      };
+      host.appendChild(el('article', { class: 'card ticket-card' }, [
+        el('div', { class: 'flex items-center justify-between gap-2' }, [
+          el('div', {}, [
+            el('h3', { class: 't-h3' }, emp.name || 'Employee'),
+            el('p', { class: 'muted' }, (emp.role || 'Role') + ' · ' + (emp.status || 'DRAFT')
+              + ' · ' + ((emp.knowledgeIds && emp.knowledgeIds.length) || 0) + ' training assets'),
+          ]),
+          open,
+        ]),
+      ]));
+    });
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('div', { class: 'card card-pad muted' }, e.message));
+  }
 }
 
 async function viewBilling(root) {

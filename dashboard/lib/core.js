@@ -161,7 +161,7 @@ const DB_TMP = `${DB_FILE}.tmp`;
 
 function defaultDb() {
   return {
-    schemaVersion: 11,
+    schemaVersion: 12,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
@@ -207,7 +207,7 @@ function normalizeOutcomeDef(raw) {
 function migrateDb(parsed) {
   const out = Object.assign(defaultDb(), parsed || {});
   for (const k of COLLECTIONS) if (!Array.isArray(out[k])) out[k] = [];
-  out.schemaVersion = Math.max(11, Number(out.schemaVersion) || 0);
+  out.schemaVersion = Math.max(12, Number(out.schemaVersion) || 0);
   for (const tenant of out.tenants) {
     if (!tenant.status) tenant.status = 'active';
     if (!tenant.privacyMode) tenant.privacyMode = 'standard';
@@ -241,6 +241,32 @@ function migrateDb(parsed) {
       const lead = (out.leads || []).find((l) => l.id === job.leadId && l.tenantId === job.tenantId);
       if (lead && lead.employeeId) job.employeeId = lead.employeeId;
     }
+  }
+  // v12: Phone Number ↔ Employee assign + Campaign.employeeId (CallJob path).
+  for (const n of out.phoneNumbers) {
+    if (n.assignedEmployeeId === undefined) n.assignedEmployeeId = null;
+  }
+  for (const emp of out.employees) {
+    if (!emp.phoneNumberId) continue;
+    const n = (out.phoneNumbers || []).find(
+      (row) => row.id === emp.phoneNumberId && row.tenantId === emp.tenantId,
+    );
+    if (n && !n.assignedEmployeeId) n.assignedEmployeeId = emp.id;
+  }
+  for (const n of out.phoneNumbers) {
+    if (n.assignedEmployeeId || !n.assignedAgentId || !n.tenantId) continue;
+    const emp = (out.employees || []).find(
+      (e) => e.tenantId === n.tenantId
+        && e.agentId === n.assignedAgentId
+        && e.status !== 'ARCHIVED',
+    );
+    if (emp) {
+      n.assignedEmployeeId = emp.id;
+      if (!emp.phoneNumberId) emp.phoneNumberId = n.id;
+    }
+  }
+  for (const c of out.campaigns) {
+    if (c.employeeId === undefined) c.employeeId = null;
   }
   return out;
 }

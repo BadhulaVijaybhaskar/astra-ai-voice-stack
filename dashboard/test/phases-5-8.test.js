@@ -34,7 +34,7 @@ test('schema v10 migrates string outcomes and lead.employeeId', () => {
     }],
     leads: [{ id: 'lead_1', tenantId: 't_a', name: 'Ada', phone: '+919811111111' }],
   });
-  assert.equal(migrated.schemaVersion, 11);
+  assert.equal(migrated.schemaVersion, 12);
   assert.equal(Array.isArray(migrated.employees[0].knowledgeIds), true);
   assert.equal(migrated.employees[0].outcomes[0].key, 'qualified');
   assert.equal(migrated.employees[0].outcomes[0].success, true);
