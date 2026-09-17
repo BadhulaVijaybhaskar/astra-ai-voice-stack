@@ -28,6 +28,9 @@ const phoneNumbers = require('./lib/phone-numbers');
 const { createDefaultTelephonyProvider, TelephonyProviderError } = require('./lib/telephony-provider');
 const { AGENT_TYPES, seedPresets, publicPreset, applyPresetToAgent, normalizeAgentType } = require('./lib/agent-types');
 const org = require('./lib/org');
+const pkg = require('./package.json');
+const STARTED_AT_MS = Date.now();
+const APP_VERSION = String((pkg && pkg.version) || '1.0.0');
 const knowledge = require('./lib/knowledge');
 const integrations = require('./lib/integrations');
 const campaigns = require('./lib/campaigns');
@@ -726,11 +729,18 @@ async function apiPublicDemoSession(req, res, token) {
   }
 }
 
-// GET /api/telephony/status -> VoBiz configuration status from Dograh.
-async function apiTelephonyStatus(req, res) {
+// GET /api/telephony/status -> connection + DIDs. Provider brand names are Super Admin only.
+async function apiTelephonyStatus(req, res, ctx) {
   try {
     const status = await providers.telephony.status();
-    core.sendJson(res, 200, { ...status, provider: 'vobiz', orchestrator: 'dograh' });
+    const rich = Object.assign({}, status, {
+      provider: status.provider || 'vobiz',
+      orchestrator: status.orchestrator || 'dograh',
+    });
+    if (ctx && ctx.user && ctx.user.role === 'super_admin') {
+      return core.sendJson(res, 200, rich);
+    }
+    return core.sendJson(res, 200, org.publicTelephonyStatus(rich));
   } catch (e) {
     handleProviderError(res, e);
   }
@@ -1822,9 +1832,14 @@ function apiProviders(req, res, ctx) {
 async function apiHealth(req, res) {
   const ctx = await core.getSession(req);
   if (!ctx || ctx.user.role !== 'super_admin') {
-    return core.sendJson(res, 200, org.publicHealthPayload());
+    return core.sendJson(res, 200, org.publicHealthPayload({
+      uptime: (Date.now() - STARTED_AT_MS) / 1000,
+      version: APP_VERSION,
+    }));
   }
   const payload = org.detailedHealthPayload(providers.describeProviders());
+  payload.uptime = Math.floor((Date.now() - STARTED_AT_MS) / 1000);
+  payload.version = APP_VERSION;
   const check = org.assertNoSecretValues(payload);
   if (!check.ok) {
     return core.sendJson(res, 500, { error: 'provider health refused to leak secrets', code: 'secret_guard' });
@@ -2071,13 +2086,34 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Ops console is Super Admin only. Anonymous and customer sessions go to the product app.
+    // Always noindex so the ops URL is not a customer or crawl path.
     if ((req.method === 'GET' || req.method === 'HEAD') && (route === '/console.html' || route === '/console')) {
       const ctx = await core.getSession(req);
       if (!(ctx && ctx.user && ctx.user.role === 'super_admin')) {
-        res.writeHead(302, { Location: '/app.html', 'Cache-Control': 'no-store' });
+        res.writeHead(302, {
+          Location: '/app.html',
+          'Cache-Control': 'no-store',
+          'X-Robots-Tag': 'noindex, nofollow',
+        });
         return res.end();
       }
-      req.url = '/console.html';
+      const file = path.join(core.PUBLIC_DIR, 'console.html');
+      return fs.readFile(file, (err, data) => {
+        if (err) return core.send(res, 404, 'not found');
+        if (req.method === 'HEAD') {
+          return core.send(res, 200, '', {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'X-Robots-Tag': 'noindex, nofollow',
+            'Content-Length': Buffer.byteLength(data),
+          });
+        }
+        core.send(res, 200, data, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'X-Robots-Tag': 'noindex, nofollow',
+        });
+      });
     }
 
     // Everything else is a static file from public/.

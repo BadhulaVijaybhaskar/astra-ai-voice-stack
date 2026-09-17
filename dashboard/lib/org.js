@@ -93,9 +93,51 @@ function providerHealthSummary(described) {
 
 /**
  * Public / customer readiness only. No provider ids, labels, or model names.
+ * Optional uptime (seconds) and version when the server supplies them.
  */
-function publicHealthPayload() {
-  return { ok: true };
+function publicHealthPayload(meta = {}) {
+  const out = { ok: true };
+  if (meta.uptime != null && Number.isFinite(Number(meta.uptime))) {
+    out.uptime = Math.max(0, Math.floor(Number(meta.uptime)));
+  }
+  if (meta.version != null && String(meta.version).trim()) {
+    out.version = String(meta.version).trim();
+  }
+  return out;
+}
+
+/**
+ * Customer-safe telephony status. Drops provider/orchestrator branding and
+ * ops-console fields (dashboard, upstream workflow id). Keeps DIDs and connect state.
+ */
+function publicTelephonyStatus(status) {
+  const s = status && typeof status === 'object' ? status : {};
+  const out = {
+    connected: !!s.connected,
+    did: s.did || null,
+    dids: Array.isArray(s.dids)
+      ? s.dids.map((d) => {
+        if (!d || typeof d !== 'object') return { number: String(d || '') };
+        return {
+          id: d.id,
+          number: d.number,
+          status: d.status,
+          label: d.label || '',
+          isDefaultCallerId: !!d.isDefaultCallerId,
+          inboundWorkflowId: d.inboundWorkflowId,
+          inboundWorkflowName: d.inboundWorkflowName || '',
+        };
+      })
+      : [],
+  };
+  if (s.configuration && typeof s.configuration === 'object') {
+    out.configuration = {
+      id: s.configuration.id,
+      name: s.configuration.name,
+      isDefaultOutbound: !!s.configuration.isDefaultOutbound,
+    };
+  }
+  return out;
 }
 
 /**
@@ -171,6 +213,7 @@ module.exports = {
   providerHealthSummary,
   publicHealthPayload,
   detailedHealthPayload,
+  publicTelephonyStatus,
   assertNoSecretValues,
   publicAuditEvent,
 };

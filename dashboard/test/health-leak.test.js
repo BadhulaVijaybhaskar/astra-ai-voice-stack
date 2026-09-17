@@ -11,8 +11,10 @@ const org = require('../lib/org');
 const PROVIDER_BRAND_RE = /vobiz|dograh|deepgram|rumik|groq/i;
 
 test('publicHealthPayload has no provider brand strings', () => {
-  const body = org.publicHealthPayload();
+  const body = org.publicHealthPayload({ uptime: 12.7, version: '1.0.0' });
   assert.equal(body.ok, true);
+  assert.equal(body.uptime, 12);
+  assert.equal(body.version, '1.0.0');
   assert.equal(body.providers, undefined);
   assert.equal(body.models, undefined);
   assert.equal(body.selected, undefined);
@@ -34,6 +36,28 @@ test('detailedHealthPayload keeps provider inventory for super_admin path', () =
   assert.equal(body.models.stt, 'nova-3');
   const check = org.assertNoSecretValues(body, { RUMIK_API_KEY: 'secret-rumik-key-zzzz' });
   assert.equal(check.ok, true);
+});
+
+test('publicTelephonyStatus strips provider and orchestrator branding', () => {
+  const body = org.publicTelephonyStatus({
+    connected: true,
+    provider: 'vobiz',
+    orchestrator: 'dograh',
+    dashboard: 'https://dograh.example/ops',
+    workflowId: 8,
+    did: '+919999999999',
+    dids: [{ id: 3, number: '+919999999999', status: 'active', label: 'Main', isDefaultCallerId: true }],
+    configuration: { id: 2, name: 'Default trunk', isDefaultOutbound: true },
+  });
+  assert.equal(body.connected, true);
+  assert.equal(body.did, '+919999999999');
+  assert.equal(body.dids.length, 1);
+  assert.equal(body.provider, undefined);
+  assert.equal(body.orchestrator, undefined);
+  assert.equal(body.dashboard, undefined);
+  assert.equal(body.workflowId, undefined);
+  const blob = JSON.stringify(body);
+  assert.equal(PROVIDER_BRAND_RE.test(blob), false);
 });
 
 test('unauthenticated health serializer shape never advertises brands', () => {
