@@ -295,6 +295,7 @@ const ROUTES = [
   { id: 'talk', label: 'Talk to it', icon: 'mic', group: 'BUILD' },
   { id: 'numbers', label: 'Phone Numbers', icon: 'phone', group: 'OPERATE' },
   { id: 'calls', label: 'Calls', icon: 'calls', group: 'OPERATE' },
+  { id: 'leads', label: 'Instant Leads', icon: 'leads', group: 'OPERATE' },
   { id: 'knowledge', label: 'Knowledge', icon: 'book', group: 'OPERATE' },
   { id: 'integrations', label: 'Integrations', icon: 'plug', group: 'OPERATE' },
   { id: 'campaigns', label: 'Campaigns', icon: 'megaphone', group: 'OPERATE' },
@@ -313,6 +314,7 @@ function navIcon(name) {
     mic: '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/><path d="M8.5 21h7"/>',
     phone: '<path d="M5 3.5h3l1.5 4.5-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4.5 1.5v3a1.5 1.5 0 0 1-1.6 1.5A16.5 16.5 0 0 1 3.5 5.1 1.5 1.5 0 0 1 5 3.5z"/>',
     calls: '<path d="M4 5h10v10H4z"/><path d="M8 15v4l4-2 4 2v-4"/><path d="M10 8h2M10 11h4"/>',
+    leads: '<path d="M12 3v4"/><path d="M8 7h8"/><circle cx="12" cy="14" r="6"/><path d="M10 14h4M12 12v4"/>',
     book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 5.5V21.5"/><path d="M8 7h8M8 11h6"/>',
     plug: '<path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0V8z"/><path d="M12 16v5"/>',
     megaphone: '<path d="M4 10v4l8 3V7L4 10z"/><path d="M12 8.5c2 .8 4 2 6 2.5v2c-2 .5-4 1.7-6 2.5"/><path d="M7 14.5v3.2l2 .8"/>',
@@ -476,7 +478,7 @@ function onRoute() {
   view.appendChild(wrap);
   ({
     overview: viewOverview, agents: viewAgents, workflows: viewWorkflows, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
-    talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, calls: viewCalls,
+    talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, calls: viewCalls, leads: viewInstantLeads,
     knowledge: viewKnowledge, integrations: viewIntegrations, campaigns: viewCampaigns, analytics: viewAnalytics, billing: viewBilling,
     support: viewSupport, admin: viewAdmin, settings: viewSettings
   }[id] || viewOverview)(wrap);
@@ -3097,6 +3099,107 @@ function createFromPreset(preset) {
   });
 }
 
+async function viewInstantLeads(root) {
+  root.appendChild(viewHead(
+    'Instant Leads',
+    'Add a lead, pick an employee (agent), and place a real outbound call with an explicit confirm. Job status updates here. Open Calls for the call row.'
+  ));
+  await ensureAgents();
+  const name = el('input', { class: 'input', placeholder: 'Lead name' });
+  const phone = el('input', { class: 'input', placeholder: 'Phone (+91... or 10-digit IN)' });
+  const agent = el('select', { class: 'select' },
+    [el('option', { value: '' }, 'Select employee / agent')].concat(
+      (State.agents || []).map((a) => el('option', { value: a.id }, a.name))
+    )
+  );
+  const list = el('div', { class: 'ticket-list' }, skeleton('sk-card', 2));
+  const create = el('button', { class: 'btn btn-primary' }, 'Save lead');
+  create.onclick = async () => {
+    create.disabled = true;
+    try {
+      await api('/api/leads', {
+        method: 'POST',
+        body: {
+          name: name.value.trim(),
+          phone: phone.value.trim(),
+          agentId: agent.value || null,
+        },
+      });
+      name.value = '';
+      phone.value = '';
+      toast('Lead saved.', 'ok');
+      await loadInstantLeads(list);
+    } catch (e) { toast(e.message, 'err'); }
+    finally { create.disabled = false; }
+  };
+  root.appendChild(el('div', { class: 'support-layout' }, [
+    el('section', { class: 'card card-pad support-compose' }, [
+      el('h3', { class: 't-h3' }, 'New lead'),
+      field('Name', name),
+      field('Phone', phone),
+      field('Employee / agent', agent),
+      create,
+    ]),
+    list,
+  ]));
+  await loadInstantLeads(list);
+}
+
+async function loadInstantLeads(host) {
+  try {
+    const out = await api('/api/leads');
+    host.innerHTML = '';
+    (out.leads || []).forEach((lead) => {
+      const callBtn = el('button', { class: 'btn btn-primary' }, 'Call now');
+      callBtn.onclick = () => {
+        modal({
+          title: 'Confirm outbound call',
+          body: el('div', {}, [
+            el('p', {}, 'This places a real call to ' + (lead.phone || '') + ' for "' + (lead.name || 'Lead') + '".'),
+            el('p', { class: 'muted' }, 'You will see job status below and a new row under Calls when the dial is accepted.'),
+          ]),
+          confirmText: 'Confirm call',
+          onConfirm: async () => {
+            const res = await api('/api/leads/' + encodeURIComponent(lead.id) + '/call', {
+              method: 'POST',
+              body: { confirm: true, agentId: lead.agentId || undefined },
+            });
+            const st = (res.job && res.job.status) || 'done';
+            toast('Call job ' + st + (res.call && res.call.id ? '. Open Calls for details.' : '.'), 'ok');
+            await loadInstantLeads(host);
+          },
+        });
+      };
+      const callsLink = el('a', {
+        href: '#/calls',
+        class: 'btn btn-ghost',
+        onclick: (e) => { e.preventDefault(); goto('calls'); },
+      }, 'Open Calls');
+      const statusBits = [
+        lead.status || 'new',
+        lead.lastCallJobId ? 'job linked' : null,
+        lead.lastCallId ? 'call linked' : null,
+        lead.lastError ? ('error: ' + lead.lastError) : null,
+      ].filter(Boolean).join(' · ');
+      host.appendChild(el('article', { class: 'card ticket-card' }, [
+        el('div', { class: 'flex items-center justify-between gap-2' }, [
+          el('h3', { class: 't-h3' }, lead.name || 'Lead'),
+          el('span', { class: 'pill' }, lead.status || 'new'),
+        ]),
+        el('p', { class: 'muted' }, (lead.phone || '') + (lead.agentId ? ' · agent linked' : '')),
+        el('p', { class: 'muted' }, statusBits),
+        el('div', { class: 'flex gap-2' }, [callBtn, callsLink]),
+      ]));
+    });
+    if (!(out.leads || []).length) {
+      host.appendChild(el('div', { class: 'card card-pad muted' }, 'No leads yet. Save one on the left, then Call now.'));
+    }
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('div', { class: 'card card-pad muted' }, e.message));
+  }
+}
+
 async function viewCampaigns(root) {
   root.appendChild(viewHead('Campaigns', 'Outbound lead lists with rate limits. Enqueue requires an explicit confirm flag. No accidental mass dial.'));
   await ensureAgents();
@@ -3142,7 +3245,7 @@ async function loadCampaigns(host) {
         modal({
           title: 'Confirm outbound enqueue',
           body: el('div', {}, [
-            el('p', {}, 'This queues up to ' + (c.ratePerMinute || 10) + ' dials for "' + c.name + '". Live mass dial is stubbed in V1, but confirm is still required.')
+            el('p', {}, 'This queues up to ' + (c.ratePerMinute || 10) + ' dials for "' + c.name + '". Each lead uses the same outbound dial path as Instant Leads. Confirm is required.')
           ]),
           confirmText: 'Confirm enqueue',
           onConfirm: async () => {
