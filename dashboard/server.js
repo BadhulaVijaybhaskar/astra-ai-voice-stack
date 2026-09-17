@@ -52,6 +52,7 @@ function currentDeployIdentity() {
 const workflows = require('./lib/workflows');
 const leads = require('./lib/leads');
 const callJobs = require('./lib/call-jobs');
+const employees = require('./lib/employees');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
@@ -2081,6 +2082,129 @@ async function apiLeadsCall(req, res, ctx) {
   });
 }
 
+/* ==========================================================================
+   AI Employees (Phases 1 to 4): composition over Agent / Workflow / Number
+   ========================================================================== */
+
+function matchEmployeesRoute(route) {
+  if (route === '/api/employees') return { action: 'list_or_create' };
+  if (route === '/api/employees/templates') return { action: 'templates' };
+  const pause = route.match(/^\/api\/employees\/([^/]+)\/pause$/);
+  if (pause) return { action: 'pause', id: decodeURIComponent(pause[1]) };
+  const resume = route.match(/^\/api\/employees\/([^/]+)\/resume$/);
+  if (resume) return { action: 'resume', id: decodeURIComponent(resume[1]) };
+  const status = route.match(/^\/api\/employees\/([^/]+)\/status$/);
+  if (status) return { action: 'status', id: decodeURIComponent(status[1]) };
+  const one = route.match(/^\/api\/employees\/([^/]+)$/);
+  if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
+  return null;
+}
+
+function apiEmployeeTemplates(req, res, ctx) {
+  core.sendJson(res, 200, { templates: employees.listJobTemplates() });
+}
+
+function apiEmployeesList(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const list = employees.listEmployees(core.db(), ctx.tenant.id, {
+    filter: url.searchParams.get('filter') || url.searchParams.get('status') || url.searchParams.get('channel') || 'all',
+    limit: url.searchParams.get('limit') || undefined,
+  });
+  core.sendJson(res, 200, { employees: list });
+}
+
+function apiEmployeesGet(req, res, ctx) {
+  const row = employees.findEmployee(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!row) return core.sendJson(res, 404, { error: 'employee not found', code: 'not_found' });
+  const pub = employees.publicEmployee(row, core.db());
+  const agent = row.agentId
+    ? core.db().agents.find((a) => a.id === row.agentId && a.tenantId === ctx.tenant.id)
+    : null;
+  const workflow = row.workflowId
+    ? workflows.findWorkflow(core.db(), ctx.tenant.id, row.workflowId)
+    : null;
+  const knowledgeEntries = (row.knowledgeIds || [])
+    .map((kid) => (core.db().knowledgeEntries || []).find((e) => e.id === kid && e.tenantId === ctx.tenant.id))
+    .filter(Boolean)
+    .map((k) => knowledge.publicKnowledgeEntry(k));
+  core.sendJson(res, 200, {
+    employee: pub,
+    agent: agent ? publicAgent(agent) : null,
+    workflow: workflow ? workflows.publicWorkflow(workflow, { includeProvider: false }) : null,
+    knowledge: knowledgeEntries,
+  });
+}
+
+async function apiEmployeesCreate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = employees.createEmployee(d, ctx.tenant.id, ctx.body || {}, ctx.user.id);
+    if (result.ok && result.created) {
+      addAudit(d, ctx, 'employee.created', 'employee', result.employee.id, {
+        templateKey: result.employee.templateKey,
+        status: result.employee.status,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 201, {
+    employee: employees.publicEmployee(result.employee, core.db()),
+    composed: !!result.composed,
+  });
+}
+
+async function apiEmployeesPatch(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = employees.updateEmployee(d, ctx.tenant.id, ctx.params.id, ctx.body || {});
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.updated', 'employee', result.employee.id, {
+        status: result.employee.status,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { employee: employees.publicEmployee(result.employee, core.db()) });
+}
+
+async function apiEmployeesStatus(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const next = String((ctx.body || {}).status || '');
+  let result;
+  await core.mutate((d) => {
+    result = employees.setEmployeeStatus(d, ctx.tenant.id, ctx.params.id, next);
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.status', 'employee', result.employee.id, { status: result.employee.status });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { employee: employees.publicEmployee(result.employee, core.db()) });
+}
+
+async function apiEmployeesPause(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = employees.pauseEmployee(d, ctx.tenant.id, ctx.params.id);
+    if (result.ok) addAudit(d, ctx, 'employee.paused', 'employee', result.employee.id, {});
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { employee: employees.publicEmployee(result.employee, core.db()) });
+}
+
+async function apiEmployeesResume(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = employees.resumeEmployee(d, ctx.tenant.id, ctx.params.id);
+    if (result.ok) addAudit(d, ctx, 'employee.resumed', 'employee', result.employee.id, {});
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { employee: employees.publicEmployee(result.employee, core.db()) });
+}
+
 function apiCampaignsLeads(req, res, ctx) {
   const url = new URL(req.url, 'http://localhost');
   const id = String(url.searchParams.get('campaignId') || '');
@@ -2376,6 +2500,15 @@ const server = http.createServer(async (req, res) => {
           }
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
+        const empGet = matchEmployeesRoute(route);
+        if (empGet) {
+          if (empGet.action === 'templates') return core.requireAuth(req, res, apiEmployeeTemplates);
+          if (empGet.action === 'list_or_create') return core.requireAuth(req, res, apiEmployeesList);
+          if (empGet.action === 'one') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
+          return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+        }
         if (route === '/api/hvac/desk') return core.requireAuth(req, res, apiHvacDesk);
         if (route === '/api/hvac/event-types') return core.requireAuth(req, res, apiHvacEventTypes);
         if (route === '/api/hvac/slots') return core.requireAuth(req, res, apiHvacSlots);
@@ -2403,6 +2536,16 @@ const server = http.createServer(async (req, res) => {
             return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
           }
           return core.requireAuth(req, res, (rq, rs, ctx) => apiWorkflowsPatch(rq, rs, { ...ctx, params: { id: wfPatch.id } }), body);
+        }
+        const empPatch = matchEmployeesRoute(route);
+        if (empPatch && empPatch.action === 'one') {
+          let body;
+          try { body = await core.readBody(req); }
+          catch (e) {
+            const tooBig = /too large/.test(String(e.message));
+            return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPatch(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
         }
         return core.sendJson(res, 405, { error: 'method not allowed', code: 'method' });
       }
@@ -2502,6 +2645,22 @@ const server = http.createServer(async (req, res) => {
         }
         if (leadsPost.action === 'call') {
           return core.requireAuth(req, res, (rq, rs, ctx) => apiLeadsCall(rq, rs, { ...ctx, params: { id: leadsPost.id } }), body);
+        }
+        return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+      }
+      const empPost = matchEmployeesRoute(route);
+      if (empPost) {
+        if (empPost.action === 'list_or_create') {
+          return core.requireAuth(req, res, apiEmployeesCreate, body);
+        }
+        if (empPost.action === 'status') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesStatus(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'pause') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPause(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'resume') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesResume(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
         }
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }

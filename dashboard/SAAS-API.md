@@ -129,9 +129,18 @@ Schema version 6 adds `knowledgeEntries`, `integrationWebhooks`, `campaigns`, an
 
 Schema version 8 adds `leads` and `callJobs` for Instant Leads (Lead → CallJob → outbound → Call). Outbound dials reuse the telephony `createOutboundCall` contract (Astra `pn_` / `wf_` ids, server-side provider resolution, real `providerRunId`). See `docs/INSTANT-LEADS.md`.
 
+## AI Employees (Phases 1 to 4)
+
+- `GET /api/employees` lists tenant employees with honest metrics (`callsToday`, `leads`, `qualified`, `lastActiveAt`).
+- `GET /api/employees/templates` returns job templates (Receptionist through Custom).
+- `POST /api/employees` creates an Employee and, by default, composes linked Agent + Workflow from the template.
+- `GET /api/employees/:id` returns the employee plus linked agent, workflow, and knowledge summaries.
+- `PATCH /api/employees/:id` updates relationships and fields. `POST .../status`, `/pause`, `/resume` manage lifecycle (`DRAFT` \| `READY` \| `LIVE` \| `PAUSED` \| `ARCHIVED`).
+- Customer UI never shows Dograh / VoBiz / Deepgram / Groq / Rumik terminology. See `docs/EMPLOYEES.md`.
+
 ## Persistence collections
 
-Schema version 8 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, `campaignLeads`, `workflows`, `leads`, and `callJobs`. Startup migration is additive. Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
+Schema version 9 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, `campaignLeads`, `workflows`, `leads`, `callJobs`, and `employees`. Startup migration is additive. Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
 
 The JSON store remains suitable for a single-process demo. Production must move these contracts to transactional PostgreSQL before accepting money. PayU success redirects must never credit a wallet. Only a verified, idempotent server callback may convert a payment intent into a ledger credit.
 
