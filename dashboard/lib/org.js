@@ -92,6 +92,20 @@ function providerHealthSummary(described) {
 }
 
 /**
+ * Deploy proof payload for authenticated GET /api/version.
+ * Reads GIT_SHA (or GITHUB_SHA) from the environment. Never invents a SHA.
+ */
+function versionPayload(env = process.env, meta = {}) {
+  const raw = String(env.GIT_SHA || env.GITHUB_SHA || '').trim();
+  const built = String(env.BUILT_AT || '').trim();
+  return {
+    gitSha: raw || null,
+    version: meta.version != null && String(meta.version).trim() ? String(meta.version).trim() : null,
+    builtAt: built || null,
+  };
+}
+
+/**
  * Public / customer readiness only. No provider ids, labels, or model names.
  * Optional uptime (seconds) and version when the server supplies them.
  */
@@ -214,6 +228,7 @@ module.exports = {
   publicHealthPayload,
   detailedHealthPayload,
   publicTelephonyStatus,
+  versionPayload,
   assertNoSecretValues,
   publicAuditEvent,
 };

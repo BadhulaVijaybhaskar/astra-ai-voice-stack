@@ -1828,6 +1828,11 @@ function apiProviders(req, res, ctx) {
   core.sendJson(res, 200, payload);
 }
 
+// GET /api/version -> authenticated deploy proof (gitSha from env, never invented).
+function apiVersion(req, res) {
+  core.sendJson(res, 200, org.versionPayload(process.env, { version: APP_VERSION }));
+}
+
 // GET /api/health -> public readiness only. Provider inventory is super_admin only.
 async function apiHealth(req, res) {
   const ctx = await core.getSession(req);
@@ -1917,6 +1922,7 @@ const server = http.createServer(async (req, res) => {
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
         if (route === '/api/me') return core.requireAuth(req, res, apiMe);
+        if (route === '/api/version') return core.requireAuth(req, res, apiVersion);
         if (route === '/api/providers') return core.requireAuth(req, res, apiProviders);
         if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsList);
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);

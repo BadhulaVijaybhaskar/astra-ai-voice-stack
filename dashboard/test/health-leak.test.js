@@ -60,6 +60,95 @@ test('publicTelephonyStatus strips provider and orchestrator branding', () => {
   assert.equal(PROVIDER_BRAND_RE.test(blob), false);
 });
 
+test('versionPayload reads GIT_SHA from env and never invents', () => {
+  assert.deepEqual(org.versionPayload({}, { version: '1.0.0' }), {
+    gitSha: null,
+    version: '1.0.0',
+    builtAt: null,
+  });
+  assert.equal(org.versionPayload({ GIT_SHA: '  abc123  ' }, { version: '1.0.0' }).gitSha, 'abc123');
+  assert.equal(org.versionPayload({ GITHUB_SHA: 'def456' }).gitSha, 'def456');
+  assert.equal(org.versionPayload({ GIT_SHA: 'abc', GITHUB_SHA: 'def' }).gitSha, 'abc');
+  assert.equal(org.versionPayload({ BUILT_AT: '2026-09-17T00:00:00Z' }).builtAt, '2026-09-17T00:00:00Z');
+});
+
+test('unauthenticated GET /api/version is auth-gated (401)', async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'astra-ver-auth-'));
+  const dbFile = path.join(tmpDir, 'db.json');
+  process.env.RAPIDX_DB_FILE = dbFile;
+  process.env.GIT_SHA = 'feedface01';
+  process.env.BUILT_AT = '2026-09-17T09:00:00Z';
+
+  for (const key of Object.keys(require.cache)) {
+    if (key.includes('/dashboard/lib/')) delete require.cache[key];
+  }
+  const core = require('../lib/core');
+  const orgMod = require('../lib/org');
+
+  const tenantId = core.genId('t_');
+  const userId = core.genId('u_');
+  const now = new Date().toISOString();
+  await core.mutate((d) => {
+    d.tenants.push({
+      id: tenantId, name: 'Ver', slug: 'ver', createdAt: now,
+      branding: { color: '#6B21A8' }, providers: {}, plan: 'starter', status: 'active', privacyMode: 'standard',
+    });
+    d.users.push({
+      id: userId, tenantId, email: 'ver@astra.local', name: 'Ver',
+      passHash: core.hashPassword('password-verxxxx'), role: 'owner', status: 'active', createdAt: now,
+    });
+  });
+  const cookie = 'rxv_sess=' + await core.createSession(userId, tenantId);
+
+  async function handle(req, res) {
+    const route = (req.url || '').split('?')[0];
+    if (req.method === 'GET' && route === '/api/version') {
+      return core.requireAuth(req, res, (rq, rs) => {
+        core.sendJson(rs, 200, orgMod.versionPayload(process.env, { version: '1.0.0' }));
+      });
+    }
+    core.sendJson(res, 404, { error: 'missing' });
+  }
+
+  const server = http.createServer((req, res) => {
+    handle(req, res).catch((e) => core.sendJson(res, 500, { error: e.message }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  t.after(() => {
+    server.close();
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+    delete process.env.RAPIDX_DB_FILE;
+    delete process.env.GIT_SHA;
+    delete process.env.BUILT_AT;
+  });
+
+  function request(pathName, cookieHeader) {
+    return new Promise((resolve, reject) => {
+      http.get({
+        hostname: '127.0.0.1', port, path: pathName,
+        headers: cookieHeader ? { Cookie: cookieHeader } : {},
+      }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          resolve({ status: r.statusCode, body: text ? JSON.parse(text) : null });
+        });
+      }).on('error', reject);
+    });
+  }
+
+  const anon = await request('/api/version');
+  assert.equal(anon.status, 401);
+
+  const authed = await request('/api/version', cookie);
+  assert.equal(authed.status, 200);
+  assert.equal(authed.body.gitSha, 'feedface01');
+  assert.equal(authed.body.version, '1.0.0');
+  assert.equal(authed.body.builtAt, '2026-09-17T09:00:00Z');
+});
+
 test('unauthenticated health serializer shape never advertises brands', () => {
   // Mirrors apiHealth for anonymous / non-super_admin callers.
   const payload = org.publicHealthPayload();
