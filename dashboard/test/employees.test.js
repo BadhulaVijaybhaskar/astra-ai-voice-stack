@@ -12,7 +12,7 @@ const { seedPresets } = require('../lib/agent-types');
 
 function emptyDb() {
   return {
-    schemaVersion: 9,
+    schemaVersion: 10,
     tenants: [{ id: 't_a', name: 'A' }, { id: 't_b', name: 'B' }],
     users: [],
     agents: [],
@@ -170,7 +170,7 @@ test('HTTP employee APIs enforce tenant isolation and hide provider terms', asyn
   const core = require('../lib/core');
   core.loadEnv();
   fs.writeFileSync(dbFile, JSON.stringify({
-    schemaVersion: 9,
+    schemaVersion: 10,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],

@@ -44,8 +44,8 @@ Dashboard nav: **Instant Leads** (OPERATE). Form: name, phone, employee/agent se
 
 ## Schema
 
-Additive migration to **schemaVersion 8**: collections `leads`, `callJobs`.
+Additive migration to **schemaVersion 8**: collections `leads`, `callJobs`. Schema **v10** formalizes `employeeId` and statuses. See [LEADS.md](./LEADS.md).
 
 ## Out of scope
 
-SPA rebuild, Employee Studio, Teach UX, billing, number purchase, Outpero copy, collapsing Agent/Workflow, Phase 2 webhooks, fake analytics, broad nav redesign.
+SPA rebuild, Teach UX polish beyond Employee Studio, billing, number purchase, Outpero copy, collapsing Agent/Workflow, Phase 2 webhooks, fake analytics, broad nav redesign.

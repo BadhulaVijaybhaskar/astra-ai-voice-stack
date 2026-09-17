@@ -994,6 +994,7 @@ async function viewEmployeeStudio(root, id) {
     ['instructions', 'Instructions'],
     ['workflow', 'Workflow'],
     ['training', 'Training'],
+    ['leads', 'Leads'],
     ['actions', 'Actions'],
     ['outcomes', 'Outcomes'],
     ['voice', 'Voice'],
@@ -1083,36 +1084,74 @@ async function viewEmployeeStudio(root, id) {
     ]));
   }
 
+  function dash(value) {
+    const s = value == null ? '' : String(value).trim();
+    return s || '—';
+  }
+
   if (tab === 'overview') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Overview'));
-    body.appendChild(el('p', {}, emp.description || 'No brief yet. Add one under Instructions or recreate from a template.'));
+    body.appendChild(el('p', {}, emp.description || 'No brief yet. Add one under Instructions.'));
     body.appendChild(el('div', { class: 'emp-meta', style: 'margin-top:16px' }, [
       el('div', {}, [el('span', { class: 'muted' }, 'Calls today'), el('b', {}, fmtMetric(emp.callsToday))]),
       el('div', {}, [el('span', { class: 'muted' }, 'Leads'), el('b', {}, fmtMetric(emp.leads))]),
       el('div', {}, [el('span', { class: 'muted' }, 'Qualified'), el('b', {}, fmtMetric(emp.qualified))]),
       el('div', {}, [el('span', { class: 'muted' }, 'Last active'), el('b', {}, fmtLastActive(emp.lastActiveAt))]),
-      el('div', {}, [el('span', { class: 'muted' }, 'Agent'), el('b', {}, emp.agentName || emp.agentId || '-')]),
-      el('div', {}, [el('span', { class: 'muted' }, 'Workflow'), el('b', {}, emp.workflowName || emp.workflowId || '-')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Agent'), el('b', {}, dash(emp.agentName || emp.agentId))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Workflow'), el('b', {}, dash(emp.workflowName || emp.workflowId))]),
     ]));
   } else if (tab === 'instructions') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Instructions'));
-    if (agent) {
-      body.appendChild(el('p', { class: 'muted' }, 'Persona and greeting from the linked agent.'));
-      body.appendChild(el('div', { class: 'emp-block' }, [
-        el('b', {}, 'Greeting'),
-        el('p', {}, agent.greeting || 'No greeting set.'),
-      ]));
-      body.appendChild(el('div', { class: 'emp-block' }, [
-        el('b', {}, 'Persona'),
-        el('p', {}, agent.persona || 'No persona set.'),
-      ]));
-      body.appendChild(el('button', {
-        class: 'btn btn-ghost',
-        onclick: () => goto('agents'),
-      }, 'Open Agents'));
-    } else {
-      emptyStub('No agent linked', 'This employee has no agent yet. Create one from Agents or recreate the employee with a template.', 'Open Agents', '#/agents');
+    body.appendChild(el('p', { class: 'muted' },
+      'Teach this employee how to greet people and what to say. Changes save to the linked agent and brief.'));
+    let instr;
+    try {
+      instr = await api('/api/employees/' + encodeURIComponent(id) + '/instructions');
+    } catch (e) {
+      body.appendChild(el('p', { class: 'muted' }, 'Could not load instructions. ' + esc(e.message)));
+      return;
     }
+    if (!instr.hasAgent) {
+      emptyStub('No agent linked', 'Create this employee from a job template so Astra can compose an agent to teach.', 'Back to list', '#/employees');
+      return;
+    }
+    const briefIn = el('textarea', { class: 'input textarea', rows: '3' });
+    briefIn.value = instr.brief || '';
+    const greetIn = el('textarea', { class: 'input textarea', rows: '2' });
+    greetIn.value = instr.greeting || '';
+    const teachIn = el('textarea', { class: 'input textarea', rows: '6' });
+    teachIn.value = instr.instructions || '';
+    const stepEditors = [];
+    (instr.steps || []).forEach((step) => {
+      const ta = el('textarea', { class: 'input textarea', rows: '2' });
+      ta.value = step.guidance || '';
+      stepEditors.push({ id: step.id, name: step.name, ta });
+    });
+    body.appendChild(field('Brief', briefIn));
+    body.appendChild(field('Greeting', greetIn));
+    body.appendChild(field('Instructions', teachIn));
+    stepEditors.forEach((s) => {
+      body.appendChild(field((s.name || 'Step') + ' guidance', s.ta));
+    });
+    const save = el('button', { class: 'btn btn-primary' }, 'Save instructions');
+    save.onclick = async () => {
+      save.disabled = true;
+      try {
+        await api('/api/employees/' + encodeURIComponent(id) + '/instructions', {
+          method: 'PUT',
+          body: {
+            brief: briefIn.value,
+            greeting: greetIn.value,
+            instructions: teachIn.value,
+            steps: stepEditors.map((s) => ({ id: s.id, guidance: s.ta.value })),
+          },
+        });
+        toast('Instructions saved.', 'ok');
+        onRoute();
+      } catch (e) { toast(e.message, 'err'); }
+      finally { save.disabled = false; }
+    };
+    body.appendChild(save);
   } else if (tab === 'workflow') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Workflow'));
     if (workflow) {
@@ -1123,7 +1162,7 @@ async function viewEmployeeStudio(root, id) {
         nodes.forEach((n) => {
           body.appendChild(el('div', { class: 'emp-block' }, [
             el('b', {}, (n.name || n.id || 'Step') + ' · ' + (n.type || 'node')),
-            el('p', { class: 'muted' }, n.prompt || ''),
+            el('p', { class: 'muted' }, n.prompt || '—'),
           ]));
         });
       } else {
@@ -1138,21 +1177,123 @@ async function viewEmployeeStudio(root, id) {
     }
   } else if (tab === 'training') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Training'));
-    if (knowledgeEntries.length) {
-      knowledgeEntries.forEach((k) => {
+    body.appendChild(el('p', { class: 'muted' },
+      'Attach Knowledge so this employee can use your real docs and FAQs. Empty means no data, not invented content.'));
+    let training;
+    let available = [];
+    try {
+      training = await api('/api/employees/' + encodeURIComponent(id) + '/training');
+      const allKb = await api('/api/knowledge').catch(() => ({ entries: [] }));
+      available = (allKb.entries || []).filter((k) => !(training.knowledgeIds || []).includes(k.id));
+    } catch (e) {
+      body.appendChild(el('p', { class: 'muted' }, 'Could not load training. ' + esc(e.message)));
+      return;
+    }
+    const entries = training.entries || [];
+    if (!entries.length) {
+      body.appendChild(el('p', { class: 'muted' }, 'No knowledge linked yet. —'));
+    } else {
+      entries.forEach((k) => {
+        const remove = el('button', { class: 'btn btn-ghost' }, 'Remove');
+        remove.onclick = async () => {
+          try {
+            await api('/api/employees/' + encodeURIComponent(id) + '/knowledge/' + encodeURIComponent(k.id), {
+              method: 'DELETE',
+            });
+            toast('Removed.', 'ok');
+            onRoute();
+          } catch (e) { toast(e.message, 'err'); }
+        };
         body.appendChild(el('div', { class: 'emp-block' }, [
           el('b', {}, k.title || 'Entry'),
-          el('p', { class: 'muted' }, (k.content || '').slice(0, 220) || k.sourceUrl || ''),
+          el('p', { class: 'muted' }, (k.content || '').slice(0, 220) || k.sourceUrl || '—'),
+          el('p', { class: 'muted' }, 'Status: ' + (k.status || '—')),
+          remove,
         ]));
       });
-    } else {
-      emptyStub(
-        'No knowledge linked yet',
-        'Attach published Knowledge entries to ground this employee. Nothing is invented here.',
-        'Open Knowledge',
-        '#/knowledge'
-      );
     }
+
+    const attachSelect = el('select', { class: 'select' },
+      [el('option', { value: '' }, available.length ? 'Select existing knowledge' : 'No other knowledge available')].concat(
+        available.map((k) => el('option', { value: k.id }, k.title || k.id))
+      )
+    );
+    const attachBtn = el('button', { class: 'btn btn-ghost' }, 'Attach');
+    attachBtn.onclick = async () => {
+      if (!attachSelect.value) return toast('Pick a knowledge entry first.', 'info');
+      try {
+        await api('/api/employees/' + encodeURIComponent(id) + '/knowledge', {
+          method: 'POST',
+          body: { knowledgeId: attachSelect.value },
+        });
+        toast('Attached.', 'ok');
+        onRoute();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+    body.appendChild(el('div', { class: 'flex gap-2', style: 'margin-top:16px;align-items:flex-end;flex-wrap:wrap' }, [
+      field('Link existing', attachSelect),
+      attachBtn,
+    ]));
+
+    const titleIn = el('input', { class: 'input', placeholder: 'Title' });
+    const contentIn = el('textarea', { class: 'input textarea', rows: '3', placeholder: 'Paste FAQ or notes' });
+    const createBtn = el('button', { class: 'btn btn-primary' }, 'Add training note');
+    createBtn.onclick = async () => {
+      createBtn.disabled = true;
+      try {
+        await api('/api/employees/' + encodeURIComponent(id) + '/knowledge', {
+          method: 'POST',
+          body: { title: titleIn.value.trim(), content: contentIn.value.trim(), status: 'published', create: true },
+        });
+        toast('Training note added.', 'ok');
+        onRoute();
+      } catch (e) { toast(e.message, 'err'); }
+      finally { createBtn.disabled = false; }
+    };
+    body.appendChild(el('div', { style: 'margin-top:20px' }, [
+      el('h4', { class: 't-h3' }, 'Add new'),
+      field('Title', titleIn),
+      field('Content', contentIn),
+      createBtn,
+    ]));
+  } else if (tab === 'leads') {
+    body.appendChild(el('h3', { class: 't-h3' }, 'Connect Leads'));
+    body.appendChild(el('p', { class: 'muted' },
+      'Assign leads to this employee. Outbound dials still require Instant Leads confirm. No unauthorized dials from here.'));
+    const nameIn = el('input', { class: 'input', placeholder: 'Lead name' });
+    const phoneIn = el('input', { class: 'input', placeholder: 'Phone (+91... or 10-digit IN)' });
+    const addBtn = el('button', { class: 'btn btn-primary' }, 'Connect lead');
+    const listHost = el('div', { class: 'ticket-list', style: 'margin-top:16px' }, skeleton('sk-card', 2));
+    addBtn.onclick = async () => {
+      addBtn.disabled = true;
+      try {
+        await api('/api/leads', {
+          method: 'POST',
+          body: {
+            name: nameIn.value.trim(),
+            phone: phoneIn.value.trim(),
+            employeeId: emp.id,
+          },
+        });
+        nameIn.value = '';
+        phoneIn.value = '';
+        toast('Lead connected.', 'ok');
+        await refreshEmployeeLeads(listHost, emp.id);
+      } catch (e) { toast(e.message, 'err'); }
+      finally { addBtn.disabled = false; }
+    };
+    body.appendChild(el('div', { class: 'support-compose' }, [
+      field('Name', nameIn),
+      field('Phone', phoneIn),
+      addBtn,
+    ]));
+    body.appendChild(listHost);
+    body.appendChild(el('button', {
+      class: 'btn btn-ghost',
+      style: 'margin-top:12px',
+      onclick: () => goto('leads'),
+    }, 'Open Instant Leads'));
+    await refreshEmployeeLeads(listHost, emp.id);
   } else if (tab === 'actions') {
     emptyStub(
       'Actions',
@@ -1162,14 +1303,86 @@ async function viewEmployeeStudio(root, id) {
     );
   } else if (tab === 'outcomes') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Outcomes'));
-    const outs = emp.outcomes || [];
-    if (!outs.length) {
-      body.appendChild(el('p', { class: 'muted' }, 'No outcome labels configured for this template.'));
-    } else {
-      outs.forEach((o) => body.appendChild(el('div', { class: 'pill', style: 'margin:4px 6px 4px 0;display:inline-flex' }, String(o).replace(/_/g, ' '))));
+    body.appendChild(el('p', { class: 'muted' },
+      'Define what success looks like after a conversation. Live conversation results are not invented here.'));
+    let outcomesPayload;
+    try {
+      outcomesPayload = await api('/api/employees/' + encodeURIComponent(id) + '/outcomes');
+    } catch (e) {
+      body.appendChild(el('p', { class: 'muted' }, 'Could not load outcomes. ' + esc(e.message)));
+      return;
     }
+    const defs = (outcomesPayload.definitions || []).slice();
+    const listHost = el('div', { class: 'emp-outcomes-editor' });
+    function renderDefs() {
+      listHost.innerHTML = '';
+      if (!defs.length) {
+        listHost.appendChild(el('p', { class: 'muted' }, 'No outcomes configured. —'));
+        return;
+      }
+      defs.forEach((d, idx) => {
+        const labelIn = el('input', { class: 'input', value: d.label || d.key || '' });
+        const descIn = el('input', { class: 'input', value: d.description || '', placeholder: 'Optional description' });
+        const successIn = el('input', { type: 'checkbox' });
+        successIn.checked = !!d.success;
+        const remove = el('button', { class: 'btn btn-ghost' }, 'Remove');
+        remove.onclick = () => { defs.splice(idx, 1); renderDefs(); };
+        labelIn.oninput = () => { defs[idx].label = labelIn.value; };
+        descIn.oninput = () => { defs[idx].description = descIn.value; };
+        successIn.onchange = () => { defs[idx].success = successIn.checked; };
+        listHost.appendChild(el('div', { class: 'emp-block' }, [
+          field('Label', labelIn),
+          field('Description', descIn),
+          el('label', { class: 'muted', style: 'display:flex;gap:8px;align-items:center;margin:8px 0' }, [
+            successIn,
+            document.createTextNode('Counts as success'),
+          ]),
+          el('p', { class: 'muted' }, 'Key: ' + (d.key || '—')),
+          remove,
+        ]));
+      });
+    }
+    renderDefs();
+    body.appendChild(listHost);
+    const addLabel = el('input', { class: 'input', placeholder: 'New outcome label' });
+    const addBtn = el('button', { class: 'btn btn-ghost' }, 'Add outcome');
+    addBtn.onclick = () => {
+      const label = addLabel.value.trim();
+      if (!label) return toast('Enter a label.', 'info');
+      const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40);
+      if (!key) return toast('Invalid label.', 'err');
+      if (defs.some((d) => d.key === key)) return toast('That outcome already exists.', 'info');
+      defs.push({ key, label, description: '', success: false });
+      addLabel.value = '';
+      renderDefs();
+    };
+    const save = el('button', { class: 'btn btn-primary' }, 'Save outcomes');
+    save.onclick = async () => {
+      save.disabled = true;
+      try {
+        await api('/api/employees/' + encodeURIComponent(id) + '/outcomes', {
+          method: 'PUT',
+          body: {
+            definitions: defs.map((d) => ({
+              key: d.key,
+              label: d.label,
+              description: d.description || '',
+              success: !!d.success,
+            })),
+          },
+        });
+        toast('Outcomes saved.', 'ok');
+        onRoute();
+      } catch (e) { toast(e.message, 'err'); }
+      finally { save.disabled = false; }
+    };
+    body.appendChild(el('div', { class: 'flex gap-2', style: 'margin-top:12px;flex-wrap:wrap;align-items:flex-end' }, [
+      field('Add', addLabel),
+      addBtn,
+      save,
+    ]));
     body.appendChild(el('p', { class: 'muted', style: 'margin-top:14px' },
-      'Qualified count on the card uses real call outcomes only. Current qualified: ' + fmtMetric(emp.qualified) + '.'));
+      'Qualified count on the card uses real conversation outcomes only. Current qualified: ' + fmtMetric(emp.qualified) + '.'));
   } else if (tab === 'voice') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Voice'));
     const v = emp.voice || {};
@@ -1216,14 +1429,39 @@ async function viewEmployeeStudio(root, id) {
     body.appendChild(field('Brief', descIn));
     body.appendChild(el('div', { class: 'flex gap-2' }, [save, archive]));
     body.appendChild(el('p', { class: 'muted', style: 'margin-top:16px' },
-      'Phone assignment stays in Phone Numbers. Linked ids: agent ' + (emp.agentId || '-')
-      + ', workflow ' + (emp.workflowId || '-')
-      + ', number ' + (emp.phoneNumberId || '-') + '.'));
+      'Phone assignment stays in Phone Numbers. Linked ids: agent ' + (emp.agentId || '—')
+      + ', workflow ' + (emp.workflowId || '—')
+      + ', number ' + (emp.phoneNumberId || '—') + '.'));
     body.appendChild(el('button', {
       class: 'btn btn-ghost',
       style: 'margin-top:10px',
       onclick: () => goto('numbers'),
     }, 'Open Phone Numbers'));
+  }
+}
+
+async function refreshEmployeeLeads(host, employeeId) {
+  try {
+    const out = await api('/api/employees/' + encodeURIComponent(employeeId) + '/leads');
+    host.innerHTML = '';
+    const rows = out.leads || [];
+    if (!rows.length) {
+      host.appendChild(el('div', { class: 'card card-pad muted' }, 'No leads connected yet. —'));
+      return;
+    }
+    rows.forEach((lead) => {
+      host.appendChild(el('div', { class: 'card card-pad', style: 'margin-bottom:10px' }, [
+        el('div', { class: 'flex items-center justify-between gap-2' }, [
+          el('b', {}, lead.name || 'Lead'),
+          el('span', { class: 'pill' }, lead.status || 'new'),
+        ]),
+        el('p', { class: 'muted' }, (lead.phone || '—') + (lead.lastCallId ? ' · conversation ' + lead.lastCallId : '')),
+        el('p', { class: 'muted' }, lead.lastError ? ('Last error: ' + lead.lastError) : 'Outcome: ' + (lead.outcomeKey || '—')),
+      ]));
+    });
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('div', { class: 'card card-pad muted' }, 'Could not load leads. ' + esc(e.message)));
   }
 }
 
@@ -3634,8 +3872,8 @@ async function viewInstantLeads(root) {
   const agent = el('select', { class: 'select' },
     [el('option', { value: '' }, 'Select employee')].concat(
       empOptions.length
-        ? empOptions.map((e) => el('option', { value: e.agentId }, e.name + (e.role ? ' · ' + e.role : '')))
-        : (State.agents || []).map((a) => el('option', { value: a.id }, a.name))
+        ? empOptions.map((e) => el('option', { value: e.id }, e.name + (e.role ? ' · ' + e.role : '')))
+        : (State.agents || []).map((a) => el('option', { value: 'agent:' + a.id }, a.name))
     )
   );
   const list = el('div', { class: 'ticket-list' }, skeleton('sk-card', 2));
@@ -3643,13 +3881,16 @@ async function viewInstantLeads(root) {
   create.onclick = async () => {
     create.disabled = true;
     try {
+      const val = agent.value || '';
+      const body = {
+        name: name.value.trim(),
+        phone: phone.value.trim(),
+      };
+      if (val.startsWith('agent:')) body.agentId = val.slice(6);
+      else if (val) body.employeeId = val;
       await api('/api/leads', {
         method: 'POST',
-        body: {
-          name: name.value.trim(),
-          phone: phone.value.trim(),
-          agentId: agent.value || null,
-        },
+        body,
       });
       name.value = '';
       phone.value = '';
@@ -3712,7 +3953,7 @@ async function loadInstantLeads(host) {
           el('h3', { class: 't-h3' }, lead.name || 'Lead'),
           el('span', { class: 'pill' }, lead.status || 'new'),
         ]),
-        el('p', { class: 'muted' }, (lead.phone || '') + (lead.agentId ? ' · employee linked' : '')),
+        el('p', { class: 'muted' }, (lead.phone || '') + (lead.employeeId || lead.agentId ? ' · employee linked' : '')),
         el('p', { class: 'muted' }, statusBits),
         el('div', { class: 'flex gap-2' }, [callBtn, callsLink]),
       ]));
