@@ -50,6 +50,8 @@ function currentDeployIdentity() {
   return org.deployIdentity(process.env, { versionFileText: readVersionFileText() });
 }
 const workflows = require('./lib/workflows');
+const leads = require('./lib/leads');
+const callJobs = require('./lib/call-jobs');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
@@ -1713,7 +1715,370 @@ async function apiCampaignsEnqueue(req, res, ctx) {
     if (result.ok) addAudit(d, ctx, 'campaign.enqueued', 'campaign', id, { enqueued: result.enqueued, confirm: true });
   });
   if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
-  core.sendJson(res, 200, result);
+
+  // Soft real dial: advance stub_queued leads through the shared outbound helper.
+  const dialedResults = [];
+  for (const item of result.results || []) {
+    if (item.status !== 'stub_queued') {
+      dialedResults.push(item);
+      continue;
+    }
+    const leadRow = (core.db().campaignLeads || []).find(
+      (l) => l.id === item.id && l.tenantId === ctx.tenant.id,
+    );
+    const campaign = campaigns.findCampaign(core.db(), ctx.tenant.id, id);
+    if (!leadRow) {
+      dialedResults.push({ id: item.id, status: 'failed', error: 'lead missing after enqueue' });
+      continue;
+    }
+    const dial = await placeOutboundCallJob({
+      tenantId: ctx.tenant.id,
+      userId: ctx.user.id,
+      toE164: leadRow.phone,
+      agentId: campaign && campaign.agentId,
+      campaignLeadId: leadRow.id,
+      source: 'campaign',
+      ctx,
+    });
+    await core.mutate((d) => {
+      const row = (d.campaignLeads || []).find((l) => l.id === leadRow.id && l.tenantId === ctx.tenant.id);
+      if (!row) return;
+      if (dial.ok) {
+        row.status = 'dialed';
+        row.dialedAt = new Date().toISOString();
+        row.lastError = null;
+      } else {
+        row.status = 'failed';
+        row.lastError = String(dial.error || 'dial failed').slice(0, 200);
+      }
+    });
+    dialedResults.push({
+      id: item.id,
+      status: dial.ok ? 'dialed' : 'failed',
+      error: dial.ok ? undefined : dial.error,
+      jobId: dial.jobId || null,
+      callId: dial.callId || null,
+    });
+  }
+  core.sendJson(res, 200, { ...result, results: dialedResults });
+}
+
+/* ==========================================================================
+   Instant Leads + CallJobs (P0 vertical slice)
+   ========================================================================== */
+
+function matchLeadsRoute(route) {
+  if (route === '/api/leads') return { action: 'list_or_create' };
+  const call = route.match(/^\/api\/leads\/([^/]+)\/call$/);
+  if (call) return { action: 'call', id: decodeURIComponent(call[1]) };
+  const one = route.match(/^\/api\/leads\/([^/]+)$/);
+  if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
+  return null;
+}
+
+/**
+ * Prefer explicit wf_ id, then a workflow linked to the employee/agent.
+ * Phone-number outbound workflow remains a createOutboundCall fallback.
+ */
+function resolveLeadWorkflowId(db, tenantId, { workflowId, agentId }) {
+  if (workflowId) {
+    const wf = workflows.findWorkflow(db, tenantId, workflowId);
+    if (wf) return wf.id;
+  }
+  if (!agentId) return null;
+  const linked = (db.workflows || []).filter(
+    (w) => w.tenantId === tenantId && w.agentId === String(agentId) && w.status !== 'archived',
+  );
+  const prefer = linked.find((w) => w.direction === 'outbound' || w.direction === 'both')
+    || linked.find((w) => w.status === 'published')
+    || linked[0];
+  return prefer ? prefer.id : null;
+}
+
+/**
+ * Shared dial helper: CallJob → createOutboundCall (canonical #14 path) → Call.
+ * Passes only Astra pn_/wf_ ids. Never invents providerRunId. No Dograh ids in
+ * the public response.
+ */
+async function placeOutboundCallJob({
+  tenantId, userId, toE164, agentId, workflowId, phoneNumberId,
+  leadId, campaignLeadId, source, idempotencyKey, ctx,
+}) {
+  let jobId = null;
+  let jobCreated = true;
+  let astraWorkflowId = workflowId || null;
+  let astraPhoneNumberId = phoneNumberId || null;
+  let astraAgentId = agentId || null;
+
+  await core.mutate((d) => {
+    astraWorkflowId = resolveLeadWorkflowId(d, tenantId, {
+      workflowId: astraWorkflowId,
+      agentId: astraAgentId,
+    });
+    if (!astraPhoneNumberId) {
+      const dialCtx = phoneNumbers.outboundDialContext(d, tenantId);
+      if (dialCtx) astraPhoneNumberId = dialCtx.phoneNumberId || null;
+    }
+    const created = callJobs.createCallJob(d, tenantId, {
+      toE164,
+      agentId: astraAgentId,
+      workflowId: astraWorkflowId,
+      phoneNumberId: astraPhoneNumberId,
+      leadId: leadId || null,
+      campaignLeadId: campaignLeadId || null,
+      source: source || 'instant',
+      idempotencyKey: idempotencyKey || null,
+    }, userId);
+    if (!created.ok) throw Object.assign(new Error(created.error), { status: created.status, code: created.code });
+    jobId = created.job.id;
+    jobCreated = created.created !== false;
+    if (!jobCreated) {
+      // Idempotent reuse. Do not dial again for the same key or active lead job.
+      return;
+    }
+    if (leadId) {
+      leads.updateLead(d, tenantId, leadId, { status: 'calling', lastCallJobId: jobId, lastError: null });
+    }
+    if (ctx) {
+      addAudit(d, ctx, 'calljob.created', 'call_job', jobId, { leadId, source: source || 'instant' });
+    }
+  });
+
+  if (!jobCreated) {
+    const existingJob = callJobs.findCallJob(core.db(), tenantId, jobId);
+    return {
+      ok: existingJob && (existingJob.status === 'completed' || existingJob.status === 'queued' || existingJob.status === 'dialing'),
+      reused: true,
+      status: existingJob && existingJob.status === 'failed' ? 502 : 200,
+      code: existingJob && existingJob.status === 'failed' ? 'dial_failed' : undefined,
+      error: existingJob && existingJob.status === 'failed' ? (existingJob.lastError || 'dial failed') : undefined,
+      jobId,
+      callId: (existingJob && existingJob.resultCallId) || null,
+      job: callJobs.publicCallJob(existingJob),
+      call: existingJob && existingJob.resultCallId
+        ? calls.publicCall(calls.findCall(core.db(), existingJob.resultCallId), agentsMapForTenant(tenantId), { detail: false })
+        : null,
+    };
+  }
+
+  await core.mutate((d) => {
+    callJobs.updateCallJobStatus(d, tenantId, jobId, 'dialing', {
+      phoneNumberId: astraPhoneNumberId,
+      workflowId: astraWorkflowId,
+      agentId: astraAgentId,
+    });
+  });
+
+  let upstream;
+  try {
+    // Canonical dial contract from P0b/P0c: Astra ids only. Provider resolution
+    // and Call upsert on real providerRunId happen inside createOutboundCall.
+    upstream = await telephonyProvider.createOutboundCall(tenantId, toE164, {
+      workflowId: astraWorkflowId || undefined,
+      phoneNumberId: astraPhoneNumberId || undefined,
+    });
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 240);
+    await core.mutate((d) => {
+      callJobs.updateCallJobStatus(d, tenantId, jobId, 'failed', { lastError: msg });
+      if (leadId) leads.updateLead(d, tenantId, leadId, { status: 'failed', lastError: msg });
+      if (ctx) addAudit(d, ctx, 'calljob.failed', 'call_job', jobId, { error: msg });
+    });
+    return {
+      ok: false,
+      status: e.status || e.statusCode || 502,
+      code: e.code || 'dial_failed',
+      error: msg,
+      jobId,
+      job: callJobs.publicCallJob(callJobs.findCallJob(core.db(), tenantId, jobId)),
+    };
+  }
+
+  const providerRunId = upstream && upstream.providerRunId != null
+    ? String(upstream.providerRunId)
+    : null;
+  let callRow = (upstream && upstream.call) || null;
+
+  // Never invent providerRunId. Without a real run id the Call cannot be tracked.
+  if (!providerRunId && !callRow) {
+    const msg = 'Call was placed but could not be tracked';
+    await core.mutate((d) => {
+      callJobs.updateCallJobStatus(d, tenantId, jobId, 'failed', {
+        lastError: msg,
+        phoneNumberId: astraPhoneNumberId,
+        workflowId: astraWorkflowId,
+      });
+      if (leadId) leads.updateLead(d, tenantId, leadId, { status: 'failed', lastError: msg });
+      if (ctx) addAudit(d, ctx, 'calljob.failed', 'call_job', jobId, { code: 'call_not_tracked' });
+    });
+    return {
+      ok: false,
+      status: 502,
+      code: 'call_not_tracked',
+      error: msg,
+      jobId,
+      job: callJobs.publicCallJob(callJobs.findCallJob(core.db(), tenantId, jobId)),
+    };
+  }
+
+  let resultCallId = callRow ? callRow.id : null;
+
+  await core.mutate((d) => {
+    if (providerRunId) {
+      const up = calls.upsertCallFromProvider(d, tenantId, {
+        providerRunId,
+        direction: 'outbound',
+        toE164,
+        fromE164: callRow && callRow.fromE164,
+        agentId: astraAgentId,
+        phoneNumberId: astraPhoneNumberId || (callRow && callRow.phoneNumberId) || null,
+        status: (upstream.data && (upstream.data.status || upstream.data.state)) || (callRow && callRow.status) || 'queued',
+        source: source || 'instant',
+      });
+      if (up && up.ok !== false) {
+        callRow = up.call;
+        resultCallId = up.call.id;
+      }
+    } else if (callRow && astraAgentId) {
+      const found = calls.findCall(d, callRow.id);
+      if (found && found.tenantId === tenantId) {
+        found.agentId = astraAgentId;
+        found.source = source || found.source || 'instant';
+        found.updatedAt = new Date().toISOString();
+        callRow = found;
+        resultCallId = found.id;
+      }
+    }
+
+    callJobs.updateCallJobStatus(d, tenantId, jobId, 'completed', {
+      providerRunId: providerRunId || null,
+      resultCallId,
+      lastError: null,
+      phoneNumberId: astraPhoneNumberId,
+      workflowId: astraWorkflowId,
+      agentId: astraAgentId,
+    });
+    if (leadId) {
+      leads.updateLead(d, tenantId, leadId, {
+        status: 'called',
+        lastCallJobId: jobId,
+        lastCallId: resultCallId,
+        lastError: null,
+      });
+    }
+    if (ctx) {
+      addAudit(d, ctx, 'calljob.completed', 'call_job', jobId, {
+        callId: resultCallId,
+        leadId: leadId || null,
+      });
+    }
+  });
+
+  bumpUsage(tenantId, 'calls', 1).catch(() => {});
+  core.mutate((d) => {
+    plans.debitUsage(d, tenantId, { chars: 0, calls: 1 }, userId, addLedgerEntry);
+  }).catch(() => {});
+
+  return {
+    ok: true,
+    jobId,
+    callId: resultCallId,
+    job: callJobs.publicCallJob(callJobs.findCallJob(core.db(), tenantId, jobId)),
+    call: resultCallId
+      ? calls.publicCall(calls.findCall(core.db(), resultCallId), agentsMapForTenant(tenantId), { detail: false })
+      : null,
+  };
+}
+
+function apiLeadsList(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const list = leads.listLeads(core.db(), ctx.tenant.id, {
+    status: url.searchParams.get('status') || undefined,
+    limit: url.searchParams.get('limit') || undefined,
+  });
+  core.sendJson(res, 200, { leads: list });
+}
+
+async function apiLeadsCreate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = leads.createLead(d, ctx.tenant.id, ctx.body || {}, ctx.user.id);
+    if (result.ok && result.created) {
+      addAudit(d, ctx, 'lead.created', 'lead', result.lead.id, { phone: result.lead.phone });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, result.created ? 201 : 200, {
+    lead: leads.publicLead(result.lead),
+    created: result.created,
+  });
+}
+
+function apiLeadsGet(req, res, ctx) {
+  const lead = leads.findLead(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!lead) return core.sendJson(res, 404, { error: 'lead not found', code: 'not_found' });
+  const jobs = callJobs.listCallJobs(core.db(), ctx.tenant.id, { leadId: lead.id, limit: 10 });
+  core.sendJson(res, 200, { lead: leads.publicLead(lead), jobs });
+}
+
+async function apiLeadsCall(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  if (b.confirm !== true) {
+    return core.sendJson(res, 400, {
+      error: 'confirm:true required. This places a real outbound call.',
+      code: 'needs_confirm',
+    });
+  }
+  const lead = leads.findLead(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!lead) return core.sendJson(res, 404, { error: 'lead not found', code: 'not_found' });
+
+  const agentId = b.agentId ? String(b.agentId) : lead.agentId;
+  if (agentId) {
+    const agent = core.db().agents.find((a) => a.id === agentId && a.tenantId === ctx.tenant.id);
+    if (!agent) return core.sendJson(res, 404, { error: 'agent not found', code: 'agent_not_found' });
+  }
+
+  let privacyWorkflowId;
+  if (ctx.tenant.privacyMode === 'no_recording') {
+    privacyWorkflowId = Number(process.env.DOGRAH_NO_RECORDING_WORKFLOW_ID || 0);
+    if (!Number.isInteger(privacyWorkflowId) || privacyWorkflowId <= 0) {
+      return core.sendJson(res, 409, {
+        error: 'privacy mode blocks outbound until a verified no-recording workflow is configured',
+        code: 'privacy_workflow_required',
+      });
+    }
+  }
+
+  const dial = await placeOutboundCallJob({
+    tenantId: ctx.tenant.id,
+    userId: ctx.user.id,
+    toE164: lead.phone,
+    agentId,
+    workflowId: b.workflowId
+      ? String(b.workflowId)
+      : (lead.workflowId || privacyWorkflowId || null),
+    phoneNumberId: b.phoneNumberId ? String(b.phoneNumberId) : lead.phoneNumberId,
+    leadId: lead.id,
+    source: 'instant',
+    idempotencyKey: b.idempotencyKey ? String(b.idempotencyKey) : null,
+    ctx,
+  });
+
+  if (!dial.ok) {
+    return core.sendJson(res, dial.status || 502, {
+      error: dial.error || 'dial failed',
+      code: dial.code || 'dial_failed',
+      job: dial.job,
+    });
+  }
+  core.sendJson(res, 200, {
+    ok: true,
+    job: dial.job,
+    call: dial.call,
+    lead: leads.publicLead(leads.findLead(core.db(), ctx.tenant.id, lead.id)),
+  });
 }
 
 function apiCampaignsLeads(req, res, ctx) {
@@ -2003,6 +2368,14 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/campaigns') return core.requireAuth(req, res, apiCampaignsList);
         if (route === '/api/campaigns/leads') return core.requireAuth(req, res, apiCampaignsLeads);
         if (route === '/api/analytics') return core.requireAuth(req, res, apiAnalytics);
+        const leadsGet = matchLeadsRoute(route);
+        if (leadsGet) {
+          if (leadsGet.action === 'list_or_create') return core.requireAuth(req, res, apiLeadsList);
+          if (leadsGet.action === 'one') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiLeadsGet(rq, rs, { ...ctx, params: { id: leadsGet.id } }));
+          }
+          return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+        }
         if (route === '/api/hvac/desk') return core.requireAuth(req, res, apiHvacDesk);
         if (route === '/api/hvac/event-types') return core.requireAuth(req, res, apiHvacEventTypes);
         if (route === '/api/hvac/slots') return core.requireAuth(req, res, apiHvacSlots);
@@ -2122,6 +2495,16 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/campaigns/leads') return core.requireAuth(req, res, apiCampaignsAddLeads, body);
       if (route === '/api/campaigns/status') return core.requireAuth(req, res, apiCampaignsStatus, body);
       if (route === '/api/campaigns/enqueue') return core.requireAuth(req, res, apiCampaignsEnqueue, body);
+      const leadsPost = matchLeadsRoute(route);
+      if (leadsPost) {
+        if (leadsPost.action === 'list_or_create') {
+          return core.requireAuth(req, res, apiLeadsCreate, body);
+        }
+        if (leadsPost.action === 'call') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiLeadsCall(rq, rs, { ...ctx, params: { id: leadsPost.id } }), body);
+        }
+        return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+      }
       if (route === '/api/byon') return core.requireRole(req, res, 'owner', apiByonSave, body);
       if (route === '/api/privacy') return core.requireRole(req, res, 'owner', apiPrivacyMode, body);
       if (route === '/api/members/role') return core.requireRole(req, res, 'owner', apiMemberRole, body);
