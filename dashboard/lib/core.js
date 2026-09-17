@@ -161,7 +161,7 @@ const DB_TMP = `${DB_FILE}.tmp`;
 
 function defaultDb() {
   return {
-    schemaVersion: 12,
+    schemaVersion: 13,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
@@ -207,15 +207,20 @@ function normalizeOutcomeDef(raw) {
 function migrateDb(parsed) {
   const out = Object.assign(defaultDb(), parsed || {});
   for (const k of COLLECTIONS) if (!Array.isArray(out[k])) out[k] = [];
-  out.schemaVersion = Math.max(12, Number(out.schemaVersion) || 0);
+  out.schemaVersion = Math.max(13, Number(out.schemaVersion) || 0);
   for (const tenant of out.tenants) {
     if (!tenant.status) tenant.status = 'active';
     if (!tenant.privacyMode) tenant.privacyMode = 'standard';
     if (!tenant.plan || tenant.plan === 'studio') tenant.plan = 'starter';
-    if (tenant.includedNumbers == null) {
-      const catalog = { starter: 1, growth: 3, scale: 10 };
-      tenant.includedNumbers = catalog[tenant.plan] || 1;
-    }
+    const catalog = {
+      starter: { numbers: 1, employees: 2, minutes: 100 },
+      growth: { numbers: 3, employees: 10, minutes: 1000 },
+      scale: { numbers: 10, employees: 50, minutes: 10000 },
+    };
+    const planBits = catalog[tenant.plan] || catalog.starter;
+    if (tenant.includedNumbers == null) tenant.includedNumbers = planBits.numbers;
+    if (tenant.includedEmployees == null) tenant.includedEmployees = planBits.employees;
+    if (tenant.includedMinutes == null) tenant.includedMinutes = planBits.minutes;
   }
   for (const user of out.users) {
     if (!['super_admin', 'admin', 'owner', 'member'].includes(user.role)) user.role = 'member';
@@ -267,6 +272,37 @@ function migrateDb(parsed) {
   }
   for (const c of out.campaigns) {
     if (c.employeeId === undefined) c.employeeId = null;
+  }
+  // v13: Inbound config on Phone Numbers, Employee actions, voice language, plan entitlements.
+  for (const n of out.phoneNumbers) {
+    if (n.inboundGreeting === undefined) n.inboundGreeting = null;
+    if (n.inboundHours === undefined || n.inboundHours === null) {
+      n.inboundHours = {
+        timezone: 'Asia/Kolkata',
+        mode: 'always',
+        windows: [],
+      };
+    } else if (typeof n.inboundHours === 'object') {
+      if (!n.inboundHours.timezone) n.inboundHours.timezone = 'Asia/Kolkata';
+      if (n.inboundHours.mode !== 'schedule') n.inboundHours.mode = 'always';
+      if (!Array.isArray(n.inboundHours.windows)) n.inboundHours.windows = [];
+    }
+  }
+  for (const emp of out.employees) {
+    if (!Array.isArray(emp.actions)) emp.actions = [];
+    if (!emp.voice || typeof emp.voice !== 'object') {
+      emp.voice = { language: 'en-IN', model: 'mulberry', speaker: 'speaker_1', f0_up_key: 0 };
+    } else {
+      const lang = String(emp.voice.language || 'en-IN');
+      const allowed = new Set(['en-IN', 'hi-IN', 'te-IN', 'ta-IN']);
+      if (!allowed.has(lang)) {
+        const lower = lang.toLowerCase();
+        if (lower.startsWith('hi')) emp.voice.language = 'hi-IN';
+        else if (lower.startsWith('te')) emp.voice.language = 'te-IN';
+        else if (lower.startsWith('ta')) emp.voice.language = 'ta-IN';
+        else emp.voice.language = 'en-IN';
+      }
+    }
   }
   return out;
 }

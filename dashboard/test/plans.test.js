@@ -30,6 +30,8 @@ test('plan catalog exposes starter growth scale with credits and numbers', () =>
   assert.deepEqual(list.map((p) => p.id), ['starter', 'growth', 'scale']);
   assert.equal(plans.publicPlan('growth').includedNumbers, 3);
   assert.equal(plans.publicPlan('scale').includedCreditsPaise, 100000);
+  assert.equal(plans.publicPlan('starter').includedEmployees, 2);
+  assert.equal(plans.publicPlan('growth').includedMinutes, 1000);
 });
 
 test('plan grant is idempotent and upgrade blocks downgrade', () => {

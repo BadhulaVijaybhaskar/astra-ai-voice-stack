@@ -44,7 +44,7 @@ test('schema v12 migrates assignedEmployeeId and campaign.employeeId', () => {
     callJobs: [],
     leads: [],
   });
-  assert.equal(migrated.schemaVersion, 12);
+  assert.ok(migrated.schemaVersion >= 12);
   assert.equal(migrated.phoneNumbers[0].assignedEmployeeId, 'emp_1');
   assert.equal(migrated.campaigns[0].employeeId, null);
 });

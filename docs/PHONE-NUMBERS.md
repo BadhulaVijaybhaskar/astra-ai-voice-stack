@@ -27,6 +27,20 @@ Secrets and API keys are never returned. Public JSON exposes Astra `id`, `e164`,
 
 Studio **Assign Number** tab and the Phone Numbers page both use real `pn_` ids end to end.
 
+## Inbound ownership (Phase 17)
+
+Customers configure Inbound on an assigned Phone Number → Employee:
+
+```bash
+curl -s -b cookies.txt http://localhost:8787/api/phone-numbers/pn_platform_astranova_main/inbound
+
+curl -s -b cookies.txt -X PUT http://localhost:8787/api/phone-numbers/pn_platform_astranova_main/inbound \
+  -H 'Content-Type: application/json' \
+  -d '{"answer":true,"greeting":"Namaste, how can I help?","hours":{"timezone":"Asia/Kolkata","mode":"always"}}'
+```
+
+Greeting syncs onto the linked Employee agent. Customer copy: Phone Number / Employee / Inbound. Never SIP or trunk jargon. See [INBOUND.md](./INBOUND.md).
+
 ## API (cookie auth, tenant scoped)
 
 ```bash
@@ -48,13 +62,13 @@ curl -s -b cookies.txt -X POST http://localhost:8787/api/phone-numbers/pn_platfo
 
 ## Schema
 
-Additive **schemaVersion 12**: `phoneNumbers.assignedEmployeeId` (backfill from Employee.phoneNumberId / agent link). See [EMPLOYEES.md](./EMPLOYEES.md), [CAMPAIGNS-ANALYTICS.md](./CAMPAIGNS-ANALYTICS.md).
+Additive **schemaVersion 13**: `phoneNumbers.assignedEmployeeId`, inbound greeting/hours. See [EMPLOYEES.md](./EMPLOYEES.md), [INBOUND.md](./INBOUND.md).
 
 ## Adapter
 
-- `dashboard/lib/phone-numbers.js`: seed, list/search, assign/unassign/patch, public serialization
+- `dashboard/lib/phone-numbers.js`: seed, list/search, assign/unassign/patch, inbound get/set, public serialization
 - `dashboard/lib/telephony-provider.js`: `assignNumber` passes `employeeId`
 
 ## UI
 
-Sidebar **Phone Numbers**: search, assigned list, available inventory with Employee dropdown. Employee Studio **Assign Number** tab. Outbound dial still requires explicit confirm.
+Sidebar **Phone Numbers**: search, assigned list, available inventory with Employee dropdown, Inbound link. Employee Studio **Assign Number** tab with Inbound answer/greeting/hours. Outbound dial still requires explicit confirm.
