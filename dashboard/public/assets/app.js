@@ -3895,6 +3895,30 @@ function dialForm() {
 }
 function refreshDialNumbers() { /* placeholder for future caller-id selection */ }
 
+/** Prefer an assigned outbound-enabled Astra pn_ plus linked wf_ for dial POST. */
+function pickOutboundDialIds() {
+  const numbers = State.phoneNumbers || [];
+  const isPn = (n) => n && n.id && /^pn_/i.test(String(n.id));
+  const outboundOk = (n) => isPn(n) && n.outboundEnabled !== false;
+  const number = numbers.find((n) => outboundOk(n) && n.status === 'assigned')
+    || numbers.find((n) => outboundOk(n));
+  if (!number) return { phoneNumberId: null, workflowId: null };
+
+  let workflowId = number.outboundWorkflowId || null;
+  if (!workflowId || !/^wf_/i.test(String(workflowId))) {
+    const emp = (State.employees || []).find((e) =>
+      e
+      && (e.id === number.assignedEmployeeId || e.phoneNumberId === number.id)
+      && e.workflowId
+      && /^wf_/i.test(String(e.workflowId))
+    );
+    workflowId = emp ? emp.workflowId : null;
+  }
+  if (workflowId && !/^wf_/i.test(String(workflowId))) workflowId = null;
+
+  return { phoneNumberId: number.id, workflowId: workflowId || null };
+}
+
 function onDial(numI, btn) {
   const num = (numI.value || '').replace(/\D/g, '');
   if (num.length !== 10) { toast('Enter a valid 10 digit mobile number.', 'err'); numI.focus(); return; }
@@ -3911,10 +3935,23 @@ function onDial(numI, btn) {
     onConfirm: async () => {
       btn.disabled = true; btn.textContent = 'Dialing...';
       try {
-        await api('/api/telephony/dial', { method: 'POST', body: { number: num, confirm: true } });
-        toast('Call placed to +91 ' + num + '.', 'ok');
+        await ensurePhoneNumbers().catch(() => null);
+        await ensureEmployees().catch(() => []);
+        const ids = pickOutboundDialIds();
+        const body = { number: num, confirm: true };
+        if (ids.phoneNumberId) body.phoneNumberId = ids.phoneNumberId;
+        if (ids.workflowId) body.workflowId = ids.workflowId;
+        const res = await api('/api/telephony/dial', { method: 'POST', body });
+        const callId = res && res.call && res.call.id;
+        toast(
+          callId
+            ? ('Call placed to +91 ' + num + '. Conversation ' + callId + '.')
+            : ('Call placed to +91 ' + num + '.'),
+          'ok'
+        );
         State.loaded.telephony = false;
         State.loaded.calls = false;
+        if (callId) goto('calls');
       } catch (ex) {
         if (ex.status === 400 && ex.data && ex.data.code === 'needs_confirm') toast('Confirmation required. Please retry.', 'err');
         else toast(ex.message || 'Dial failed.', 'err');
@@ -4415,6 +4452,7 @@ async function loadInstantLeads(host) {
             });
             const st = (res.job && res.job.status) || 'done';
             toast('Call job ' + st + (res.call && res.call.id ? '. Open Conversations for details.' : '.'), 'ok');
+            State.loaded.calls = false;
             await loadInstantLeads(host);
             const jobsHost = $('#callJobsQueue');
             if (jobsHost) await loadCallJobsQueue(jobsHost);
