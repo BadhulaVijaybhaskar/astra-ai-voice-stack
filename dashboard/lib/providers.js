@@ -399,6 +399,39 @@ function upstreamStatus(status) {
   return status || 502;
 }
 
+/** Positive integer from options, or null when missing / invalid. */
+function positiveIntOption(value) {
+  if (value == null || value === '') return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(n) || n <= 0) return null;
+  return n;
+}
+
+/**
+ * Pull a stable provider run / call id from a Dograh initiate-call response.
+ * Accepts common top-level and nested aliases. Returns null when none exist
+ * (never invents a fake id).
+ */
+function extractProviderRunId(data) {
+  if (!data || typeof data !== 'object') return null;
+  const bags = [data];
+  if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+    bags.push(data.data);
+  }
+  const keys = [
+    'id', 'run_id', 'runId', 'workflow_run_id', 'workflowRunId',
+    'call_id', 'callId', 'telephony_call_id', 'telephonyCallId',
+  ];
+  for (const bag of bags) {
+    for (const key of keys) {
+      if (bag[key] == null || bag[key] === '') continue;
+      const id = String(bag[key]).trim();
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
 const telVobiz = {
   id: 'vobiz',
   label: 'VoBiz via Dograh',
@@ -498,23 +531,37 @@ const telVobiz = {
 
   // Outbound initiate-call with an E.164 destination. Used by the callback
   // webhook and by dial() after national-number normalization.
+  // Prefer options.workflowId / telephonyConfigId / fromPhoneNumberId when they
+  // are positive integers. Fall back to DOGRAH_* env only when missing.
   async initiateCall(phoneE164, options = {}) {
     if (!hasEnv(this.needs)) throw notConfigured(this.label, this.needs);
     const phone = String(phoneE164 || '').trim();
     if (!/^\+[1-9]\d{6,14}$/.test(phone)) {
       throw new ProviderError('phone must be E.164 (+ and 7 to 15 digits)', 422, 'bad_number');
     }
+    const workflowId = positiveIntOption(options.workflowId) || positiveIntEnv('DOGRAH_WORKFLOW_ID');
+    const telephonyConfigId = positiveIntOption(options.telephonyConfigId)
+      || positiveIntEnv('DOGRAH_TELEPHONY_CONFIG_ID');
+    const fromPhoneNumberId = positiveIntOption(options.fromPhoneNumberId)
+      || positiveIntEnv('DOGRAH_PHONE_NUMBER_ID');
     const result = await this.request('POST', '/api/v1/telephony/initiate-call', {
-      workflow_id: Number.isInteger(options.workflowId) && options.workflowId > 0 ? options.workflowId : positiveIntEnv('DOGRAH_WORKFLOW_ID'),
-      telephony_configuration_id: positiveIntEnv('DOGRAH_TELEPHONY_CONFIG_ID'),
-      from_phone_number_id: positiveIntEnv('DOGRAH_PHONE_NUMBER_ID'),
+      workflow_id: workflowId,
+      telephony_configuration_id: telephonyConfigId,
+      from_phone_number_id: fromPhoneNumberId,
       phone_number: phone,
     });
     if (result.up.status < 200 || result.up.status >= 300) {
       throw new ProviderError('Dograh could not initiate the VoBiz call', upstreamStatus(result.up.status),
         'upstream', upstreamMessage(result.data, 'The call was not placed.'));
     }
-    return { status: result.up.status, data: result.data };
+    // Normalized shape for Full-Stack Call upsert. providerRunId is null when
+    // Dograh returns no id. Never invent a fake id.
+    return {
+      status: result.up.status,
+      data: result.data,
+      providerRunId: extractProviderRunId(result.data),
+      ok: true,
+    };
   },
 
   /**
@@ -735,4 +782,5 @@ module.exports = {
   stt, tts, llm, telephony,
   MAX_TEXT, TTS_MODELS, TTS_SPEAKERS,
   BROWSER_UA, MODEL_ID_RE,
+  extractProviderRunId, positiveIntOption,
 };

@@ -778,6 +778,10 @@ async function apiTelephonyDial(req, res, ctx) {
     }
   }
   try {
+    // Provider returns { status, data, providerRunId, ok }. Full-Stack should
+    // persist via providerRunId (already upserted when present) and must not
+    // forward raw Dograh ids in the customer response. Keep r.data for now
+    // until the public dial contract is rewritten.
     const r = await telephonyProvider.createOutboundCall(ctx.tenant.id, b.number, { workflowId });
     // Count the dial attempt against today's usage.
     bumpUsage(ctx.tenant.id, 'calls', 1).catch(() => {});

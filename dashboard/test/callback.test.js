@@ -100,6 +100,8 @@ test('Dograh initiateCall posts E.164 through mocked fetch for callback dials', 
   assert.equal(request.payload.from_phone_number_id, 9);
   assert.equal(request.headers['X-API-Key'], '[redacted]');
   assert.equal(result.status, 200);
+  assert.equal(result.ok, true);
+  assert.equal(result.providerRunId, 'call_abc');
 
   const summary = callback.summarizeCallResult(result.data);
   assert.equal(summary.call_id, 'call_abc');
@@ -109,6 +111,68 @@ test('Dograh initiateCall posts E.164 through mocked fetch for callback dials', 
     () => providers.telephony.initiateCall('not-a-phone'),
     (error) => error.code === 'bad_number',
   );
+});
+
+test('initiateCall honors telephonyConfigId and fromPhoneNumberId options over env', async () => {
+  resetEnv({
+    DOGRAH_BASE_URL: 'https://dograh.example.com',
+    DOGRAH_API_KEY: 'dograh-test-key',
+    DOGRAH_WORKFLOW_ID: '7',
+    DOGRAH_TELEPHONY_CONFIG_ID: '3',
+    DOGRAH_PHONE_NUMBER_ID: '9',
+  });
+  let payload;
+  const providers = loadProviders(async (_host, _path, _headers, body) => {
+    payload = JSON.parse(body.toString('utf8'));
+    return {
+      status: 200,
+      headers: {},
+      buffer: Buffer.from(JSON.stringify({ workflow_run_id: 'wr_99', status: 'queued' })),
+    };
+  });
+
+  const result = await providers.telephony.initiateCall('+919876543210', {
+    workflowId: 11,
+    telephonyConfigId: 22,
+    fromPhoneNumberId: 33,
+  });
+  assert.equal(payload.workflow_id, 11);
+  assert.equal(payload.telephony_configuration_id, 22);
+  assert.equal(payload.from_phone_number_id, 33);
+  assert.equal(result.providerRunId, 'wr_99');
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 200);
+  assert.equal(result.data.workflow_run_id, 'wr_99');
+});
+
+test('initiateCall extracts providerRunId from nested data and skips inventing ids', async () => {
+  resetEnv({
+    DOGRAH_BASE_URL: 'https://dograh.example.com',
+    DOGRAH_API_KEY: 'dograh-test-key',
+    DOGRAH_WORKFLOW_ID: '1',
+    DOGRAH_TELEPHONY_CONFIG_ID: '1',
+    DOGRAH_PHONE_NUMBER_ID: '1',
+  });
+  const providersNested = loadProviders(async () => ({
+    status: 200,
+    headers: {},
+    buffer: Buffer.from(JSON.stringify({ data: { telephony_call_id: 'tel_55' }, status: 'ok' })),
+  }));
+  const nested = await providersNested.telephony.initiateCall('+919876543210');
+  assert.equal(nested.providerRunId, 'tel_55');
+  assert.equal(nested.ok, true);
+
+  delete require.cache[providersPath];
+  delete require.cache[corePath];
+  const providersEmpty = loadProviders(async () => ({
+    status: 202,
+    headers: {},
+    buffer: Buffer.from(JSON.stringify({ status: 'accepted', message: 'queued' })),
+  }));
+  const empty = await providersEmpty.telephony.initiateCall('+919876543210');
+  assert.equal(empty.providerRunId, null);
+  assert.equal(empty.ok, true);
+  assert.equal(empty.status, 202);
 });
 
 test('dial still normalizes Indian national numbers onto initiateCall', async () => {
@@ -127,4 +191,6 @@ test('dial still normalizes Indian national numbers onto initiateCall', async ()
   const result = await providers.telephony.dial('9876543210', {});
   assert.equal(phone, '+919876543210');
   assert.equal(callback.summarizeCallResult(result.data).call_id, '42');
+  assert.equal(result.providerRunId, '42');
+  assert.equal(result.ok, true);
 });
