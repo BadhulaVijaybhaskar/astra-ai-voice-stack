@@ -161,7 +161,7 @@ const DB_TMP = `${DB_FILE}.tmp`;
 
 function defaultDb() {
   return {
-    schemaVersion: 10,
+    schemaVersion: 11,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
@@ -207,7 +207,7 @@ function normalizeOutcomeDef(raw) {
 function migrateDb(parsed) {
   const out = Object.assign(defaultDb(), parsed || {});
   for (const k of COLLECTIONS) if (!Array.isArray(out[k])) out[k] = [];
-  out.schemaVersion = Math.max(10, Number(out.schemaVersion) || 0);
+  out.schemaVersion = Math.max(11, Number(out.schemaVersion) || 0);
   for (const tenant of out.tenants) {
     if (!tenant.status) tenant.status = 'active';
     if (!tenant.privacyMode) tenant.privacyMode = 'standard';
@@ -233,6 +233,14 @@ function migrateDb(parsed) {
   for (const lead of out.leads) {
     if (lead.employeeId === undefined) lead.employeeId = null;
     if (!lead.status) lead.status = 'new';
+  }
+  // v11: CallJob.employeeId for Instant Leads queue + timeline linkage.
+  for (const job of out.callJobs) {
+    if (job.employeeId === undefined) job.employeeId = null;
+    if (!job.employeeId && job.leadId) {
+      const lead = (out.leads || []).find((l) => l.id === job.leadId && l.tenantId === job.tenantId);
+      if (lead && lead.employeeId) job.employeeId = lead.employeeId;
+    }
   }
   return out;
 }

@@ -1,8 +1,10 @@
-# Calls (Sprint 2)
+# Calls (Sprint 2) / Conversations (Phase 12)
 
-Astra-first call history control plane. Customers review inbound and outbound calls inside Astra only. Dograh / VoBiz stay behind `DograhVobizProvider`. Plans and credits remain out of scope.
+Astra-first call history control plane. Customers review inbound and outbound **Conversations** inside Astra only. Dograh / VoBiz stay behind `DograhVobizProvider`. Plans and credits remain out of scope.
 
-## Data model (`calls` collection, schema v5)
+See also [CONVERSATIONS.md](./CONVERSATIONS.md) for the customer-facing alias and UI.
+
+## Data model (`calls` collection, schema v5+)
 
 Tenant-scoped rows with:
 
@@ -42,16 +44,18 @@ curl -s -b cookies.txt -X POST http://localhost:8787/api/calls/sync \
 
 The sync response includes `stubbed`, `endpoint` (when a candidate worked), `tried` / `candidates`, `fetched`, `created`, `updated`, and `total`.
 
-Opening the Calls UI and pressing **Sync calls** uses the same path.
+Opening the Conversations UI and pressing **Sync conversations** uses the same path.
 
 ## API (cookie auth, tenant scoped)
 
 ```bash
-# List (optional agentId, direction, limit)
+# List (optional agentId, employeeId, direction, status, outcome, limit)
 curl -s -b cookies.txt 'http://localhost:8787/api/calls?limit=50&direction=inbound'
+curl -s -b cookies.txt 'http://localhost:8787/api/conversations?limit=50'
 
 # Detail (transcript, extract, latency, recording access info)
 curl -s -b cookies.txt http://localhost:8787/api/calls/call_...
+curl -s -b cookies.txt http://localhost:8787/api/conversations/call_...
 
 # Sync / demo seed / manual import
 curl -s -b cookies.txt -X POST http://localhost:8787/api/calls/sync \
@@ -70,7 +74,7 @@ curl -s -b cookies.txt -o /dev/null -w '%{http_code}\n' \
 
 ## UI
 
-Sidebar **Calls**: table (time, parties, agent, direction, duration, outcome), detail panel (summary, extracted fields, transcript, latency, recording player when present), Sync button, empty state with contrast tokens. Overview quick actions include a Calls link.
+Sidebar **Conversations**: table (time, parties, agent, direction, duration, outcome), detail panel (summary, extracted fields, transcript, latency, recording player when present), Sync button, honest empty state with `—` / zeros. Overview quick actions include a Conversations link.
 
 ## Deferred
 

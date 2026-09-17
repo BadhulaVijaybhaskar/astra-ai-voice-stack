@@ -47,3 +47,5 @@ Additive migration to **schemaVersion 10**: normalize `lead.employeeId`, structu
 - [INSTANT-LEADS.md](./INSTANT-LEADS.md)
 - [EMPLOYEES.md](./EMPLOYEES.md)
 - [OUTCOMES.md](./OUTCOMES.md)
+- [TIMELINE.md](./TIMELINE.md)
+- [CONVERSATIONS.md](./CONVERSATIONS.md)

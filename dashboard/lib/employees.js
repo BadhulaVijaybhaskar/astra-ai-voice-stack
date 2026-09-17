@@ -812,6 +812,134 @@ function setOutcomes(db, tenantId, id, list) {
   return getOutcomes(db, tenantId, id);
 }
 
+/**
+ * Customer Workflow view for an Employee (Phase 9).
+ * Language: Workflow / Steps / Instructions. Never graph/node/SIP jargon.
+ */
+function stepsFromWorkflow(workflow) {
+  const steps = [];
+  if (!workflow || !workflow.graphJson || !Array.isArray(workflow.graphJson.nodes)) return steps;
+  for (const n of workflow.graphJson.nodes) {
+    if (!n || n.type === 'start' || n.type === 'end') continue;
+    if (n.type === 'global') continue;
+    steps.push({
+      id: n.id || null,
+      name: n.name || n.id || 'Step',
+      type: 'step',
+      guidance: n.prompt || '',
+    });
+  }
+  return steps;
+}
+
+function globalGuidanceFromWorkflow(workflow) {
+  if (!workflow || !workflow.graphJson || !Array.isArray(workflow.graphJson.nodes)) return '';
+  const g = workflow.graphJson.nodes.find((n) => n && n.type === 'global');
+  return g ? (g.prompt || '') : '';
+}
+
+function getWorkflow(db, tenantId, id) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const workflow = row.workflowId
+    ? (db.workflows || []).find((w) => w.id === row.workflowId && w.tenantId === tenantId)
+    : null;
+  if (!workflow) {
+    return {
+      ok: true,
+      workflow: {
+        employeeId: row.id,
+        workflowId: null,
+        name: '',
+        description: '',
+        status: null,
+        direction: null,
+        steps: [],
+        globalGuidance: '',
+        hasWorkflow: false,
+      },
+    };
+  }
+  return {
+    ok: true,
+    workflow: {
+      employeeId: row.id,
+      workflowId: workflow.id,
+      name: workflow.name || '',
+      description: workflow.description || '',
+      status: workflow.status || 'draft',
+      direction: workflow.direction || null,
+      steps: stepsFromWorkflow(workflow),
+      globalGuidance: globalGuidanceFromWorkflow(workflow),
+      hasWorkflow: true,
+    },
+  };
+}
+
+/**
+ * Persist customer Workflow edits onto the linked Astra workflow.
+ * Accepts name, description, steps[{id?, name, guidance}], globalGuidance.
+ * Rebuilds a linear graph via workflows.buildLinearGraph (reuse).
+ */
+function updateWorkflow(db, tenantId, id, patch) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  if (!row.workflowId) {
+    return { ok: false, status: 422, error: 'employee has no linked workflow', code: 'no_workflow' };
+  }
+  const workflow = (db.workflows || []).find((w) => w.id === row.workflowId && w.tenantId === tenantId);
+  if (!workflow) {
+    return { ok: false, status: 404, error: 'workflow not found', code: 'workflow_not_found' };
+  }
+  if (workflow.status === 'archived') {
+    return { ok: false, status: 409, error: 'archived workflows cannot be edited', code: 'archived' };
+  }
+
+  const b = patch && typeof patch === 'object' ? patch : {};
+  const name = b.name !== undefined ? String(b.name || '').trim().slice(0, 120) : undefined;
+  const description = b.description !== undefined
+    ? String(b.description || '').slice(0, 500)
+    : undefined;
+
+  let graphJson;
+  if (b.steps !== undefined) {
+    if (!Array.isArray(b.steps)) {
+      return { ok: false, status: 422, error: 'steps must be an array', code: 'bad_steps' };
+    }
+    if (b.steps.length > 20) {
+      return { ok: false, status: 422, error: 'too many steps', code: 'steps_limit' };
+    }
+    const stages = b.steps.map((s, i) => {
+      const stepName = String((s && s.name) || ('Step ' + (i + 1))).trim().slice(0, 80) || ('Step ' + (i + 1));
+      const guidance = String((s && (s.guidance != null ? s.guidance : s.prompt)) || '').slice(0, 2000);
+      return { name: stepName, prompt: guidance };
+    });
+    const globalPrompt = b.globalGuidance !== undefined
+      ? String(b.globalGuidance || '').slice(0, 2000)
+      : globalGuidanceFromWorkflow(workflow);
+    graphJson = workflows.buildLinearGraph(stages, globalPrompt);
+  } else if (b.globalGuidance !== undefined) {
+    // Preserve existing stage nodes. Update global guidance only.
+    const existingSteps = stepsFromWorkflow(workflow).map((s) => ({
+      name: s.name,
+      prompt: s.guidance,
+    }));
+    graphJson = workflows.buildLinearGraph(
+      existingSteps,
+      String(b.globalGuidance || '').slice(0, 2000),
+    );
+  }
+
+  const result = workflows.updateWorkflow(db, tenantId, workflow.id, {
+    name,
+    description,
+    graphJson,
+  });
+  if (!result.ok) return result;
+  row.updatedAt = nowIso();
+  return getWorkflow(db, tenantId, id);
+}
+
 module.exports = {
   STATUSES,
   CHANNELS,
@@ -844,5 +972,8 @@ module.exports = {
   createAndAttachKnowledge,
   getOutcomes,
   setOutcomes,
+  getWorkflow,
+  updateWorkflow,
+  stepsFromWorkflow,
   genId,
 };

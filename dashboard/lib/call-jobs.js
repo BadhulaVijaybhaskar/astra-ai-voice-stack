@@ -33,12 +33,13 @@ function ensureCallJobs(db) {
 /**
  * Client-safe job. Omits providerRunId and any Dograh fields.
  */
-function publicCallJob(row) {
+function publicCallJob(row, enrich = null) {
   if (!row) return null;
-  return {
+  const out = {
     id: row.id,
     leadId: row.leadId || null,
     campaignLeadId: row.campaignLeadId || null,
+    employeeId: row.employeeId || null,
     agentId: row.agentId || null,
     workflowId: row.workflowId || null,
     phoneNumberId: row.phoneNumberId || null,
@@ -52,6 +53,13 @@ function publicCallJob(row) {
     dialedAt: row.dialedAt || null,
     completedAt: row.completedAt || null,
   };
+  if (enrich && typeof enrich === 'object') {
+    if (enrich.leadName !== undefined) out.leadName = enrich.leadName;
+    if (enrich.employeeName !== undefined) out.employeeName = enrich.employeeName;
+    if (enrich.callStatus !== undefined) out.callStatus = enrich.callStatus;
+    if (enrich.callOutcome !== undefined) out.callOutcome = enrich.callOutcome;
+  }
+  return out;
 }
 
 function findCallJob(db, tenantId, id) {
@@ -77,14 +85,70 @@ function findActiveCallJobForLead(db, tenantId, leadId) {
   ) || null;
 }
 
+function enrichForJob(db, tenantId, job) {
+  let leadName = null;
+  let employeeId = job.employeeId || null;
+  let employeeName = null;
+  let callStatus = null;
+  let callOutcome = null;
+  if (job.leadId) {
+    const lead = (db.leads || []).find((l) => l.id === job.leadId && l.tenantId === tenantId);
+    if (lead) {
+      leadName = lead.name || null;
+      if (!employeeId) employeeId = lead.employeeId || null;
+    }
+  }
+  if (employeeId) {
+    const emp = (db.employees || []).find((e) => e.id === employeeId && e.tenantId === tenantId);
+    if (emp) employeeName = emp.name || null;
+  }
+  if (job.resultCallId) {
+    const call = (db.calls || []).find((c) => c.id === job.resultCallId && c.tenantId === tenantId);
+    if (call) {
+      callStatus = call.status || null;
+      callOutcome = call.outcome || null;
+    }
+  }
+  return {
+    leadName,
+    employeeId,
+    employeeName,
+    callStatus,
+    callOutcome,
+  };
+}
+
 function listCallJobs(db, tenantId, opts = {}) {
   ensureCallJobs(db);
   let rows = (db.callJobs || []).filter((j) => j.tenantId === tenantId);
   if (opts.leadId) rows = rows.filter((j) => j.leadId === String(opts.leadId));
   if (opts.status) rows = rows.filter((j) => j.status === String(opts.status));
+  if (opts.employeeId) {
+    const empId = String(opts.employeeId);
+    rows = rows.filter((j) => {
+      if (j.employeeId === empId) return true;
+      if (!j.leadId) return false;
+      const lead = (db.leads || []).find((l) => l.id === j.leadId && l.tenantId === tenantId);
+      return !!(lead && lead.employeeId === empId);
+    });
+  }
+  if (opts.agentId) rows = rows.filter((j) => j.agentId === String(opts.agentId));
   rows.sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
   const limit = Math.max(1, Math.min(200, Number(opts.limit) || 50));
-  return rows.slice(0, limit).map(publicCallJob);
+  const enrich = opts.enrich !== false;
+  return rows.slice(0, limit).map((row) => {
+    if (!enrich) return publicCallJob(row);
+    const e = enrichForJob(db, tenantId, row);
+    return publicCallJob(
+      { ...row, employeeId: row.employeeId || e.employeeId || null },
+      {
+        leadName: e.leadName,
+        employeeName: e.employeeName,
+        callStatus: e.callStatus,
+        callOutcome: e.callOutcome,
+      },
+    );
+  });
 }
 
 /**
@@ -113,12 +177,19 @@ function createCallJob(db, tenantId, input, actorUserId) {
     if (active) return { ok: true, job: active, created: false };
   }
 
+  let employeeId = b.employeeId ? String(b.employeeId) : null;
+  if (!employeeId && b.leadId) {
+    const lead = (db.leads || []).find((l) => l.id === String(b.leadId) && l.tenantId === tenantId);
+    if (lead && lead.employeeId) employeeId = lead.employeeId;
+  }
+
   const ts = nowIso();
   const row = {
     id: genId('cjob_'),
     tenantId,
     leadId: b.leadId ? String(b.leadId) : null,
     campaignLeadId: b.campaignLeadId ? String(b.campaignLeadId) : null,
+    employeeId,
     agentId: b.agentId ? String(b.agentId) : null,
     workflowId: b.workflowId ? String(b.workflowId) : null,
     phoneNumberId: b.phoneNumberId ? String(b.phoneNumberId) : null,
@@ -166,6 +237,7 @@ function updateCallJobStatus(db, tenantId, id, status, patch = {}) {
   if (patch.agentId !== undefined) job.agentId = patch.agentId || null;
   if (patch.workflowId !== undefined) job.workflowId = patch.workflowId || null;
   if (patch.phoneNumberId !== undefined) job.phoneNumberId = patch.phoneNumberId || null;
+  if (patch.employeeId !== undefined) job.employeeId = patch.employeeId || null;
   return { ok: true, job };
 }
 
@@ -180,4 +252,5 @@ module.exports = {
   createCallJob,
   updateCallJobStatus,
   ensureCallJobs,
+  enrichForJob,
 };

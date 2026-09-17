@@ -95,12 +95,21 @@ Server resolves to Dograh ids into `providerMetadata` for dial/inbound config. O
 - List with status badges, direction, agent, assigned number
 - Create opens template picker cards first
 - Builder is a multi-step node editor (start → stages → end + global). Save Draft, Test (Talk to it), Publish
+- Employee Studio → **Workflow** tab edits Steps / guidance via `/api/employees/:id/workflow` (Phase 9). Customer language only.
 - Customer Telephony / Presets / Talk copy uses Astra workflow names only. Provider mapping is Super Admin only.
 
 ## Files
 
 - `dashboard/lib/workflows.js`
 - `dashboard/lib/workflow-provider.js`
+- `dashboard/lib/employees.js` (`getWorkflow` / `updateWorkflow`)
 - `dashboard/server.js` (routes)
 - `dashboard/public/assets/app.js` / `app.css`
 - `dashboard/test/workflows.test.js`
+- `dashboard/test/phases-9-12.test.js`
+
+## See also
+
+- [EMPLOYEES.md](./EMPLOYEES.md)
+- [INSTRUCTIONS.md](./INSTRUCTIONS.md)
+- [TIMELINE.md](./TIMELINE.md)

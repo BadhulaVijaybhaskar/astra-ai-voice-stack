@@ -53,6 +53,7 @@ const workflows = require('./lib/workflows');
 const leads = require('./lib/leads');
 const callJobs = require('./lib/call-jobs');
 const employees = require('./lib/employees');
+const timeline = require('./lib/timeline');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
@@ -970,11 +971,12 @@ function matchPhoneNumberRoute(route) {
    ========================================================================== */
 
 function matchCallsRoute(route) {
-  if (route === '/api/calls') return { action: 'list' };
-  if (route === '/api/calls/sync') return { action: 'sync' };
-  const recording = route.match(/^\/api\/calls\/([^/]+)\/recording$/);
+  // Conversations is the customer-facing alias for Calls (Phase 12).
+  if (route === '/api/calls' || route === '/api/conversations') return { action: 'list' };
+  if (route === '/api/calls/sync' || route === '/api/conversations/sync') return { action: 'sync' };
+  const recording = route.match(/^\/api\/(?:calls|conversations)\/([^/]+)\/recording$/);
   if (recording) return { action: 'recording', id: decodeURIComponent(recording[1]) };
-  const one = route.match(/^\/api\/calls\/([^/]+)$/);
+  const one = route.match(/^\/api\/(?:calls|conversations)\/([^/]+)$/);
   if (one) return { action: 'detail', id: decodeURIComponent(one[1]) };
   return null;
 }
@@ -984,11 +986,24 @@ async function apiCallsList(req, res, ctx) {
     const url = new URL(req.url || '/', 'http://localhost');
     const filters = {
       agentId: url.searchParams.get('agentId') || undefined,
+      employeeId: url.searchParams.get('employeeId') || undefined,
       direction: url.searchParams.get('direction') || undefined,
+      status: url.searchParams.get('status') || undefined,
+      outcome: url.searchParams.get('outcome') || undefined,
       limit: url.searchParams.get('limit') || undefined,
     };
     const list = await telephonyProvider.listCalls(ctx.tenant.id, filters);
-    core.sendJson(res, 200, { calls: list });
+    // Prefer Conversations language when requested via /api/conversations.
+    const asConversations = String(req.url || '').includes('/api/conversations');
+    if (asConversations) {
+      core.sendJson(res, 200, {
+        conversations: list,
+        count: list.length,
+        empty: list.length === 0,
+      });
+    } else {
+      core.sendJson(res, 200, { calls: list, count: list.length, empty: list.length === 0 });
+    }
   } catch (e) {
     handleProviderError(res, e);
   }
@@ -997,7 +1012,9 @@ async function apiCallsList(req, res, ctx) {
 async function apiCallsDetail(req, res, ctx) {
   try {
     const call = await telephonyProvider.getCall(ctx.params.id, ctx.tenant.id);
-    core.sendJson(res, 200, { call });
+    const asConversations = String(req.url || '').includes('/api/conversations');
+    if (asConversations) core.sendJson(res, 200, { conversation: call });
+    else core.sendJson(res, 200, { call });
   } catch (e) {
     handleProviderError(res, e);
   }
@@ -1772,7 +1789,16 @@ function matchLeadsRoute(route) {
   if (route === '/api/leads') return { action: 'list_or_create' };
   const call = route.match(/^\/api\/leads\/([^/]+)\/call$/);
   if (call) return { action: 'call', id: decodeURIComponent(call[1]) };
+  const tl = route.match(/^\/api\/leads\/([^/]+)\/timeline$/);
+  if (tl) return { action: 'timeline', id: decodeURIComponent(tl[1]) };
   const one = route.match(/^\/api\/leads\/([^/]+)$/);
+  if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
+  return null;
+}
+
+function matchCallJobsRoute(route) {
+  if (route === '/api/call-jobs') return { action: 'list' };
+  const one = route.match(/^\/api\/call-jobs\/([^/]+)$/);
   if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
   return null;
 }
@@ -1803,13 +1829,14 @@ function resolveLeadWorkflowId(db, tenantId, { workflowId, agentId }) {
  */
 async function placeOutboundCallJob({
   tenantId, userId, toE164, agentId, workflowId, phoneNumberId,
-  leadId, campaignLeadId, source, idempotencyKey, ctx,
+  leadId, campaignLeadId, employeeId, source, idempotencyKey, ctx,
 }) {
   let jobId = null;
   let jobCreated = true;
   let astraWorkflowId = workflowId || null;
   let astraPhoneNumberId = phoneNumberId || null;
   let astraAgentId = agentId || null;
+  let astraEmployeeId = employeeId || null;
 
   await core.mutate((d) => {
     astraWorkflowId = resolveLeadWorkflowId(d, tenantId, {
@@ -1820,6 +1847,10 @@ async function placeOutboundCallJob({
       const dialCtx = phoneNumbers.outboundDialContext(d, tenantId);
       if (dialCtx) astraPhoneNumberId = dialCtx.phoneNumberId || null;
     }
+    if (!astraEmployeeId && leadId) {
+      const leadRow = leads.findLead(d, tenantId, leadId);
+      if (leadRow && leadRow.employeeId) astraEmployeeId = leadRow.employeeId;
+    }
     const created = callJobs.createCallJob(d, tenantId, {
       toE164,
       agentId: astraAgentId,
@@ -1827,6 +1858,7 @@ async function placeOutboundCallJob({
       phoneNumberId: astraPhoneNumberId,
       leadId: leadId || null,
       campaignLeadId: campaignLeadId || null,
+      employeeId: astraEmployeeId || null,
       source: source || 'instant',
       idempotencyKey: idempotencyKey || null,
     }, userId);
@@ -2091,6 +2123,7 @@ async function apiLeadsCall(req, res, ctx) {
     workflowId: workflowId || privacyWorkflowId || null,
     phoneNumberId,
     leadId: lead.id,
+    employeeId: lead.employeeId || null,
     source: 'instant',
     idempotencyKey: b.idempotencyKey ? String(b.idempotencyKey) : null,
     ctx,
@@ -2126,6 +2159,10 @@ function matchEmployeesRoute(route) {
   if (status) return { action: 'status', id: decodeURIComponent(status[1]) };
   const instructions = route.match(/^\/api\/employees\/([^/]+)\/instructions$/);
   if (instructions) return { action: 'instructions', id: decodeURIComponent(instructions[1]) };
+  const workflow = route.match(/^\/api\/employees\/([^/]+)\/workflow$/);
+  if (workflow) return { action: 'workflow', id: decodeURIComponent(workflow[1]) };
+  const timelineRoute = route.match(/^\/api\/employees\/([^/]+)\/timeline$/);
+  if (timelineRoute) return { action: 'timeline', id: decodeURIComponent(timelineRoute[1]) };
   const training = route.match(/^\/api\/employees\/([^/]+)\/training$/);
   if (training) return { action: 'training', id: decodeURIComponent(training[1]) };
   const knowledgeOne = route.match(/^\/api\/employees\/([^/]+)\/knowledge\/([^/]+)$/);
@@ -2354,6 +2391,79 @@ function apiEmployeesLeadsList(req, res, ctx) {
     employeeId: row.id,
     leads: list,
     count: list.length,
+  });
+}
+
+function apiEmployeesWorkflowGet(req, res, ctx) {
+  const result = employees.getWorkflow(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.workflow);
+}
+
+async function apiEmployeesWorkflowPut(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = employees.updateWorkflow(d, ctx.tenant.id, ctx.params.id, ctx.body || {});
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.workflow_updated', 'employee', ctx.params.id, {
+        workflowId: result.workflow.workflowId,
+        steps: (result.workflow.steps || []).length,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.workflow);
+}
+
+function apiEmployeesTimelineGet(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const result = timeline.buildEmployeeTimeline(core.db(), ctx.tenant.id, ctx.params.id, {
+    limit: url.searchParams.get('limit') || 50,
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.timeline);
+}
+
+function apiLeadsTimelineGet(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const result = timeline.buildLeadTimeline(core.db(), ctx.tenant.id, ctx.params.id, {
+    limit: url.searchParams.get('limit') || 50,
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.timeline);
+}
+
+function apiCallJobsList(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const list = callJobs.listCallJobs(core.db(), ctx.tenant.id, {
+    status: url.searchParams.get('status') || undefined,
+    leadId: url.searchParams.get('leadId') || undefined,
+    employeeId: url.searchParams.get('employeeId') || undefined,
+    agentId: url.searchParams.get('agentId') || undefined,
+    limit: url.searchParams.get('limit') || 50,
+  });
+  core.sendJson(res, 200, {
+    jobs: list,
+    count: list.length,
+    empty: list.length === 0,
+  });
+}
+
+function apiCallJobsGet(req, res, ctx) {
+  const job = callJobs.findCallJob(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!job) return core.sendJson(res, 404, { error: 'call job not found', code: 'not_found' });
+  const enrich = callJobs.enrichForJob(core.db(), ctx.tenant.id, job);
+  core.sendJson(res, 200, {
+    job: callJobs.publicCallJob(
+      { ...job, employeeId: job.employeeId || enrich.employeeId || null },
+      {
+        leadName: enrich.leadName,
+        employeeName: enrich.employeeName,
+        callStatus: enrich.callStatus,
+        callOutcome: enrich.callOutcome,
+      },
+    ),
   });
 }
 
@@ -2650,6 +2760,17 @@ const server = http.createServer(async (req, res) => {
           if (leadsGet.action === 'one') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiLeadsGet(rq, rs, { ...ctx, params: { id: leadsGet.id } }));
           }
+          if (leadsGet.action === 'timeline') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiLeadsTimelineGet(rq, rs, { ...ctx, params: { id: leadsGet.id } }));
+          }
+          return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+        }
+        const callJobsGet = matchCallJobsRoute(route);
+        if (callJobsGet) {
+          if (callJobsGet.action === 'list') return core.requireAuth(req, res, apiCallJobsList);
+          if (callJobsGet.action === 'one') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiCallJobsGet(rq, rs, { ...ctx, params: { id: callJobsGet.id } }));
+          }
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
         const empGet = matchEmployeesRoute(route);
@@ -2661,6 +2782,12 @@ const server = http.createServer(async (req, res) => {
           }
           if (empGet.action === 'instructions') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesInstructionsGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
+          if (empGet.action === 'workflow') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesWorkflowGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
+          if (empGet.action === 'timeline') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesTimelineGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
           }
           if (empGet.action === 'training') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesTrainingGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
@@ -2725,6 +2852,9 @@ const server = http.createServer(async (req, res) => {
           if (empPatch.action === 'instructions') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesInstructionsPut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
           }
+          if (empPatch.action === 'workflow') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesWorkflowPut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
+          }
           if (empPatch.action === 'outcomes') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
           }
@@ -2734,7 +2864,7 @@ const server = http.createServer(async (req, res) => {
 
       if (req.method === 'PUT') {
         const empPut = matchEmployeesRoute(route);
-        if (empPut && (empPut.action === 'instructions' || empPut.action === 'outcomes')) {
+        if (empPut && (empPut.action === 'instructions' || empPut.action === 'outcomes' || empPut.action === 'workflow')) {
           let body;
           try { body = await core.readBody(req, 256 * 1024); }
           catch (e) {
@@ -2743,6 +2873,9 @@ const server = http.createServer(async (req, res) => {
           }
           if (empPut.action === 'instructions') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesInstructionsPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
+          }
+          if (empPut.action === 'workflow') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesWorkflowPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
           }
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
         }
