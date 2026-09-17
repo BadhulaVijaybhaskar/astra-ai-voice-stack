@@ -1807,9 +1807,15 @@ async function apiAdminTicketUpdate(req, res, ctx) {
   core.sendJson(res, 200, { ok: true });
 }
 
-// GET /api/providers -> the registry so Settings can render active vs available.
-function apiProviders(req, res) {
-  core.sendJson(res, 200, providers.describeProviders());
+// GET /api/providers -> authed registry so Settings can render active vs available.
+// Never public: provider ids/labels are an inventory leak when unauthenticated.
+function apiProviders(req, res, ctx) {
+  const payload = providers.describeProviders();
+  const check = org.assertNoSecretValues(payload);
+  if (!check.ok) {
+    return core.sendJson(res, 500, { error: 'provider registry refused to leak secrets', code: 'secret_guard' });
+  }
+  core.sendJson(res, 200, payload);
 }
 
 // GET /api/health -> public readiness only. Provider inventory is super_admin only.
@@ -1861,7 +1867,6 @@ const server = http.createServer(async (req, res) => {
 
       // ---- Public GET routes ----
       if (route === '/api/health' && req.method === 'GET') return apiHealth(req, res);
-      if (route === '/api/providers' && req.method === 'GET') return apiProviders(req, res);
       if (route.startsWith('/api/public/demo/') && req.method === 'GET') {
         const token = decodeURIComponent(route.slice('/api/public/demo/'.length));
         if (token.includes('/')) return core.sendJson(res, 404, { error: 'demo link not found', code: 'not_found' });
@@ -1897,6 +1902,7 @@ const server = http.createServer(async (req, res) => {
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
         if (route === '/api/me') return core.requireAuth(req, res, apiMe);
+        if (route === '/api/providers') return core.requireAuth(req, res, apiProviders);
         if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsList);
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);
         if (route === '/api/telephony/status') return core.requireAuth(req, res, apiTelephonyStatus);
