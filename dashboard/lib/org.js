@@ -144,8 +144,9 @@ function publicHealthPayload(meta = {}) {
 /**
  * Customer-safe telephony status. Drops provider/orchestrator branding and
  * ops-console fields (dashboard, upstream workflow id). Keeps DIDs and connect state.
- * DID inboundWorkflowId is omitted unless it is clearly an Astra wf_* id
- * (never pass through Dograh numeric provider workflow ids).
+ * Never exposes Dograh/VoBiz infrastructure ids (configuration.id, phone number id,
+ * numeric inboundWorkflowId). DID inboundWorkflowId is omitted unless it is clearly
+ * an Astra wf_* id.
  */
 function publicTelephonyStatus(status) {
   const s = status && typeof status === 'object' ? status : {};
@@ -155,8 +156,8 @@ function publicTelephonyStatus(status) {
     dids: Array.isArray(s.dids)
       ? s.dids.map((d) => {
         if (!d || typeof d !== 'object') return { number: String(d || '') };
+        // Omit provider phone-number id (Dograh row.id). Customers only need the DID.
         const row = {
-          id: d.id,
           number: d.number,
           status: d.status,
           label: d.label || '',
@@ -171,8 +172,8 @@ function publicTelephonyStatus(status) {
       : [],
   };
   if (s.configuration && typeof s.configuration === 'object') {
+    // Name / default-outbound flag only. Never configuration.id (Dograh config id).
     out.configuration = {
-      id: s.configuration.id,
       name: s.configuration.name,
       isDefaultOutbound: !!s.configuration.isDefaultOutbound,
     };

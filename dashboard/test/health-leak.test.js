@@ -81,9 +81,15 @@ test('publicTelephonyStatus strips provider and orchestrator branding', () => {
   assert.equal(body.dids[0].inboundWorkflowId, undefined);
   assert.equal(body.dids[0].inboundWorkflowName, undefined);
   assert.equal(Object.prototype.hasOwnProperty.call(body.dids[0], 'inboundWorkflowId'), false);
+  // Provider infrastructure ids must never appear for customers.
+  assert.equal(Object.prototype.hasOwnProperty.call(body.dids[0], 'id'), false);
+  assert.equal(body.configuration && body.configuration.id, undefined);
+  assert.equal(Object.prototype.hasOwnProperty.call(body.configuration || {}, 'id'), false);
   const blob = JSON.stringify(body);
   assert.equal(PROVIDER_BRAND_RE.test(blob), false);
   assert.equal(blob.includes('"inboundWorkflowId":8'), false);
+  assert.equal(blob.includes('"id":2'), false);
+  assert.equal(blob.includes('"id":3'), false);
   assert.equal(blob.includes('Dograh'), false);
 });
 
@@ -102,6 +108,57 @@ test('publicTelephonyStatus keeps Astra wf_* inboundWorkflowId only', () => {
   });
   assert.equal(body.dids[0].inboundWorkflowId, 'wf_abc123');
   assert.equal(body.dids[0].inboundWorkflowName, undefined);
+  assert.equal(Object.prototype.hasOwnProperty.call(body.dids[0], 'id'), false);
+});
+
+test('publicTelephonyStatus omits all provider infrastructure identifiers', () => {
+  const body = org.publicTelephonyStatus({
+    connected: true,
+    provider: 'vobiz',
+    orchestrator: 'dograh',
+    workflowId: 99,
+    did: '+911111111111',
+    dids: [
+      {
+        id: 42,
+        number: '+911111111111',
+        status: 'active',
+        label: 'Primary',
+        isDefaultCallerId: true,
+        inboundWorkflowId: 7,
+        inboundWorkflowName: 'vobiz inbound',
+      },
+      {
+        id: 43,
+        number: '+912222222222',
+        status: 'active',
+        label: 'Secondary',
+        isDefaultCallerId: false,
+        inboundWorkflowId: 'wf_safe999',
+      },
+    ],
+    configuration: { id: 17, name: 'Prod trunk', isDefaultOutbound: true },
+  });
+
+  assert.deepEqual(Object.keys(body).sort(), ['configuration', 'connected', 'did', 'dids'].sort());
+  assert.equal(body.configuration.name, 'Prod trunk');
+  assert.equal(body.configuration.isDefaultOutbound, true);
+  assert.deepEqual(Object.keys(body.configuration).sort(), ['isDefaultOutbound', 'name']);
+
+  assert.equal(body.dids[0].number, '+911111111111');
+  assert.deepEqual(Object.keys(body.dids[0]).sort(), [
+    'isDefaultCallerId', 'label', 'number', 'status',
+  ].sort());
+  assert.equal(body.dids[1].inboundWorkflowId, 'wf_safe999');
+  assert.deepEqual(Object.keys(body.dids[1]).sort(), [
+    'inboundWorkflowId', 'isDefaultCallerId', 'label', 'number', 'status',
+  ].sort());
+
+  const blob = JSON.stringify(body);
+  assert.equal(PROVIDER_BRAND_RE.test(blob), false);
+  assert.equal(/"id"\s*:/.test(blob), false);
+  assert.equal(blob.includes('"workflowId"'), false);
+  assert.equal(blob.includes('"inboundWorkflowId":7'), false);
 });
 
 test('versionPayload reads GIT_SHA from env and never invents', () => {
