@@ -1,4 +1,4 @@
-# AI Employees (Phases 1 to 8)
+# AI Employees (Phases 1 to 12)
 
 Customer-facing **Employee** product layer. An employee is a composition of relationships, not a duplicated agent/workflow blob.
 
@@ -37,6 +37,8 @@ Each maps onto existing workflow templates and agent presets (reuse).
 | `POST` | `/api/employees/:id/pause` | LIVE → PAUSED. |
 | `POST` | `/api/employees/:id/resume` | PAUSED → LIVE. |
 | `GET` / `PUT` | `/api/employees/:id/instructions` | Teach: brief, greeting, instructions, step guidance. See [INSTRUCTIONS.md](./INSTRUCTIONS.md). |
+| `GET` / `PUT` | `/api/employees/:id/workflow` | Advanced Workflow: Steps + guidance (Phase 9). Customer language only. |
+| `GET` | `/api/employees/:id/timeline` | Activity Timeline from real Lead/CallJob/Call events (Phase 10). See [TIMELINE.md](./TIMELINE.md). |
 | `GET` | `/api/employees/:id/training` | Attached knowledge. |
 | `POST` | `/api/employees/:id/knowledge` | Attach existing `kb_` or create+attach. |
 | `DELETE` | `/api/employees/:id/knowledge/:kbId` | Detach. |
@@ -49,15 +51,15 @@ Public JSON never includes Dograh / VoBiz / Deepgram / Groq / Rumik terms.
 
 - **My Employees**: cards, filters, Open / Test / Pause / Resume, + New Employee.
 - **Create Employee**: templates + brief → compose.
-- **Employee Studio**: header actions + tabs (Overview, Instructions, Workflow, Training, Leads, Actions, Outcomes, Voice, Settings).
-  - Instructions / Training / Outcomes / Leads are real editors (Phases 5–8).
+- **Employee Studio**: header actions + tabs (Overview, Instructions, Workflow, Training, Leads, Timeline, Actions, Outcomes, Voice, Settings).
+  - Instructions / Workflow / Training / Outcomes / Leads / Timeline are real editors (Phases 5–10).
   - Actions remains an honest stub (no Phase 2 webhooks).
 
-North star: Create → Teach → Test → Assign Number → Connect Leads → Go Live.
+North star: Create → Teach → Test → Assign Number → Connect Leads → Go Live → Conversations → outcomes.
 
 ## Schema
 
-Additive migration to **schemaVersion 10**: structured `outcomes`, `lead.employeeId`, collections unchanged from v9 plus formalization.
+Additive migration to **schemaVersion 11**: `callJobs.employeeId` (backfilled from lead when present). Collections unchanged from v10 plus CallJob linkage. See [INSTANT-LEADS.md](./INSTANT-LEADS.md).
 
 ## Out of scope
 

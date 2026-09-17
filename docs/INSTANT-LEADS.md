@@ -1,4 +1,4 @@
-# Instant Leads (P0)
+# Instant Leads (P0 + Phase 11)
 
 Smallest vertical slice: **Lead → CallJob → real outbound dial → Astra Call row**.
 
@@ -10,7 +10,7 @@ Customers never see Dograh, VoBiz, or provider ids. Seed number metadata stays s
 2. `POST /api/leads/:id/call` with `{ confirm: true }` creates a `CallJob`, dials via the canonical `telephonyProvider.createOutboundCall` path (same as `/api/telephony/dial`), and links the resulting Call when Dograh returns a real `providerRunId`.
 3. Campaign enqueue advances `stub_queued` leads through the same helper (no parallel dial stub).
 
-Composition stays relational: Lead and CallJob store `agentId`, `workflowId` (`wf_`), and `phoneNumberId` (`pn_`). Provider Dograh ints are resolved only inside `createOutboundCall`.
+Composition stays relational: Lead and CallJob store `employeeId`, `agentId`, `workflowId` (`wf_`), and `phoneNumberId` (`pn_`). Provider Dograh ints are resolved only inside `createOutboundCall`.
 
 ## API
 
@@ -19,7 +19,10 @@ Composition stays relational: Lead and CallJob store `agentId`, `workflowId` (`w
 | `GET` | `/api/leads` | Auth. Tenant-scoped list. |
 | `POST` | `/api/leads` | `{ name, phone, agentId?, workflowId?, phoneNumberId?, idempotencyKey?, meta? }`. IN 10-digit phones normalize to `+91...`. |
 | `GET` | `/api/leads/:id` | Lead + recent jobs. |
+| `GET` | `/api/leads/:id/timeline` | Lead activity Timeline. See [TIMELINE.md](./TIMELINE.md). |
 | `POST` | `/api/leads/:id/call` | Requires `confirm:true`. Places a real outbound call. Optional `idempotencyKey`. |
+| `GET` | `/api/call-jobs` | Queue list with status. Filters: `status`, `leadId`, `employeeId`, `agentId`, `limit`. Enriched with lead/employee/conversation links. |
+| `GET` | `/api/call-jobs/:id` | Single job detail (public shape). |
 
 ### CallJob statuses
 
@@ -31,7 +34,7 @@ Public job/lead JSON never includes `providerRunId` or Dograh ids. Those stay on
 
 ## UI
 
-Dashboard nav: **Instant Leads** (OPERATE). Form: name, phone, employee/agent select, Save lead. Each lead has **Call now** (confirm modal) and **Open Calls**.
+Dashboard nav: **Instant Leads** (OPERATE). Form: name, phone, employee select, Save lead. Each lead has **Call now** (confirm modal) and **Open Conversations**. Call job queue lists status with links to Employee, Lead, and Conversation when present.
 
 ## How to test on VPS
 
@@ -39,12 +42,12 @@ Dashboard nav: **Instant Leads** (OPERATE). Form: name, phone, employee/agent se
 2. Ensure the seed number is assigned to the tenant (Phone Numbers) so outbound metadata resolves.
 3. Log in, open **Instant Leads**, create a lead with a real test mobile.
 4. Click **Call now** → Confirm. Job should leave `queued` and become `completed` (or `failed` with a real error).
-5. Open **Calls**. A new outbound row should appear when dial was accepted with a provider run id.
+5. Open **Conversations**. A new outbound row should appear when dial was accepted with a provider run id.
 6. Optional: Campaigns → Enqueue batch with confirm. Leads should dial through the same helper.
 
 ## Schema
 
-Additive migration to **schemaVersion 8**: collections `leads`, `callJobs`. Schema **v10** formalizes `employeeId` and statuses. See [LEADS.md](./LEADS.md).
+Additive migration to **schemaVersion 11**: `callJobs.employeeId` (backfill from lead). See [LEADS.md](./LEADS.md).
 
 ## Out of scope
 

@@ -129,7 +129,7 @@ Schema version 6 adds `knowledgeEntries`, `integrationWebhooks`, `campaigns`, an
 
 Schema version 8 adds `leads` and `callJobs` for Instant Leads (Lead → CallJob → outbound → Call). Outbound dials reuse the telephony `createOutboundCall` contract (Astra `pn_` / `wf_` ids, server-side provider resolution, real `providerRunId`). See `docs/INSTANT-LEADS.md`.
 
-## AI Employees (Phases 1 to 8)
+## AI Employees (Phases 1 to 12)
 
 - `GET /api/employees` lists tenant employees with honest metrics (`callsToday`, `leads`, `qualified`, `lastActiveAt`).
 - `GET /api/employees/templates` returns job templates (Receptionist through Custom).
@@ -137,14 +137,18 @@ Schema version 8 adds `leads` and `callJobs` for Instant Leads (Lead → CallJob
 - `GET /api/employees/:id` returns the employee plus linked agent, workflow, and knowledge summaries.
 - `PATCH /api/employees/:id` updates relationships and fields. `POST .../status`, `/pause`, `/resume` manage lifecycle (`DRAFT` \| `READY` \| `LIVE` \| `PAUSED` \| `ARCHIVED`).
 - `GET` / `PUT /api/employees/:id/instructions` teach greeting, instructions, brief, and workflow step guidance (Phase 5).
+- `GET` / `PUT /api/employees/:id/workflow` customer Workflow steps and guidance (Phase 9). No provider fields.
+- `GET /api/employees/:id/timeline` and `GET /api/leads/:id/timeline` real activity only (Phase 10).
 - `GET /api/employees/:id/training`, `POST .../knowledge`, `DELETE .../knowledge/:id` attach training assets (Phase 6).
 - `GET` / `PUT /api/employees/:id/outcomes` structured outcome definitions (Phase 7). Results foundation only.
 - `GET /api/employees/:id/leads` and `PATCH /api/leads/:id` formalize Lead ↔ Employee links (Phase 8).
-- Customer UI never shows Dograh / VoBiz / Deepgram / Groq / Rumik terminology. See `docs/EMPLOYEES.md`, `docs/INSTRUCTIONS.md`, `docs/OUTCOMES.md`, `docs/LEADS.md`.
+- `GET /api/call-jobs` queue list with status and Employee / Lead / Conversation links (Phase 11).
+- `GET /api/conversations` alias of `/api/calls` with filters `employeeId`, `outcome`, `status` (Phase 12).
+- Customer UI never shows Dograh / VoBiz / Deepgram / Groq / Rumik terminology. See `docs/EMPLOYEES.md`, `docs/INSTRUCTIONS.md`, `docs/OUTCOMES.md`, `docs/LEADS.md`, `docs/TIMELINE.md`, `docs/CONVERSATIONS.md`.
 
 ## Persistence collections
 
-Schema version 10 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, `campaignLeads`, `workflows`, `leads`, `callJobs`, and `employees`. Startup migration is additive (structured employee outcomes, `lead.employeeId`). Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
+Schema version 11 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, `campaignLeads`, `workflows`, `leads`, `callJobs`, and `employees`. Startup migration is additive (structured employee outcomes, `lead.employeeId`, `callJobs.employeeId`). Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
 
 The JSON store remains suitable for a single-process demo. Production must move these contracts to transactional PostgreSQL before accepting money. PayU success redirects must never credit a wallet. Only a verified, idempotent server callback may convert a payment intent into a ledger credit.
 

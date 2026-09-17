@@ -148,9 +148,26 @@ function listTenantCalls(db, tenantId, filters = {}) {
   if (filters.agentId) {
     rows = rows.filter((c) => c.agentId === String(filters.agentId));
   }
+  if (filters.employeeId) {
+    const emp = (db.employees || []).find(
+      (e) => e.id === String(filters.employeeId) && e.tenantId === tenantId,
+    );
+    if (emp && emp.agentId) {
+      rows = rows.filter((c) => c.agentId === emp.agentId);
+    } else {
+      rows = [];
+    }
+  }
   if (filters.direction) {
     const dir = normalizeDirection(filters.direction);
     rows = rows.filter((c) => c.direction === dir);
+  }
+  if (filters.status) {
+    rows = rows.filter((c) => String(c.status || '') === String(filters.status));
+  }
+  if (filters.outcome) {
+    const needle = String(filters.outcome).toLowerCase();
+    rows = rows.filter((c) => String(c.outcome || '').toLowerCase() === needle);
   }
   rows.sort((a, b) => String(b.startedAt || b.createdAt || '').localeCompare(String(a.startedAt || a.createdAt || '')));
   const limit = Math.max(1, Math.min(200, asInt(filters.limit) || 50));
