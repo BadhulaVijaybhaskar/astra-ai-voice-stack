@@ -92,6 +92,125 @@ function providerHealthSummary(described) {
 }
 
 /**
+ * Deploy identity from env (and optional VERSION file contents). Never invents a SHA.
+ * Accepts GIT_SHA, GITHUB_SHA, or a trimmed VERSION file string as gitSha.
+ */
+function deployIdentity(env = process.env, opts = {}) {
+  let gitSha = String(env.GIT_SHA || env.GITHUB_SHA || '').trim() || null;
+  if (!gitSha && opts.versionFileText != null) {
+    const line = String(opts.versionFileText).trim().split(/\r?\n/)[0] || '';
+    gitSha = line.trim() || null;
+  }
+  const deployedAt = String(env.DEPLOYED_AT || env.BUILT_AT || '').trim() || null;
+  const ref = String(env.GIT_REF || env.GITHUB_REF || '').trim() || null;
+  return { gitSha, deployedAt, ref };
+}
+
+/**
+ * Deploy proof payload for authenticated GET /api/version.
+ * Reads GIT_SHA (or GITHUB_SHA) from the environment. Never invents a SHA.
+ */
+function versionPayload(env = process.env, meta = {}) {
+  const id = deployIdentity(env, meta);
+  return {
+    gitSha: id.gitSha,
+    ref: id.ref,
+    version: meta.version != null && String(meta.version).trim() ? String(meta.version).trim() : null,
+    builtAt: id.deployedAt,
+  };
+}
+
+/**
+ * Public / customer readiness only. No provider ids, labels, or model names.
+ * May include deploy identity (gitSha / deployedAt) for DevOps proof without SSH.
+ */
+function publicHealthPayload(meta = {}) {
+  const out = { ok: true };
+  if (meta.uptime != null && Number.isFinite(Number(meta.uptime))) {
+    out.uptime = Math.max(0, Math.floor(Number(meta.uptime)));
+  }
+  if (meta.version != null && String(meta.version).trim()) {
+    out.version = String(meta.version).trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(meta, 'gitSha')) {
+    out.gitSha = meta.gitSha == null || meta.gitSha === '' ? null : String(meta.gitSha);
+  }
+  if (Object.prototype.hasOwnProperty.call(meta, 'deployedAt')) {
+    out.deployedAt = meta.deployedAt == null || meta.deployedAt === '' ? null : String(meta.deployedAt);
+  }
+  return out;
+}
+
+/**
+ * Customer-safe telephony status. Drops provider/orchestrator branding and
+ * ops-console fields (dashboard, upstream workflow id). Keeps DIDs and connect state.
+ * Never exposes Dograh/VoBiz infrastructure ids (configuration.id, phone number id,
+ * numeric inboundWorkflowId). DID inboundWorkflowId is omitted unless it is clearly
+ * an Astra wf_* id.
+ */
+function publicTelephonyStatus(status) {
+  const s = status && typeof status === 'object' ? status : {};
+  const out = {
+    connected: !!s.connected,
+    did: s.did || null,
+    dids: Array.isArray(s.dids)
+      ? s.dids.map((d) => {
+        if (!d || typeof d !== 'object') return { number: String(d || '') };
+        // Omit provider phone-number id (Dograh row.id). Customers only need the DID.
+        const row = {
+          number: d.number,
+          status: d.status,
+          label: d.label || '',
+          isDefaultCallerId: !!d.isDefaultCallerId,
+        };
+        const wf = d.inboundWorkflowId;
+        if (typeof wf === 'string' && /^wf_[a-zA-Z0-9]+$/.test(wf)) {
+          row.inboundWorkflowId = wf;
+        }
+        return row;
+      })
+      : [],
+  };
+  if (s.configuration && typeof s.configuration === 'object') {
+    // Name / default-outbound flag only. Never configuration.id (Dograh config id).
+    out.configuration = {
+      name: s.configuration.name,
+      isDefaultOutbound: !!s.configuration.isDefaultOutbound,
+    };
+  }
+  return out;
+}
+
+/**
+ * Super-admin detailed readiness from providers.describeProviders().
+ * Includes provider ids and selected models. Call assertNoSecretValues before sending.
+ */
+function detailedHealthPayload(described) {
+  const providerHealth = (layer) => Object.fromEntries((described[layer] || []).map((item) => [item.id, item.live]));
+  const selected = (layer) => (described[layer] || []).find((item) => item.selected) || (described[layer] || [])[0] || {};
+  const selectedStt = selected('stt');
+  const selectedTts = selected('tts');
+  const selectedLlm = selected('llm');
+  const selectedTelephony = selected('telephony');
+  return {
+    ok: true,
+    providers: {
+      stt: providerHealth('stt'),
+      tts: providerHealth('tts'),
+      llm: providerHealth('llm'),
+      telephony: providerHealth('telephony'),
+    },
+    models: { stt: selectedStt.model, llm: selectedLlm.model, tts: selectedTts.model },
+    selected: {
+      stt: { provider: selectedStt.id, model: selectedStt.model },
+      tts: { provider: selectedTts.id, model: selectedTts.model },
+      llm: { provider: selectedLlm.id, model: selectedLlm.model },
+      telephony: { provider: selectedTelephony.id },
+    },
+  };
+}
+
+/**
  * Assert a JSON payload never contains raw secret-looking values for known env keys.
  * Used in tests and defensive admin serialization.
  */
@@ -133,6 +252,11 @@ module.exports = {
   publicWorkspace,
   sanitizeTenantUpdate,
   providerHealthSummary,
+  publicHealthPayload,
+  detailedHealthPayload,
+  publicTelephonyStatus,
+  deployIdentity,
+  versionPayload,
   assertNoSecretValues,
   publicAuditEvent,
 };

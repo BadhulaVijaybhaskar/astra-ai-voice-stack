@@ -33,6 +33,21 @@ const integrations = require('./lib/integrations');
 const campaigns = require('./lib/campaigns');
 const analytics = require('./lib/analytics');
 const plans = require('./lib/plans');
+const pkg = require('./package.json');
+const STARTED_AT_MS = Date.now();
+const APP_VERSION = String((pkg && pkg.version) || '1.0.0');
+
+function readVersionFileText() {
+  try {
+    return fs.readFileSync(path.join(__dirname, 'VERSION'), 'utf8');
+  } catch (_) {
+    return null;
+  }
+}
+
+function currentDeployIdentity() {
+  return org.deployIdentity(process.env, { versionFileText: readVersionFileText() });
+}
 const workflows = require('./lib/workflows');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
@@ -726,11 +741,18 @@ async function apiPublicDemoSession(req, res, token) {
   }
 }
 
-// GET /api/telephony/status -> VoBiz configuration status from Dograh.
-async function apiTelephonyStatus(req, res) {
+// GET /api/telephony/status -> connection + DIDs. Provider brand names are Super Admin only.
+async function apiTelephonyStatus(req, res, ctx) {
   try {
     const status = await providers.telephony.status();
-    core.sendJson(res, 200, { ...status, provider: 'vobiz', orchestrator: 'dograh' });
+    const rich = Object.assign({}, status, {
+      provider: status.provider || 'vobiz',
+      orchestrator: status.orchestrator || 'dograh',
+    });
+    if (ctx && ctx.user && ctx.user.role === 'super_admin') {
+      return core.sendJson(res, 200, rich);
+    }
+    return core.sendJson(res, 200, org.publicTelephonyStatus(rich));
   } catch (e) {
     handleProviderError(res, e);
   }
@@ -1807,33 +1829,50 @@ async function apiAdminTicketUpdate(req, res, ctx) {
   core.sendJson(res, 200, { ok: true });
 }
 
-// GET /api/providers -> the registry so Settings can render active vs available.
-function apiProviders(req, res) {
-  core.sendJson(res, 200, providers.describeProviders());
+// GET /api/providers -> authed registry so Settings can render active vs available.
+// Never public: provider ids/labels are an inventory leak when unauthenticated.
+function apiProviders(req, res, ctx) {
+  const payload = providers.describeProviders();
+  const check = org.assertNoSecretValues(payload);
+  if (!check.ok) {
+    return core.sendJson(res, 500, { error: 'provider registry refused to leak secrets', code: 'secret_guard' });
+  }
+  core.sendJson(res, 200, payload);
 }
 
-// GET /api/health -> readiness + which provider keys are present.
-function apiHealth(req, res) {
-  const described = providers.describeProviders();
-  const providerHealth = (layer) => Object.fromEntries((described[layer] || []).map((item) => [item.id, item.live]));
-  const selected = (layer) => (described[layer] || []).find((item) => item.selected) || (described[layer] || [])[0] || {};
-  const selectedStt = selected('stt'); const selectedTts = selected('tts'); const selectedLlm = selected('llm'); const selectedTelephony = selected('telephony');
+// GET /api/version -> authenticated deploy proof (gitSha from env, never invented).
+function apiVersion(req, res) {
+  const id = currentDeployIdentity();
   core.sendJson(res, 200, {
-    ok: true,
-    providers: {
-      stt: providerHealth('stt'),
-      tts: providerHealth('tts'),
-      llm: providerHealth('llm'),
-      telephony: providerHealth('telephony'),
-    },
-    models: { stt: selectedStt.model, llm: selectedLlm.model, tts: selectedTts.model },
-    selected: {
-      stt: { provider: selectedStt.id, model: selectedStt.model },
-      tts: { provider: selectedTts.id, model: selectedTts.model },
-      llm: { provider: selectedLlm.id, model: selectedLlm.model },
-      telephony: { provider: selectedTelephony.id },
-    },
+    gitSha: id.gitSha,
+    ref: id.ref,
+    version: APP_VERSION,
+    builtAt: id.deployedAt,
   });
+}
+
+// GET /api/health -> public readiness + deploy identity. Provider inventory is super_admin only.
+async function apiHealth(req, res) {
+  const id = currentDeployIdentity();
+  const ctx = await core.getSession(req);
+  if (!ctx || ctx.user.role !== 'super_admin') {
+    return core.sendJson(res, 200, org.publicHealthPayload({
+      uptime: (Date.now() - STARTED_AT_MS) / 1000,
+      version: APP_VERSION,
+      gitSha: id.gitSha,
+      deployedAt: id.deployedAt,
+    }));
+  }
+  const payload = org.detailedHealthPayload(providers.describeProviders());
+  payload.uptime = Math.floor((Date.now() - STARTED_AT_MS) / 1000);
+  payload.version = APP_VERSION;
+  payload.gitSha = id.gitSha;
+  payload.deployedAt = id.deployedAt;
+  const check = org.assertNoSecretValues(payload);
+  if (!check.ok) {
+    return core.sendJson(res, 500, { error: 'provider health refused to leak secrets', code: 'secret_guard' });
+  }
+  core.sendJson(res, 200, payload);
 }
 
 /* ==========================================================================
@@ -1871,7 +1910,6 @@ const server = http.createServer(async (req, res) => {
 
       // ---- Public GET routes ----
       if (route === '/api/health' && req.method === 'GET') return apiHealth(req, res);
-      if (route === '/api/providers' && req.method === 'GET') return apiProviders(req, res);
       if (route.startsWith('/api/public/demo/') && req.method === 'GET') {
         const token = decodeURIComponent(route.slice('/api/public/demo/'.length));
         if (token.includes('/')) return core.sendJson(res, 404, { error: 'demo link not found', code: 'not_found' });
@@ -1907,6 +1945,8 @@ const server = http.createServer(async (req, res) => {
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
         if (route === '/api/me') return core.requireAuth(req, res, apiMe);
+        if (route === '/api/version') return core.requireAuth(req, res, apiVersion);
+        if (route === '/api/providers') return core.requireAuth(req, res, apiProviders);
         if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsList);
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);
         if (route === '/api/telephony/status') return core.requireAuth(req, res, apiTelephonyStatus);
@@ -2073,6 +2113,38 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && route.startsWith('/demo/')) {
       req.url = '/demo.html';
     }
+
+    // Ops console is Super Admin only. Anonymous and customer sessions go to the product app.
+    // Always noindex so the ops URL is not a customer or crawl path.
+    if ((req.method === 'GET' || req.method === 'HEAD') && (route === '/console.html' || route === '/console')) {
+      const ctx = await core.getSession(req);
+      if (!(ctx && ctx.user && ctx.user.role === 'super_admin')) {
+        res.writeHead(302, {
+          Location: '/app.html',
+          'Cache-Control': 'no-store',
+          'X-Robots-Tag': 'noindex, nofollow',
+        });
+        return res.end();
+      }
+      const file = path.join(core.PUBLIC_DIR, 'console.html');
+      return fs.readFile(file, (err, data) => {
+        if (err) return core.send(res, 404, 'not found');
+        if (req.method === 'HEAD') {
+          return core.send(res, 200, '', {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'X-Robots-Tag': 'noindex, nofollow',
+            'Content-Length': Buffer.byteLength(data),
+          });
+        }
+        core.send(res, 200, data, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'X-Robots-Tag': 'noindex, nofollow',
+        });
+      });
+    }
+
     // Everything else is a static file from public/.
     core.serveStatic(req, res);
   } catch (e) {
