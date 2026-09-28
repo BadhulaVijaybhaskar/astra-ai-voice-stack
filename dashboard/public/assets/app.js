@@ -1,6 +1,6 @@
 'use strict';
 /* ==========================================================================
-   Astra AI , Console (product dashboard) SPA.
+   Astra Voice , Console (product dashboard) SPA.
    Vanilla JS. Zero dependencies. Hash routing. Talks only to our own /api/*
    so provider keys stay server side. No em dashes anywhere. Use commas or periods.
    ========================================================================== */
@@ -155,13 +155,23 @@ function initials(name) {
   return parts.map((p) => p[0]).join('').toUpperCase() || '?';
 }
 function brandMark(size) {
-  // Official ribbon-A mark from logo-mark.png (no invented SVG glyph).
+  // Approved AC mark (electric blue A + teal C). Favicon / compact / boot only.
   const img = document.createElement('img');
-  img.src = '/assets/logo-mark.png';
+  img.src = '/assets/brand/astra-voice-ac-mark.png';
   img.alt = '';
   img.width = size || 30;
   img.height = size || 30;
   img.className = 'lm';
+  img.decoding = 'async';
+  return img;
+}
+function brandLockup(height) {
+  // Approved Astra Voice lockup for sidebar / auth. Do not invent SVG wordmarks.
+  const img = document.createElement('img');
+  img.src = '/assets/brand/astravoice-lockup.png';
+  img.alt = 'Astra Voice';
+  img.className = 'lockup auth-lockup';
+  if (height) img.style.height = height + 'px';
   img.decoding = 'async';
   return img;
 }
@@ -213,14 +223,13 @@ function renderAuth() {
 
     const card = el('div', { class: 'auth-card' }, [
       el('div', { class: 'auth-brand' }, [
-        brandMark(36),
-        el('span', { class: 'nm' }, [document.createTextNode('astra '), el('em', {}, 'AI')])
+        brandLockup(40)
       ]),
       el('h1', {}, mode === 'login' ? 'Welcome back' : 'Start building'),
       el('p', { class: 'sub' }, mode === 'login' ? 'Sign in to your voice agent console.' : 'Spin up a tenant and ship AI voice agents from ₹1/min for the AI layer. Telephony is separate.'),
       form,
       el('div', { class: 'auth-toggle' }, [
-        document.createTextNode(mode === 'login' ? 'New to Astra AI. ' : 'Already have an account. '),
+        document.createTextNode(mode === 'login' ? 'New to Astra Voice. ' : 'Already have an account. '),
         el('button', { type: 'button', onclick: () => { mode = mode === 'login' ? 'signup' : 'login'; draw(); } }, mode === 'login' ? 'Create one' : 'Sign in')
       ]),
       mode === 'login' ? el('div', { class: 'auth-demo' }, 'Use your workspace email and password. Test accounts are provisioned securely by the platform admin.') : null
@@ -363,8 +372,7 @@ function renderShell() {
 
   const side = el('aside', { class: 'side' }, [
     el('div', { class: 'side-brand' }, [
-      brandMark(28),
-      el('span', { class: 'nm' }, [document.createTextNode('astra '), el('em', {}, 'AI')])
+      brandLockup(32)
     ]),
     nav,
     el('div', { class: 'side-foot' }, [
@@ -383,7 +391,7 @@ function renderShell() {
     el('div', { class: 'flex items-center gap-2', style: 'min-width:0' }, [
       el('button', { class: 'menu-btn', 'aria-label': 'Menu', onclick: () => $('.shell').classList.toggle('nav-open'), html: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>' }),
       el('div', { class: 'top-route' }, [
-        el('span', { class: 'crumb' }, 'Astra AI'),
+        el('span', { class: 'crumb' }, 'Astra Voice'),
         el('span', { class: 'ttl', id: 'routeTitle' }, 'Overview')
       ])
     ]),
@@ -635,8 +643,8 @@ function buildSpark(data) {
   svg.setAttribute('preserveAspectRatio', 'none');
   svg.innerHTML =
     '<defs>' +
-    '<linearGradient id="sparkline" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6B21A8"/><stop offset="0.55" stop-color="#7C3AED"/><stop offset="1" stop-color="#06B6D4"/></linearGradient>' +
-    '<linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#06B6D4" stop-opacity="0.32"/><stop offset="1" stop-color="#6B21A8" stop-opacity="0"/></linearGradient>' +
+    '<linearGradient id="sparkline" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0066c9"/><stop offset="0.55" stop-color="#0077ec"/><stop offset="1" stop-color="#1a8af0"/></linearGradient>' +
+    '<linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0077ec" stop-opacity="0.28"/><stop offset="1" stop-color="#0077ec" stop-opacity="0"/></linearGradient>' +
     '</defs>';
   if (!data.length) {
     const txt = document.createElementNS(ns, 'text');
@@ -660,7 +668,7 @@ function buildSpark(data) {
   // last point dot
   const c = document.createElementNS(ns, 'circle');
   c.setAttribute('cx', x(n - 1)); c.setAttribute('cy', y(data[n - 1].v)); c.setAttribute('r', 3.2);
-  c.setAttribute('fill', '#6B21A8'); c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', '1');
+  c.setAttribute('fill', '#0077ec'); c.setAttribute('stroke', '#fff'); c.setAttribute('stroke-width', '1');
   svg.appendChild(c);
   return svg;
 }
@@ -2085,7 +2093,7 @@ function buildAgentForm(existing, options) {
 
   const nameI = el('input', { class: 'input', id: 'f_name', type: 'text', value: defaultName, placeholder: 'Front Desk', maxlength: 80 });
   const personaI = el('textarea', { class: 'textarea', id: 'f_persona', rows: 4, placeholder: 'You are a warm, sharp receptionist. Answer in 1 to 2 short spoken sentences, qualify the lead, and book a callback.' }, defaultPersona);
-  const greetI = el('input', { class: 'input', id: 'f_greeting', type: 'text', value: defaultGreeting, placeholder: 'Hi, thanks for calling Astra AI. How can I help today.', maxlength: 240 });
+  const greetI = el('input', { class: 'input', id: 'f_greeting', type: 'text', value: defaultGreeting, placeholder: 'Hi, thanks for calling Astra Voice. How can I help today.', maxlength: 240 });
   const descI = el('input', { class: 'input', id: 'f_desc', type: 'text', value: (tts.description || ''), placeholder: 'Optional voice direction, e.g. calm and confident' });
 
   const modelSeg = el('div', { class: 'seg', id: 'f_model_seg' }, VOICE_MODELS.map((m) =>
@@ -2294,7 +2302,7 @@ function viewStudio(root) {
 
   const st = { model: 'mulberry', tone: 'neutral', speaker: 'speaker_2', f0: 0, stream: false };
 
-  const textArea = el('textarea', { class: 'textarea studio-text', id: 's_text', placeholder: 'Welcome to Astra AI. Production-grade AI voice starts from ₹1 per minute for the AI layer.' }, 'Welcome to Astra AI. Production-grade AI voice starts from ₹1 per minute for the AI layer.');
+  const textArea = el('textarea', { class: 'textarea studio-text', id: 's_text', placeholder: 'Welcome to Astra Voice. Production-grade AI voice starts from ₹1 per minute for the AI layer.' }, 'Welcome to Astra Voice. Production-grade AI voice starts from ₹1 per minute for the AI layer.');
 
   // model picker
   const modelSeg = el('div', { class: 'seg' }, VOICE_MODELS.map((m) =>
@@ -2477,7 +2485,7 @@ function drawWaveform(samples, canvas) {
   const bars = Math.max(40, Math.min(180, Math.floor(w / 4)));
   const block = Math.floor(samples.length / bars) || 1;
   const grad = ctx.createLinearGradient(0, 0, w, 0);
-  grad.addColorStop(0, '#6B21A8'); grad.addColorStop(0.55, '#7C3AED'); grad.addColorStop(1, '#06B6D4');
+  grad.addColorStop(0, '#0066c9'); grad.addColorStop(0.55, '#0077ec'); grad.addColorStop(1, '#1a8af0');
   ctx.fillStyle = grad;
   const bw = w / bars;
   for (let b = 0; b < bars; b++) {
@@ -5447,7 +5455,7 @@ async function viewSettings(root) {
   const t = State.me.tenant;
   const isOwner = State.me && ['super_admin', 'admin', 'owner'].includes(State.me.user.role);
   const nameI = el('input', { class: 'input', id: 'set_name', type: 'text', value: t.name || '' });
-  const colorVal = (t.branding && t.branding.color) || '#6B21A8';
+  const colorVal = (t.branding && t.branding.color) || '#0077ec';
   const colorI = el('input', { type: 'color', id: 'set_color', value: colorVal });
   const colorHex = el('input', { class: 'input', id: 'set_color_hex', value: colorVal, style: 'max-width:130px;font-family:var(--mono)' });
   colorI.addEventListener('input', () => { colorHex.value = colorI.value; });
@@ -5546,7 +5554,7 @@ async function viewSettings(root) {
   root.appendChild(el('div', { class: 'settings-split' }, [
     el('section', { class: 'card card-pad' }, [
       el('h3', { class: 't-h3' }, 'Privacy and HIPAA mode'),
-      el('p', { class: 'muted privacy-copy' }, 'HIPAA mode disables recording and transcript retention in Astra AI. It does not by itself make your organization HIPAA compliant. You still need appropriate provider BAAs, policies, access controls, consent, and legal review.'),
+      el('p', { class: 'muted privacy-copy' }, 'HIPAA mode disables recording and transcript retention in Astra Voice. It does not by itself make your organization HIPAA compliant. You still need appropriate provider BAAs, policies, access controls, consent, and legal review.'),
       field('Retention policy', privacySelect), privacySave
     ]),
     el('section', { class: 'card card-pad' }, [
