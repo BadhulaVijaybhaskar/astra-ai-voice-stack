@@ -247,28 +247,38 @@ class DograhVobizProvider extends TelephonyProvider {
       let ctx = null;
 
       // Prefer explicit Astra pn_ over first-assigned outboundDialContext.
+      // Fail closed when an explicit pn_ is invalid. Never fall through to env.
       if (options.phoneNumberId) {
         const number = phoneNumbers.findNumber(db, options.phoneNumberId);
-        if (number
-          && number.tenantId === tenantId
-          && number.status === 'assigned'
-          && number.outboundEnabled !== false) {
-          const meta = number.providerMetadata || {};
-          ctx = {
-            phoneNumberId: number.id,
-            e164: number.e164,
-            dograhTelephonyConfigId: meta.dograhTelephonyConfigId || null,
-            dograhPhoneNumberId: meta.dograhPhoneNumberId
-              || Number(number.providerNumberId) || null,
-            workflowId: null,
-          };
-          if (number.outboundWorkflowId) {
-            const resolved = workflows.resolveProviderWorkflowId(db, tenantId, number.outboundWorkflowId);
-            if (resolved) ctx.workflowId = resolved;
-          } else if (number.inboundWorkflowId) {
-            const resolved = workflows.resolveProviderWorkflowId(db, tenantId, number.inboundWorkflowId);
-            if (resolved) ctx.workflowId = resolved;
-          }
+        if (!number || number.tenantId !== tenantId) {
+          throw new TelephonyProviderError(
+            'Phone Number not found in this workspace',
+            404,
+            'phone_number_not_found',
+          );
+        }
+        if (number.status !== 'assigned' || number.outboundEnabled === false) {
+          throw new TelephonyProviderError(
+            'Phone Number is not assigned for outbound dialing',
+            422,
+            'phone_number_not_outbound',
+          );
+        }
+        const meta = number.providerMetadata || {};
+        ctx = {
+          phoneNumberId: number.id,
+          e164: number.e164,
+          dograhTelephonyConfigId: meta.dograhTelephonyConfigId || null,
+          dograhPhoneNumberId: meta.dograhPhoneNumberId
+            || Number(number.providerNumberId) || null,
+          workflowId: null,
+        };
+        if (number.outboundWorkflowId) {
+          const resolved = workflows.resolveProviderWorkflowId(db, tenantId, number.outboundWorkflowId);
+          if (resolved) ctx.workflowId = resolved;
+        } else if (number.inboundWorkflowId) {
+          const resolved = workflows.resolveProviderWorkflowId(db, tenantId, number.inboundWorkflowId);
+          if (resolved) ctx.workflowId = resolved;
         }
       }
       if (!ctx) {
@@ -298,6 +308,18 @@ class DograhVobizProvider extends TelephonyProvider {
     }
 
     if (numericWorkflowId) dialOpts.workflowId = numericWorkflowId;
+
+    // Fail closed: product dials require a resolved Astra Phone Number mapping.
+    // Do not silently fall back to DOGRAH_PHONE_NUMBER_ID / DOGRAH_TELEPHONY_CONFIG_ID.
+    if (!dialOpts.telephonyConfigId || !dialOpts.fromPhoneNumberId) {
+      throw new TelephonyProviderError(
+        'Assign a Phone Number before placing an outbound call',
+        422,
+        'phone_number_required',
+      );
+    }
+    // Pass failClosed so initiateCall refuses env fallback for number ids.
+    dialOpts.failClosedNumbers = true;
 
     // Prefer initiateCall with E.164. dial() only for national-format input.
     const asE164 = phoneNumbers.normalizeE164(rawNumber);

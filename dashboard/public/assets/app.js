@@ -506,7 +506,7 @@ async function viewOverview(root) {
   const name = State.me.user.name || State.me.user.email;
   root.appendChild(viewHead(
     'Welcome back, ' + name + '.',
-    'Create an AI Employee, teach, assign a Phone Number, connect leads, and go live.',
+    'Create an AI Employee, teach, assign a Phone Number, connect Instant Leads, and go live.',
     'overview-hero'
   ));
 
@@ -516,33 +516,32 @@ async function viewOverview(root) {
   const body = el('div', { class: 'grid grid-12', style: 'margin-top:14px' }, [
     el('div', { class: 'card spark-card', id: 'sparkHost' }, skeleton('sk-card', 1)),
     el('div', { class: 'card qa-card', id: 'qaHost' }, [
-      el('h3', {}, 'Quick actions'),
+      el('h3', {}, 'Demo path'),
       el('div', { class: 'qa-row' }, [
         el('button', { class: 'btn btn-primary', onclick: () => goto('employees') }, 'My Employees'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('leads') }, 'Instant Leads'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('campaigns') }, 'Campaigns'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('numbers') }, 'Phone Numbers'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('calls') }, 'Conversations'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('analytics') }, 'Performance')
       ]),
-      el('div', { class: 'qa-foot', id: 'provMini' }, 'Checking providers...')
+      el('div', { class: 'qa-foot', id: 'provMini' }, 'Checking runtime...')
     ])
   ]);
   root.appendChild(body);
 
-  // load usage + agents in parallel
+  // load usage + employees in parallel
   try {
-    const [usage, agentsRes] = await Promise.all([
+    const [usage, empRes] = await Promise.all([
       api('/api/usage'),
-      State.loaded.agents ? Promise.resolve({ agents: State.agents }) : api('/api/agents')
+      State.loaded.employees ? Promise.resolve({ employees: State.employees }) : api('/api/employees')
     ]);
     State.usage = usage;
-    State.agents = agentsRes.agents || [];
-    State.loaded.agents = true;
+    State.employees = empRes.employees || [];
+    State.loaded.employees = true;
 
     const totals = usage.totals || {};
     statsRow.innerHTML = '';
-    statsRow.appendChild(statCard('Agents', String(State.agents.length), 'Live in this tenant'));
+    statsRow.appendChild(statCard('Employees', String(State.employees.length), 'In this workspace'));
     statsRow.appendChild(statCard('Characters synthesized', fmtInr(totals.chars || 0), 'Across all days'));
     statsRow.appendChild(statCard('Estimated spend', '₹' + fmtInr(totals.costInr || estimateCost(usage)), 'At promo rates', true));
 
@@ -553,26 +552,35 @@ async function viewOverview(root) {
     statsRow.appendChild(el('div', { class: 'card card-pad muted' }, 'Could not load usage. ' + esc(e.message)));
   }
 
-  // provider mini summary (customer-facing labels only)
+  // Product-ready runtime summary. No provider brand names for customers.
   ensureProviders().then(() => {
     const pm = $('#provMini'); if (!pm) return;
     const reg = State.providers || {};
+    if (reg.layers) {
+      const parts = [];
+      if (reg.layers.voice) parts.push('Voice');
+      if (reg.layers.brain) parts.push('Brain');
+      if (reg.layers.listening) parts.push('Listening');
+      if (reg.layers.telephony) parts.push('Telephony');
+      pm.textContent = parts.length
+        ? ('Runtime ready: ' + parts.join(', ') + '.')
+        : 'Runtime not fully connected yet.';
+      return;
+    }
+    // Super Admin may still receive the full registry.
     const live = [];
-    const friendly = {
-      rumik: 'Rumik Silk',
-      groq: 'Groq',
-      gemini: 'Gemini',
-      deepgram: 'Deepgram',
-      vobiz: 'Telephony'
-    };
     ['tts', 'llm', 'telephony'].forEach((layer) => {
       (reg[layer] || []).forEach((p) => {
         if (!p.live) return;
-        live.push(friendly[p.id] || String(p.label || p.id).replace(/\s*via\s*Dograh/i, '').replace(/VoBiz/i, 'Telephony'));
+        if (layer === 'tts') live.push('Voice');
+        else if (layer === 'llm') live.push('Brain');
+        else if (layer === 'telephony') live.push('Telephony');
       });
     });
-    pm.textContent = live.length ? ('Active stack: ' + live.join(', ') + '.') : 'No live providers detected.';
-  }).catch(() => {});
+    pm.textContent = live.length ? ('Runtime ready: ' + [...new Set(live)].join(', ') + '.') : 'Runtime not fully connected yet.';
+  }).catch(() => {
+    const pm = $('#provMini'); if (pm) pm.textContent = 'Runtime status unavailable.';
+  });
 }
 
 function statCard(lbl, val, delta, up) {
@@ -603,7 +611,7 @@ function sparkPanel(days) {
       head,
       el('div', { class: 'spark-empty' }, [
         el('div', { class: 'se-title' }, 'No usage yet'),
-        el('div', { class: 'se-sub' }, 'Synthesize in Voice Studio or talk to an agent to see characters per day here.')
+        el('div', { class: 'se-sub' }, 'Use Instant Leads or Conversations after go-live to see characters per day here.')
       ])
     ]);
   }
@@ -1732,7 +1740,7 @@ async function viewEmployeeStudio(root, id) {
     body.appendChild(el('h3', { class: 't-h3' }, 'Voice'));
     const v = emp.voice || {};
     body.appendChild(el('p', { class: 'muted' },
-      'Choose the Language this Employee speaks. Only supported languages are listed.'));
+      'Choose Language and Voice tier. Only Standard is live for dials. Premium and brand tiers are placeholders.'));
     let languages = [];
     try {
       const langRes = await api('/api/employees/languages');
@@ -1768,16 +1776,66 @@ async function viewEmployeeStudio(root, id) {
     };
     body.appendChild(field('Language', langSel));
     body.appendChild(saveLang);
+
+    let tiers = [];
+    try {
+      const tierRes = await api('/api/employees/voice-tiers');
+      tiers = tierRes.tiers || [];
+    } catch (_) {
+      tiers = [
+        { id: 'standard', label: 'Standard', available: true, description: 'Platform voice profiles.' },
+        { id: 'regional_premium', label: 'Regional Premium', available: false, description: 'Placeholder.' },
+        { id: 'licensed_brand', label: 'Licensed Brand', available: false, description: 'Placeholder.' },
+        { id: 'private_enterprise', label: 'Private Enterprise', available: false, description: 'Placeholder.' },
+      ];
+    }
+    const currentTier = v.tier || emp.voiceTier || 'standard';
+    const tierHost = el('div', { class: 'emp-voice-tiers', style: 'margin-top:18px' });
+    tierHost.appendChild(el('h4', { class: 't-h4', style: 'margin-bottom:8px' }, 'Voice tier'));
+    tiers.forEach((t) => {
+      const selected = t.id === currentTier;
+      const card = el('div', {
+        class: 'card card-pad',
+        style: 'margin-bottom:10px;border-color:' + (selected ? 'var(--acc)' : 'var(--line)'),
+      }, [
+        el('div', { class: 'flex items-center justify-between gap-2' }, [
+          el('b', {}, t.label + (selected ? ' · selected' : '')),
+          el('span', { class: 'pill' }, t.available ? 'Live' : 'Coming soon'),
+        ]),
+        el('p', { class: 'muted', style: 'margin-top:6px' }, t.description || ''),
+      ]);
+      if (t.available) {
+        const btn = el('button', {
+          class: selected ? 'btn btn-ghost' : 'btn btn-primary',
+          style: 'margin-top:10px',
+          disabled: selected ? 'disabled' : null,
+        }, selected ? 'Active' : 'Use Standard');
+        btn.onclick = async () => {
+          btn.disabled = true;
+          try {
+            await api('/api/employees/' + encodeURIComponent(emp.id) + '/voice-tier', {
+              method: 'PUT',
+              body: { tier: t.id },
+            });
+            State.loaded.employees = false;
+            toast('Voice tier saved.', 'ok');
+            onRoute();
+          } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
+        };
+        card.appendChild(btn);
+      } else {
+        card.appendChild(el('p', { class: 'muted', style: 'margin-top:10px' },
+          'Requires consent, dataset, private profile, rights, audit, and revoke. Not selectable yet.'));
+      }
+      tierHost.appendChild(card);
+    });
+    body.appendChild(tierHost);
     body.appendChild(el('div', { class: 'emp-meta', style: 'margin-top:18px' }, [
-      el('div', {}, [el('span', { class: 'muted' }, 'Speaker'), el('b', {}, (v.speaker || 'speaker_1').replace(/_/g, ' '))]),
-      el('div', {}, [el('span', { class: 'muted' }, 'Model'), el('b', {}, v.model || 'mulberry')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Profile'), el('b', {}, v.profileLabel || v.tierLabel || 'Standard voice profile')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Language'), el('b', {}, currentLang)]),
     ]));
     body.appendChild(el('p', { class: 'muted', style: 'margin-top:12px' },
-      'Voice preview and tuning live in Voice Studio and the linked agent. Provider names are not shown here.'));
-    body.appendChild(el('div', { class: 'flex gap-2', style: 'margin-top:12px' }, [
-      el('button', { class: 'btn btn-ghost', onclick: () => goto('studio') }, 'Open Voice Studio'),
-      el('button', { class: 'btn btn-ghost', onclick: () => goto('agents') }, 'Open Agents'),
-    ]));
+      'Brand and private enterprise voices are design placeholders only. No celebrity cloning in this product.'));
   } else if (tab === 'settings') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Settings'));
     const nameIn = el('input', { class: 'input', value: emp.name || '' });
@@ -5135,7 +5193,7 @@ function grantTestCredits(t) {
    7. SETTINGS
    =========================================================================== */
 async function viewSettings(root) {
-  root.appendChild(viewHead('Settings', 'Workspace identity, members, audit history, and implemented providers. Secrets stay in server .env only.'));
+  root.appendChild(viewHead('Account', 'Workspace identity, members, audit history, and runtime readiness. Secrets stay in server .env only.'));
 
   const provHost = el('div', { id: 'provHost' }, skeleton('sk-card', 3));
   root.appendChild(provHost);
@@ -5275,16 +5333,39 @@ async function loadByon(host) {
 
 function paintProviders(host, reg) {
   host.innerHTML = '';
+  // Customer payload: product layers only (no brand inventory).
+  if (reg && reg.layers) {
+    const rows = [
+      { key: 'voice', label: 'Voice' },
+      { key: 'brain', label: 'Brain' },
+      { key: 'listening', label: 'Listening' },
+      { key: 'telephony', label: 'Telephony' },
+    ];
+    host.appendChild(el('div', { class: 'card card-pad' }, [
+      el('h3', { class: 't-h3', style: 'margin-bottom:10px' }, 'Runtime'),
+      el('p', { class: 'muted', style: 'margin-bottom:12px' },
+        'Product readiness only. Provider brand inventory is Super Admin Diagnostics.'),
+      el('div', { class: 'prov-grid' }, rows.map((r) => el('div', { class: 'card prov-card' }, [
+        el('div', { class: 'pc-top' }, [
+          el('div', { class: 'pc-name' }, r.label),
+          reg.layers[r.key]
+            ? el('span', { class: 'badge-live' }, [el('span', { class: 'd' }), 'Ready'])
+            : el('span', { class: 'badge-ready' }, [el('span', { class: 'd' }), 'Not ready']),
+        ]),
+      ]))),
+    ]));
+    return;
+  }
   const layers = [
-    { key: 'tts', label: 'Text to speech' },
-    { key: 'llm', label: 'Brain, LLM' },
+    { key: 'tts', label: 'Voice' },
+    { key: 'llm', label: 'Brain' },
     { key: 'telephony', label: 'Telephony' }
   ];
   layers.forEach((L) => {
     const list = reg[L.key] || [];
     const wrap = el('div', { class: 'prov-layer' }, [
       el('div', { class: 'lh' }, [el('span', { class: 'lt' }, L.label)]),
-      el('div', { class: 'prov-grid' }, list.length ? list.map(provCard) : [el('div', { class: 'muted' }, 'No providers registered.')])
+      el('div', { class: 'prov-grid' }, list.length ? list.map(provCard) : [el('div', { class: 'muted' }, 'No adapters registered.')])
     ]);
     host.appendChild(wrap);
   });

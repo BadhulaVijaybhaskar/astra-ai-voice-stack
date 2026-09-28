@@ -532,18 +532,30 @@ const telVobiz = {
   // Outbound initiate-call with an E.164 destination. Used by the callback
   // webhook and by dial() after national-number normalization.
   // Prefer options.workflowId / telephonyConfigId / fromPhoneNumberId when they
-  // are positive integers. Fall back to DOGRAH_* env only when missing.
+  // are positive integers. Env fallback for number ids is allowed only for
+  // legacy ops paths. Product dials set failClosedNumbers and must pass
+  // resolved Astra Phone Number mappings (no silent DOGRAH_* number fallback).
   async initiateCall(phoneE164, options = {}) {
     if (!hasEnv(this.needs)) throw notConfigured(this.label, this.needs);
     const phone = String(phoneE164 || '').trim();
     if (!/^\+[1-9]\d{6,14}$/.test(phone)) {
       throw new ProviderError('phone must be E.164 (+ and 7 to 15 digits)', 422, 'bad_number');
     }
+    const failClosedNumbers = options.failClosedNumbers === true;
     const workflowId = positiveIntOption(options.workflowId) || positiveIntEnv('DOGRAH_WORKFLOW_ID');
-    const telephonyConfigId = positiveIntOption(options.telephonyConfigId)
-      || positiveIntEnv('DOGRAH_TELEPHONY_CONFIG_ID');
-    const fromPhoneNumberId = positiveIntOption(options.fromPhoneNumberId)
-      || positiveIntEnv('DOGRAH_PHONE_NUMBER_ID');
+    let telephonyConfigId = positiveIntOption(options.telephonyConfigId);
+    let fromPhoneNumberId = positiveIntOption(options.fromPhoneNumberId);
+    if (!failClosedNumbers) {
+      telephonyConfigId = telephonyConfigId || positiveIntEnv('DOGRAH_TELEPHONY_CONFIG_ID');
+      fromPhoneNumberId = fromPhoneNumberId || positiveIntEnv('DOGRAH_PHONE_NUMBER_ID');
+    }
+    if (!telephonyConfigId || !fromPhoneNumberId) {
+      throw new ProviderError(
+        'Assign a Phone Number before placing an outbound call',
+        422,
+        'phone_number_required',
+      );
+    }
     const result = await this.request('POST', '/api/v1/telephony/initiate-call', {
       workflow_id: workflowId,
       telephony_configuration_id: telephonyConfigId,

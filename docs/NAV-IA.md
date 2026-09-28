@@ -16,4 +16,4 @@ Provider-era labels (Agents, Workflows, Presets, Voice Studio, Talk to it, Knowl
 
 North star UX: Create AI Employee → Teach → Test → Assign Number → Connect Leads → Go Live → Conversations → Outcomes.
 
-See [EMPLOYEES.md](./EMPLOYEES.md), [PHONE-NUMBERS.md](./PHONE-NUMBERS.md), [CAMPAIGNS-ANALYTICS.md](./CAMPAIGNS-ANALYTICS.md), [CONVERSATIONS.md](./CONVERSATIONS.md), [E2E-ACCEPTANCE.md](./E2E-ACCEPTANCE.md).
+See [EMPLOYEES.md](./EMPLOYEES.md), [PHONE-NUMBERS.md](./PHONE-NUMBERS.md), [CAMPAIGNS-ANALYTICS.md](./CAMPAIGNS-ANALYTICS.md), [CONVERSATIONS.md](./CONVERSATIONS.md), [E2E-ACCEPTANCE.md](./E2E-ACCEPTANCE.md), [CELEBRITY-VOICES.md](./CELEBRITY-VOICES.md), [DEMO-READINESS.md](./DEMO-READINESS.md).

@@ -37,6 +37,41 @@ const LANGUAGE_BY_ID = new Map(SUPPORTED_LANGUAGES.map((l) => [l.id, l]));
 const DEFAULT_LANGUAGE = 'en-IN';
 
 /**
+ * Voice tier catalog (celebrity / brand readiness placeholders).
+ * Only Standard is selectable for live dials today. Regional Premium,
+ * Licensed Brand, and Private Enterprise are architecture + UX stubs.
+ * Never name real celebrities or claim product partnerships.
+ */
+const VOICE_TIERS = Object.freeze([
+  Object.freeze({
+    id: 'standard',
+    label: 'Standard',
+    available: true,
+    description: 'Platform voice profiles for everyday Employees. Ready for Instant Leads and campaigns.',
+  }),
+  Object.freeze({
+    id: 'regional_premium',
+    label: 'Regional Premium',
+    available: false,
+    description: 'Curated regional voice packs. Placeholder only. Not live for dials in this release.',
+  }),
+  Object.freeze({
+    id: 'licensed_brand',
+    label: 'Licensed Brand',
+    available: false,
+    description: 'Brand-licensed voice after rights clearance. Placeholder only. Requires a brand agreement.',
+  }),
+  Object.freeze({
+    id: 'private_enterprise',
+    label: 'Private Enterprise',
+    available: false,
+    description: 'Private enterprise voice profile with consent, dataset, rights, audit, and revoke. Placeholder only.',
+  }),
+]);
+const VOICE_TIER_BY_ID = new Map(VOICE_TIERS.map((t) => [t.id, t]));
+const DEFAULT_VOICE_TIER = 'standard';
+
+/**
  * Customer Action types (Phase 19). Definitions persist; live CRM execution
  * is foundation-only (no Phase 2 webhooks, no invented integrations).
  */
@@ -235,6 +270,34 @@ function normalizeLanguage(value, fallback = DEFAULT_LANGUAGE) {
   return LANGUAGE_BY_ID.has(fallback) ? fallback : DEFAULT_LANGUAGE;
 }
 
+function normalizeVoiceTier(raw, fallback = DEFAULT_VOICE_TIER) {
+  const id = String(raw || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+  if (VOICE_TIER_BY_ID.has(id)) return id;
+  return VOICE_TIER_BY_ID.has(fallback) ? fallback : DEFAULT_VOICE_TIER;
+}
+
+function listVoiceTiers() {
+  return VOICE_TIERS.map((t) => ({
+    id: t.id,
+    label: t.label,
+    available: !!t.available,
+    description: t.description,
+  }));
+}
+
+function publicVoice(voice) {
+  const v = normalizeVoice(voice);
+  const tier = VOICE_TIER_BY_ID.get(v.tier) || VOICE_TIER_BY_ID.get(DEFAULT_VOICE_TIER);
+  return {
+    language: v.language,
+    tier: v.tier,
+    tierLabel: tier ? tier.label : 'Standard',
+    tierAvailable: !!(tier && tier.available),
+    // Customer UI never sees raw TTS model / speaker provider ids.
+    profileLabel: v.tier === 'standard' ? 'Standard voice profile' : (tier ? tier.label : 'Voice profile'),
+  };
+}
+
 function normalizeVoice(input, existing) {
   const b = input && typeof input === 'object' ? input : {};
   const base = existing && typeof existing === 'object' ? existing : {};
@@ -242,13 +305,17 @@ function normalizeVoice(input, existing) {
     b.language != null ? b.language : base.language,
     DEFAULT_LANGUAGE,
   );
+  const tier = normalizeVoiceTier(
+    b.tier != null ? b.tier : base.tier,
+    DEFAULT_VOICE_TIER,
+  );
   const model = String(b.model != null ? b.model : base.model || 'mulberry').trim().slice(0, 40) || 'mulberry';
   const speaker = String(b.speaker != null ? b.speaker : base.speaker || 'speaker_1').trim().slice(0, 40) || 'speaker_1';
   let f0 = base.f0_up_key != null ? Number(base.f0_up_key) : 0;
   if (b.f0_up_key != null && Number.isFinite(Number(b.f0_up_key))) {
     f0 = Math.max(-12, Math.min(12, Number(b.f0_up_key) | 0));
   }
-  return { language, model, speaker, f0_up_key: f0 };
+  return { language, tier, model, speaker, f0_up_key: f0 };
 }
 
 /**
@@ -453,10 +520,11 @@ function publicEmployee(row, db, opts = {}) {
     workflowId: row.workflowId || null,
     knowledgeIds: Array.isArray(row.knowledgeIds) ? row.knowledgeIds.slice() : [],
     phoneNumberId: row.phoneNumberId || null,
-    voice: normalizeVoice(row.voice),
+    voice: publicVoice(row.voice),
     outcomes: normalizeOutcomesList(row.outcomes),
     actions: normalizeActionsList(row.actions),
     language: normalizeLanguage((row.voice && row.voice.language) || DEFAULT_LANGUAGE),
+    voiceTier: normalizeVoiceTier((row.voice && row.voice.tier) || DEFAULT_VOICE_TIER),
     assignedNumber: number,
     agentName: names.agentName,
     workflowName: names.workflowName,
@@ -1054,6 +1122,43 @@ function setEmployeeLanguage(db, tenantId, id, language) {
 }
 
 /**
+ * Set Employee voice tier. Non-Standard tiers are catalog stubs only and
+ * fail closed (cannot be selected for live dials in this release).
+ */
+function setEmployeeVoiceTier(db, tenantId, id, tier) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const next = String(tier || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+  const meta = VOICE_TIER_BY_ID.get(next);
+  if (!meta) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'unsupported voice tier',
+      code: 'unsupported_voice_tier',
+      tiers: listVoiceTiers(),
+    };
+  }
+  if (!meta.available) {
+    return {
+      ok: false,
+      status: 422,
+      error: meta.label + ' is a placeholder. Only Standard is live in this release.',
+      code: 'voice_tier_unavailable',
+      tiers: listVoiceTiers(),
+    };
+  }
+  row.voice = normalizeVoice({ ...(row.voice || {}), tier: meta.id }, row.voice);
+  row.updatedAt = nowIso();
+  return {
+    ok: true,
+    employee: row,
+    voiceTier: row.voice.tier,
+    tiers: listVoiceTiers(),
+  };
+}
+
+/**
  * Customer Workflow view for an Employee (Phase 9).
  * Language: Workflow / Steps / Instructions. Never graph/node/SIP jargon.
  */
@@ -1187,17 +1292,22 @@ module.exports = {
   JOB_TEMPLATES,
   SUPPORTED_LANGUAGES,
   DEFAULT_LANGUAGE,
+  VOICE_TIERS,
+  DEFAULT_VOICE_TIER,
   ACTION_TYPES,
   ALLOWED_TRANSITIONS,
   ensureEmployees,
   getJobTemplate,
   listJobTemplates,
   listSupportedLanguages,
+  listVoiceTiers,
   listActionTypes,
   normalizeStatus,
   normalizeChannel,
   normalizeLanguage,
+  normalizeVoiceTier,
   normalizeVoice,
+  publicVoice,
   normalizeOutcomeDef,
   normalizeOutcomesList,
   normalizeActionDef,
@@ -1225,6 +1335,7 @@ module.exports = {
   setActions,
   executeActionHook,
   setEmployeeLanguage,
+  setEmployeeVoiceTier,
   getWorkflow,
   updateWorkflow,
   stepsFromWorkflow,

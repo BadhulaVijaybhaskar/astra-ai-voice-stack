@@ -2258,6 +2258,7 @@ function matchEmployeesRoute(route) {
   if (route === '/api/employees') return { action: 'list_or_create' };
   if (route === '/api/employees/templates') return { action: 'templates' };
   if (route === '/api/employees/languages') return { action: 'languages' };
+  if (route === '/api/employees/voice-tiers') return { action: 'voice_tiers' };
   if (route === '/api/employees/action-types') return { action: 'action_types' };
   const pause = route.match(/^\/api\/employees\/([^/]+)\/pause$/);
   if (pause) return { action: 'pause', id: decodeURIComponent(pause[1]) };
@@ -2291,6 +2292,8 @@ function matchEmployeesRoute(route) {
   if (actionExec) return { action: 'actions_execute', id: decodeURIComponent(actionExec[1]) };
   const language = route.match(/^\/api\/employees\/([^/]+)\/language$/);
   if (language) return { action: 'language', id: decodeURIComponent(language[1]) };
+  const voiceTier = route.match(/^\/api\/employees\/([^/]+)\/voice-tier$/);
+  if (voiceTier) return { action: 'voice_tier', id: decodeURIComponent(voiceTier[1]) };
   const empLeads = route.match(/^\/api\/employees\/([^/]+)\/leads$/);
   if (empLeads) return { action: 'leads', id: decodeURIComponent(empLeads[1]) };
   const one = route.match(/^\/api\/employees\/([^/]+)$/);
@@ -2304,6 +2307,10 @@ function apiEmployeeTemplates(req, res, ctx) {
 
 function apiEmployeeLanguages(req, res) {
   core.sendJson(res, 200, { languages: employees.listSupportedLanguages() });
+}
+
+function apiEmployeeVoiceTiers(req, res) {
+  core.sendJson(res, 200, { tiers: employees.listVoiceTiers() });
 }
 
 function apiEmployeeActionTypes(req, res) {
@@ -2562,6 +2569,34 @@ async function apiEmployeesLanguagePut(req, res, ctx) {
     employee: employees.publicEmployee(result.employee, core.db()),
     language: result.language,
     languages: result.languages,
+  });
+}
+
+async function apiEmployeesVoiceTierPut(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const tier = (ctx.body || {}).tier != null
+    ? (ctx.body || {}).tier
+    : (ctx.body || {}).id;
+  let result;
+  await core.mutate((d) => {
+    result = employees.setEmployeeVoiceTier(d, ctx.tenant.id, ctx.params.id, tier);
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.voice_tier_updated', 'employee', ctx.params.id, {
+        voiceTier: result.voiceTier,
+      });
+    }
+  });
+  if (!result.ok) {
+    return core.sendJson(res, result.status, {
+      error: result.error,
+      code: result.code,
+      tiers: result.tiers,
+    });
+  }
+  core.sendJson(res, 200, {
+    employee: employees.publicEmployee(result.employee, core.db()),
+    voiceTier: result.voiceTier,
+    tiers: result.tiers,
   });
 }
 
@@ -2835,15 +2870,18 @@ async function apiAdminTicketUpdate(req, res, ctx) {
   core.sendJson(res, 200, { ok: true });
 }
 
-// GET /api/providers -> authed registry so Settings can render active vs available.
-// Never public: provider ids/labels are an inventory leak when unauthenticated.
+// GET /api/providers -> Super Admin full registry. Customers get product-ready
+// layer flags only (no provider brand ids, models, or env key names).
 function apiProviders(req, res, ctx) {
-  const payload = providers.describeProviders();
-  const check = org.assertNoSecretValues(payload);
-  if (!check.ok) {
-    return core.sendJson(res, 500, { error: 'provider registry refused to leak secrets', code: 'secret_guard' });
+  if (ctx.user && ctx.user.role === 'super_admin') {
+    const payload = providers.describeProviders();
+    const check = org.assertNoSecretValues(payload);
+    if (!check.ok) {
+      return core.sendJson(res, 500, { error: 'provider registry refused to leak secrets', code: 'secret_guard' });
+    }
+    return core.sendJson(res, 200, payload);
   }
-  core.sendJson(res, 200, payload);
+  return core.sendJson(res, 200, org.publicProvidersPayload(providers.describeProviders()));
 }
 
 // GET /api/version -> authenticated deploy proof (gitSha from env, never invented).
@@ -3010,6 +3048,7 @@ const server = http.createServer(async (req, res) => {
         if (empGet) {
           if (empGet.action === 'templates') return core.requireAuth(req, res, apiEmployeeTemplates);
           if (empGet.action === 'languages') return core.requireAuth(req, res, apiEmployeeLanguages);
+          if (empGet.action === 'voice_tiers') return core.requireAuth(req, res, apiEmployeeVoiceTiers);
           if (empGet.action === 'action_types') return core.requireAuth(req, res, apiEmployeeActionTypes);
           if (empGet.action === 'list_or_create') return core.requireAuth(req, res, apiEmployeesList);
           if (empGet.action === 'one') {
@@ -3122,7 +3161,8 @@ const server = http.createServer(async (req, res) => {
         }
         const empPut = matchEmployeesRoute(route);
         if (empPut && (empPut.action === 'instructions' || empPut.action === 'outcomes' || empPut.action === 'workflow'
-          || empPut.action === 'actions' || empPut.action === 'language')) {
+          || empPut.action === 'actions' || empPut.action === 'language'
+          || empPut.action === 'voice_tier')) {
           let body;
           try { body = await core.readBody(req, 256 * 1024); }
           catch (e) {
@@ -3140,6 +3180,9 @@ const server = http.createServer(async (req, res) => {
           }
           if (empPut.action === 'language') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguagePut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
+          }
+          if (empPut.action === 'voice_tier') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesVoiceTierPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
           }
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
         }
@@ -3287,6 +3330,9 @@ const server = http.createServer(async (req, res) => {
         }
         if (empPost.action === 'language') {
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguagePut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'voice_tier') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesVoiceTierPut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
         }
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }

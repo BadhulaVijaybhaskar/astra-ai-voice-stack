@@ -142,6 +142,27 @@ function publicHealthPayload(meta = {}) {
 }
 
 /**
+ * Customer-safe providers summary. Product layer flags only. No brand ids,
+ * model names, or env key names. Super Admin keeps describeProviders().
+ */
+function publicProvidersPayload(described) {
+  const d = described && typeof described === 'object' ? described : {};
+  const layerReady = (layer) => {
+    const rows = Array.isArray(d[layer]) ? d[layer] : [];
+    return rows.some((p) => p && p.live);
+  };
+  return {
+    ready: true,
+    layers: {
+      voice: layerReady('tts'),
+      brain: layerReady('llm'),
+      listening: layerReady('stt'),
+      telephony: layerReady('telephony'),
+    },
+  };
+}
+
+/**
  * Customer-safe telephony status. Drops provider/orchestrator branding and
  * ops-console fields (dashboard, upstream workflow id). Keeps DIDs and connect state.
  * Never exposes Dograh/VoBiz infrastructure ids (configuration.id, phone number id,
@@ -318,6 +339,7 @@ module.exports = {
   sanitizeTenantUpdate,
   providerHealthSummary,
   publicHealthPayload,
+  publicProvidersPayload,
   detailedHealthPayload,
   publicTelephonyStatus,
   deployIdentity,
