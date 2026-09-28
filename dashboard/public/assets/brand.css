@@ -1,83 +1,121 @@
 /* ==========================================================================
-   Astra Voice , Brand & Design System (single source of truth)
-   Primary: electric blue (--voice ≈ oklch(0.58 0.2 255) / #0077ec).
+   Astra Voice / AstraConnect Brand & Design System (single source of truth)
+   Canonical family tokens: --astra-blue* (see docs/astraconnect-design-system.md).
+   Voice aliases: --voice → --astra-blue (Phase 2 compatibility).
    Neutrals: white / off-white surfaces, graphite / navy ink.
    Teal: AC mark artwork + restrained supporting accent only (not Chat green).
-   Status: success green, warning amber, error red.
-   Values adapted from AstraConnect kit (--voice* / neutrals / success only).
-   Do NOT import Chat, Guide, or hero-orb website patterns.
+   Status: success green, warning amber, error red (shared language).
+   Do NOT import Chat, Guide, or hero-orb website patterns into Voice chrome.
    Loaded by the marketing site and the product dashboard.
    No em dashes anywhere in this codebase. Use commas or periods.
    ========================================================================== */
 
 :root {
-  /* ---- Voice primary (kit --voice*) ---- */
-  --voice:            #0077ec; /* oklch(0.58 0.2 255) */
-  --voice-foreground: #FFFFFF; /* oklch(1 0 0) */
-  --voice-soft:       #e7f5ff; /* oklch(0.965 0.025 250) */
+  /* ---- Canonical AstraConnect brand blues ---- */
+  --astra-blue:            #0077ec; /* oklch(0.58 0.2 255) */
+  --astra-blue-hover:      #0066c9;
+  --astra-blue-soft:       #e7f5ff; /* oklch(0.965 0.025 250) */
+  --astra-blue-foreground: #FFFFFF;
+
+  /* Chat family greens (available for Chat; NOT Voice UI primary) */
+  --astra-green:      #2eb88a;
+  --astra-green-dark: #1f7a5c;
+  --astra-green-soft: #e8f8f2;
+
+  /* Neutrals */
+  --astra-navy:      #051223;
+  --astra-graphite:  #1e2a3a;
+  --astra-gray:      #556272;
+  --astra-gray-soft: #8492a6;
+
+  /* Voice primary aliases → canonical blue (keep Phase 2 call sites working) */
+  --voice:            var(--astra-blue);
+  --voice-foreground: var(--astra-blue-foreground);
+  --voice-soft:       var(--astra-blue-soft);
   /* AC mark teal, logo / restrained accent only. Not a UI theme. */
   --mark-teal:        #09b5a5;
 
-  /* ---- Canvas & surfaces (kit background / surface / card / border) ---- */
-  --bg:        #fcfeff; /* oklch(0.995 0.002 245) */
-  --bg-2:      #f3f7fc; /* oklch(0.975 0.008 250) surface */
-  --panel:     #FFFFFF; /* card */
-  --panel-2:   #f8fafc;
-  --raised:    #f3f7fc;
-  --line:      #dae2eb; /* oklch(0.91 0.015 250) */
-  --line-2:    #c8d3e0;
+  /* ---- Surfaces (canonical + Voice aliases) ---- */
+  --background:       #fcfeff;
+  --surface:          #f3f7fc;
+  --surface-elevated: #FFFFFF;
+  --surface-muted:    #f8fafc;
+  --bg:        var(--background);
+  --bg-2:      var(--surface);
+  --panel:     var(--surface-elevated);
+  --panel-2:   var(--surface-muted);
+  --raised:    var(--surface);
+  --border:        #dae2eb;
+  --border-strong: #c8d3e0;
+  --line:      var(--border);
+  --line-2:    var(--border-strong);
   --line-strong: #94a3b8;
 
-  /* ---- Text, graphite / navy (kit foreground / muted) ---- */
-  --ink:       #051223; /* oklch(0.18 0.04 255) */
-  --ink-soft:  #1e2a3a;
-  --ink-dim:   #556272; /* oklch(0.49 0.03 255) */
-  --ink-faint: #8492a6;
-  --muted:     #556272;
-  --text-dim:  #8492a6;
+  /* ---- Text (canonical + Voice aliases) ---- */
+  --text-primary:   var(--astra-navy);
+  --text-secondary: var(--astra-graphite);
+  --text-muted:     var(--astra-gray);
+  --text-faint:     var(--astra-gray-soft);
+  --text-on-brand:  var(--astra-blue-foreground);
+  --ink:       var(--text-primary);
+  --ink-soft:  var(--text-secondary);
+  --ink-dim:   var(--text-muted);
+  --ink-faint: var(--text-faint);
+  --muted:     var(--text-muted);
+  --text-dim:  var(--text-faint);
+  --ink-dark:  var(--text-primary);
+  --ink-muted: var(--text-muted);
+  --canvas:    var(--background);
 
-  /* ---- Light-canvas text aliases ---- */
-  --ink-dark:  #051223;
-  --ink-muted: #556272;
-  --canvas:    #fcfeff;
-
-  /* ---- Accent aliases (legacy names → Voice blue) ---- */
-  --a-cyan:    var(--voice);
-  --a-sky:     #0066c9;
-  --a-indigo:  var(--voice);
-  --a-violet:  var(--voice);
-  --accent:    var(--voice);
+  /* ---- Accent aliases (legacy names → Astra blue) ---- */
+  --a-cyan:    var(--astra-blue);
+  --a-sky:     var(--astra-blue-hover);
+  --a-indigo:  var(--astra-blue);
+  --a-violet:  var(--astra-blue);
+  --accent:    var(--astra-blue);
   --accent-2:  var(--mark-teal);
-  --accent-ink: var(--voice-foreground);
-  /* Solid primary wash. Purple→cyan volt gradient retired. */
-  --grad-volt: linear-gradient(115deg, #0066c9 0%, var(--voice) 55%, #1a8af0 100%);
+  --accent-ink: var(--astra-blue-foreground);
+  /* Soft blue wash only. Purple→cyan volt identity retired. */
+  --grad-volt: linear-gradient(115deg, var(--astra-blue-hover) 0%, var(--astra-blue) 55%, #1a8af0 100%);
   --grad-volt-soft: linear-gradient(115deg, rgba(0,119,236,0.12), rgba(9,181,165,0.06));
 
   /* ---- Value/economics signal ---- */
-  --gold:      var(--voice);
-  --gold-deep: #0066c9;
+  --gold:      var(--astra-blue);
+  --gold-deep: var(--astra-blue-hover);
 
-  /* ---- Status (restrained; success ≠ Chat green) ---- */
-  --ok:        #24a656; /* kit --success oklch(0.64 0.16 151) */
-  --warn:      #e1a01d; /* kit --warning oklch(0.75 0.15 78) */
-  --bad:       #DC2626; /* restrained error red */
+  /* ---- Status (shared language; success ≠ Chat green) ---- */
+  --success: #24a656;
+  --warning: #e1a01d;
+  --error:   #DC2626;
+  --ok:      var(--success);
+  --warn:    var(--warning);
+  --bad:     var(--error);
 
-  /* ---- Glow & shadow (soft depth, Voice blue) ---- */
-  --glow-accent: 0 0 0 1px rgba(0,119,236,0.22), 0 10px 28px -12px rgba(0,119,236,0.28);
+  /* ---- Glow & shadow ---- */
+  --shadow-sm:     0 1px 2px rgba(5,18,35,0.04), 0 8px 24px -14px rgba(5,18,35,0.10);
+  --shadow-md:     0 20px 48px -24px rgba(5,18,35,0.18);
+  --shadow-focus:  0 0 0 4px rgba(0,119,236,0.12);
+  --shadow-brand:  0 0 0 1px rgba(0,119,236,0.22), 0 10px 28px -12px rgba(0,119,236,0.28);
+  --glow-accent: var(--shadow-brand);
   --glow-soft:   0 0 48px -18px rgba(0,119,236,0.16);
-  --shadow-card: 0 1px 2px rgba(5,18,35,0.04), 0 8px 24px -14px rgba(5,18,35,0.10);
-  --shadow-pop:  0 20px 48px -24px rgba(5,18,35,0.18);
+  --shadow-card: var(--shadow-sm);
+  --shadow-pop:  var(--shadow-md);
 
   /* ---- Type ---- */
   --font: "Avenir Next", "Segoe UI Variable Text", "SF Pro Rounded", "SF Pro Display", "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, sans-serif;
   --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 
-  /* ---- Radii ---- */
-  --r-sm: 8px;
-  --r:    12px;
-  --r-lg: 16px;
-  --r-xl: 22px;
-  --r-pill: 999px;
+  /* ---- Radii (canonical + Voice aliases) ---- */
+  --radius-sm:   8px;
+  --radius-md:   12px;
+  --radius-lg:   16px;
+  --radius-xl:   22px;
+  --radius-pill: 999px;
+  --r-sm: var(--radius-sm);
+  --r:    var(--radius-md);
+  --r-lg: var(--radius-lg);
+  --r-xl: var(--radius-xl);
+  --r-pill: var(--radius-pill);
 
   /* ---- Motion ---- */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
