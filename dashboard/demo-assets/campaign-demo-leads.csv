@@ -1,0 +1,7 @@
+phone_number,name,company,email,language,city,lead_source,notes
+REPLACE_WITH_AUTHORIZED_TEST,Authorized Test Slot,Astra Demo,demo@astra.local,en-IN,Hyderabad,demo,REPLACE_WITH_AUTHORIZED_TEST_DID_BEFORE_DIAL
+9000000001,Demo Lead One,Demo Co,one@example.invalid,en-IN,Demo City,demo,NON_DIALABLE_900000000x
+9000000002,Demo Lead Two,Demo Co,two@example.invalid,hi-IN,Demo City,demo,NON_DIALABLE_900000000x
+9000000003,Demo Lead Three,Demo Co,three@example.invalid,te-IN,Demo City,demo,NON_DIALABLE_900000000x
+9000000004,Demo Lead Four,Demo Co,four@example.invalid,ta-IN,Demo City,demo,NON_DIALABLE_900000000x
+9000000005,Demo Lead Five,Demo Co,five@example.invalid,en-IN,Demo City,demo,NON_DIALABLE_900000000x

@@ -289,8 +289,8 @@ function resetData() {
 const ROUTES = [
   { id: 'overview', label: 'Home', icon: 'grid', group: 'HOME' },
   { id: 'employees', label: 'My Employees', icon: 'users', group: 'JOURNEY' },
-  { id: 'leads', label: 'Instant Leads', icon: 'leads', group: 'JOURNEY' },
-  { id: 'campaigns', label: 'Campaigns', icon: 'megaphone', group: 'JOURNEY' },
+  { id: 'leads', label: 'Instant Leads', icon: 'leads', group: 'LEADS' },
+  { id: 'campaigns', label: 'Campaigns', icon: 'megaphone', group: 'LEADS' },
   { id: 'calls', label: 'Conversations', icon: 'calls', group: 'JOURNEY' },
   { id: 'training', label: 'Training', icon: 'book', group: 'JOURNEY' },
   { id: 'numbers', label: 'Phone Numbers', icon: 'phone', group: 'JOURNEY' },
@@ -346,8 +346,8 @@ function renderShell() {
     if (r.advanced && u.role !== 'super_admin') return false;
     return true;
   });
-  const groupOrder = ['HOME', 'JOURNEY', 'ACCOUNT', 'ADVANCED'];
-  const groupLabels = { HOME: null, JOURNEY: 'JOURNEY', ACCOUNT: 'ACCOUNT', ADVANCED: 'DIAGNOSTICS' };
+  const groupOrder = ['HOME', 'JOURNEY', 'LEADS', 'ACCOUNT', 'ADVANCED'];
+  const groupLabels = { HOME: null, JOURNEY: 'JOURNEY', LEADS: 'LEADS', ACCOUNT: 'ACCOUNT', ADVANCED: 'DIAGNOSTICS' };
   const navChildren = [];
   groupOrder.forEach((group) => {
     const items = visibleRoutes.filter((r) => (r.group || 'HOME') === group);
@@ -506,7 +506,7 @@ async function viewOverview(root) {
   const name = State.me.user.name || State.me.user.email;
   root.appendChild(viewHead(
     'Welcome back, ' + name + '.',
-    'Create an AI Employee, teach, assign a Phone Number, connect leads, and go live.',
+    'Create an AI Employee, teach, assign a Phone Number, connect Instant Leads, and go live.',
     'overview-hero'
   ));
 
@@ -516,33 +516,32 @@ async function viewOverview(root) {
   const body = el('div', { class: 'grid grid-12', style: 'margin-top:14px' }, [
     el('div', { class: 'card spark-card', id: 'sparkHost' }, skeleton('sk-card', 1)),
     el('div', { class: 'card qa-card', id: 'qaHost' }, [
-      el('h3', {}, 'Quick actions'),
+      el('h3', {}, 'Demo path'),
       el('div', { class: 'qa-row' }, [
         el('button', { class: 'btn btn-primary', onclick: () => goto('employees') }, 'My Employees'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('leads') }, 'Instant Leads'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('campaigns') }, 'Campaigns'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('numbers') }, 'Phone Numbers'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('calls') }, 'Conversations'),
         el('button', { class: 'btn btn-ghost', onclick: () => goto('analytics') }, 'Performance')
       ]),
-      el('div', { class: 'qa-foot', id: 'provMini' }, 'Checking providers...')
+      el('div', { class: 'qa-foot', id: 'provMini' }, 'Checking runtime...')
     ])
   ]);
   root.appendChild(body);
 
-  // load usage + agents in parallel
+  // load usage + employees in parallel
   try {
-    const [usage, agentsRes] = await Promise.all([
+    const [usage, empRes] = await Promise.all([
       api('/api/usage'),
-      State.loaded.agents ? Promise.resolve({ agents: State.agents }) : api('/api/agents')
+      State.loaded.employees ? Promise.resolve({ employees: State.employees }) : api('/api/employees')
     ]);
     State.usage = usage;
-    State.agents = agentsRes.agents || [];
-    State.loaded.agents = true;
+    State.employees = empRes.employees || [];
+    State.loaded.employees = true;
 
     const totals = usage.totals || {};
     statsRow.innerHTML = '';
-    statsRow.appendChild(statCard('Agents', String(State.agents.length), 'Live in this tenant'));
+    statsRow.appendChild(statCard('Employees', String(State.employees.length), 'In this workspace'));
     statsRow.appendChild(statCard('Characters synthesized', fmtInr(totals.chars || 0), 'Across all days'));
     statsRow.appendChild(statCard('Estimated spend', '₹' + fmtInr(totals.costInr || estimateCost(usage)), 'At promo rates', true));
 
@@ -553,26 +552,35 @@ async function viewOverview(root) {
     statsRow.appendChild(el('div', { class: 'card card-pad muted' }, 'Could not load usage. ' + esc(e.message)));
   }
 
-  // provider mini summary (customer-facing labels only)
+  // Product-ready runtime summary. No provider brand names for customers.
   ensureProviders().then(() => {
     const pm = $('#provMini'); if (!pm) return;
     const reg = State.providers || {};
+    if (reg.layers) {
+      const parts = [];
+      if (reg.layers.voice) parts.push('Voice');
+      if (reg.layers.brain) parts.push('Brain');
+      if (reg.layers.listening) parts.push('Listening');
+      if (reg.layers.telephony) parts.push('Telephony');
+      pm.textContent = parts.length
+        ? ('Runtime ready: ' + parts.join(', ') + '.')
+        : 'Runtime not fully connected yet.';
+      return;
+    }
+    // Super Admin may still receive the full registry.
     const live = [];
-    const friendly = {
-      rumik: 'Rumik Silk',
-      groq: 'Groq',
-      gemini: 'Gemini',
-      deepgram: 'Deepgram',
-      vobiz: 'Telephony'
-    };
     ['tts', 'llm', 'telephony'].forEach((layer) => {
       (reg[layer] || []).forEach((p) => {
         if (!p.live) return;
-        live.push(friendly[p.id] || String(p.label || p.id).replace(/\s*via\s*Dograh/i, '').replace(/VoBiz/i, 'Telephony'));
+        if (layer === 'tts') live.push('Voice');
+        else if (layer === 'llm') live.push('Brain');
+        else if (layer === 'telephony') live.push('Telephony');
       });
     });
-    pm.textContent = live.length ? ('Active stack: ' + live.join(', ') + '.') : 'No live providers detected.';
-  }).catch(() => {});
+    pm.textContent = live.length ? ('Runtime ready: ' + [...new Set(live)].join(', ') + '.') : 'Runtime not fully connected yet.';
+  }).catch(() => {
+    const pm = $('#provMini'); if (pm) pm.textContent = 'Runtime status unavailable.';
+  });
 }
 
 function statCard(lbl, val, delta, up) {
@@ -603,7 +611,7 @@ function sparkPanel(days) {
       head,
       el('div', { class: 'spark-empty' }, [
         el('div', { class: 'se-title' }, 'No usage yet'),
-        el('div', { class: 'se-sub' }, 'Synthesize in Voice Studio or talk to an agent to see characters per day here.')
+        el('div', { class: 'se-sub' }, 'Use Instant Leads or Conversations after go-live to see characters per day here.')
       ])
     ]);
   }
@@ -1732,7 +1740,7 @@ async function viewEmployeeStudio(root, id) {
     body.appendChild(el('h3', { class: 't-h3' }, 'Voice'));
     const v = emp.voice || {};
     body.appendChild(el('p', { class: 'muted' },
-      'Choose the Language this Employee speaks. Only supported languages are listed.'));
+      'Choose Language and Voice tier. Only Standard is live for dials. Premium and brand tiers are placeholders.'));
     let languages = [];
     try {
       const langRes = await api('/api/employees/languages');
@@ -1768,16 +1776,66 @@ async function viewEmployeeStudio(root, id) {
     };
     body.appendChild(field('Language', langSel));
     body.appendChild(saveLang);
+
+    let tiers = [];
+    try {
+      const tierRes = await api('/api/employees/voice-tiers');
+      tiers = tierRes.tiers || [];
+    } catch (_) {
+      tiers = [
+        { id: 'standard', label: 'Standard', available: true, description: 'Platform voice profiles.' },
+        { id: 'regional_premium', label: 'Regional Premium', available: false, description: 'Placeholder.' },
+        { id: 'licensed_brand', label: 'Licensed Brand', available: false, description: 'Placeholder.' },
+        { id: 'private_enterprise', label: 'Private Enterprise', available: false, description: 'Placeholder.' },
+      ];
+    }
+    const currentTier = v.tier || emp.voiceTier || 'standard';
+    const tierHost = el('div', { class: 'emp-voice-tiers', style: 'margin-top:18px' });
+    tierHost.appendChild(el('h4', { class: 't-h4', style: 'margin-bottom:8px' }, 'Voice tier'));
+    tiers.forEach((t) => {
+      const selected = t.id === currentTier;
+      const card = el('div', {
+        class: 'card card-pad',
+        style: 'margin-bottom:10px;border-color:' + (selected ? 'var(--acc)' : 'var(--line)'),
+      }, [
+        el('div', { class: 'flex items-center justify-between gap-2' }, [
+          el('b', {}, t.label + (selected ? ' · selected' : '')),
+          el('span', { class: 'pill' }, t.available ? 'Live' : 'Coming soon'),
+        ]),
+        el('p', { class: 'muted', style: 'margin-top:6px' }, t.description || ''),
+      ]);
+      if (t.available) {
+        const btn = el('button', {
+          class: selected ? 'btn btn-ghost' : 'btn btn-primary',
+          style: 'margin-top:10px',
+          disabled: selected ? 'disabled' : null,
+        }, selected ? 'Active' : 'Use Standard');
+        btn.onclick = async () => {
+          btn.disabled = true;
+          try {
+            await api('/api/employees/' + encodeURIComponent(emp.id) + '/voice-tier', {
+              method: 'PUT',
+              body: { tier: t.id },
+            });
+            State.loaded.employees = false;
+            toast('Voice tier saved.', 'ok');
+            onRoute();
+          } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
+        };
+        card.appendChild(btn);
+      } else {
+        card.appendChild(el('p', { class: 'muted', style: 'margin-top:10px' },
+          'Requires consent, dataset, private profile, rights, audit, and revoke. Not selectable yet.'));
+      }
+      tierHost.appendChild(card);
+    });
+    body.appendChild(tierHost);
     body.appendChild(el('div', { class: 'emp-meta', style: 'margin-top:18px' }, [
-      el('div', {}, [el('span', { class: 'muted' }, 'Speaker'), el('b', {}, (v.speaker || 'speaker_1').replace(/_/g, ' '))]),
-      el('div', {}, [el('span', { class: 'muted' }, 'Model'), el('b', {}, v.model || 'mulberry')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Profile'), el('b', {}, v.profileLabel || v.tierLabel || 'Standard voice profile')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Language'), el('b', {}, currentLang)]),
     ]));
     body.appendChild(el('p', { class: 'muted', style: 'margin-top:12px' },
-      'Voice preview and tuning live in Voice Studio and the linked agent. Provider names are not shown here.'));
-    body.appendChild(el('div', { class: 'flex gap-2', style: 'margin-top:12px' }, [
-      el('button', { class: 'btn btn-ghost', onclick: () => goto('studio') }, 'Open Voice Studio'),
-      el('button', { class: 'btn btn-ghost', onclick: () => goto('agents') }, 'Open Agents'),
-    ]));
+      'Brand and private enterprise voices are design placeholders only. No celebrity cloning in this product.'));
   } else if (tab === 'settings') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Settings'));
     const nameIn = el('input', { class: 'input', value: emp.name || '' });
@@ -4490,36 +4548,295 @@ async function loadInstantLeads(host) {
 }
 
 async function viewCampaigns(root) {
-  root.appendChild(viewHead('Campaigns', 'Attach an Employee, paste leads, and enqueue through the same CallJob dial path as Instant Leads. Confirm is required.'));
+  root.appendChild(viewHead(
+    'Campaigns',
+    'Upload Excel or CSV, map columns, validate, then Start. Dials use the same CallJob path as Instant Leads.',
+  ));
   await ensureEmployees();
-  const name = el('input', { class: 'input', placeholder: 'March callbacks' });
-  const empSel = el('select', { class: 'select' }, [
-    el('option', { value: '' }, 'Select employee'),
-  ].concat((State.employees || []).filter((e) => e.status !== 'ARCHIVED').map((e) => el('option', { value: e.id }, e.name || e.id))));
-  const leads = el('textarea', { class: 'input textarea', placeholder: '+9198XXXXXXXX, Name\n+9199XXXXXXXX, Name' });
-  const list = el('div', { class: 'ticket-list' }, skeleton('sk-card', 2));
-  const create = el('button', { class: 'btn btn-primary' }, 'Create campaign');
-  create.onclick = async () => {
-    create.disabled = true;
-    try {
-      const out = await api('/api/campaigns', {
-        method: 'POST',
-        body: { name: name.value.trim(), employeeId: empSel.value || null },
-      });
-      if (leads.value.trim()) {
-        await api('/api/campaigns/leads', { method: 'POST', body: { campaignId: out.campaign.id, text: leads.value } });
-      }
-      name.value = ''; leads.value = ''; toast('Campaign created.', 'ok'); await loadCampaigns(list);
-    } catch (e) { toast(e.message, 'err'); } finally { create.disabled = false; }
-  };
-  root.appendChild(el('div', { class: 'support-layout' }, [
-    el('section', { class: 'card card-pad support-compose' }, [
-      el('h3', { class: 't-h3' }, 'New campaign'),
-      field('Name', name), field('Employee', empSel), field('Lead list (phone, name)', leads), create
-    ]),
-    list
-  ]));
+  const params = new URLSearchParams((location.hash.split('?')[1] || ''));
+  const openId = params.get('id');
+
+  const wizard = el('div', { class: 'card card-pad', id: 'campaignWizard' });
+  const list = el('div', { class: 'ticket-list', style: 'margin-top:14px' }, skeleton('sk-card', 2));
+  root.appendChild(wizard);
+  root.appendChild(list);
+
+  if (openId) {
+    await renderCampaignDetail(wizard, openId, list);
+  } else {
+    renderCampaignCreateWizard(wizard, list);
+  }
   await loadCampaigns(list);
+}
+
+function renderCampaignCreateWizard(host, listHost) {
+  host.innerHTML = '';
+  const name = el('input', { class: 'input', placeholder: 'Celebrity demo batch' });
+  const empSel = el('select', { class: 'select' }, [
+    el('option', { value: '' }, 'Select AI Employee'),
+  ].concat((State.employees || []).filter((e) => e.status !== 'ARCHIVED').map((e) =>
+    el('option', { value: e.id }, e.name || e.id))));
+  const concurrency = el('input', { class: 'input', type: 'number', min: '1', max: '10', value: '2' });
+  const language = el('select', { class: 'select' }, [
+    el('option', { value: '' }, 'Default'),
+    el('option', { value: 'en-IN' }, 'English (India)'),
+    el('option', { value: 'hi-IN' }, 'Hindi'),
+    el('option', { value: 'te-IN' }, 'Telugu'),
+    el('option', { value: 'ta-IN' }, 'Tamil'),
+  ]);
+  const mode = el('select', { class: 'select' }, [
+    el('option', { value: 'now' }, 'Start now'),
+    el('option', { value: 'schedule' }, 'Schedule'),
+  ]);
+  const scheduledAt = el('input', { class: 'input', type: 'datetime-local' });
+  const fileInput = el('input', { class: 'input', type: 'file', accept: '.csv,.xlsx,.xlsm,text/csv' });
+  const mapHost = el('div', { id: 'campMapHost', class: 'muted' }, 'Upload a file to map columns.');
+  const reviewHost = el('div', { id: 'campReviewHost' });
+  const state = { campaignId: null, mapping: {}, fields: [], headers: [] };
+
+  const createBtn = el('button', { class: 'btn btn-primary' }, '1. Create campaign');
+  createBtn.onclick = async () => {
+    createBtn.disabled = true;
+    try {
+      const body = {
+        name: name.value.trim(),
+        employeeId: empSel.value || null,
+        concurrency: Number(concurrency.value) || 2,
+        language: language.value || null,
+        mode: mode.value,
+      };
+      if (mode.value === 'schedule') {
+        if (!scheduledAt.value) throw new Error('Pick a schedule time');
+        body.scheduledAt = new Date(scheduledAt.value).toISOString();
+      }
+      const out = await api('/api/campaigns', { method: 'POST', body });
+      state.campaignId = out.campaign.id;
+      toast('Campaign created. Upload leads next.', 'ok');
+      createBtn.textContent = 'Created';
+    } catch (e) { toast(e.message, 'err'); }
+    finally { createBtn.disabled = false; }
+  };
+
+  const uploadBtn = el('button', { class: 'btn btn-ghost' }, '2. Upload file');
+  uploadBtn.onclick = async () => {
+    if (!state.campaignId) return toast('Create the campaign first.', 'err');
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return toast('Choose a .csv or .xlsx file.', 'err');
+    uploadBtn.disabled = true;
+    try {
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+      const contentBase64 = btoa(binary);
+      const out = await api('/api/campaigns/' + encodeURIComponent(state.campaignId) + '/upload', {
+        method: 'POST',
+        body: { filename: file.name, contentBase64 },
+      });
+      state.fields = out.fields || [];
+      state.headers = (out.campaign.upload && out.campaign.upload.headers) || [];
+      state.mapping = out.suggestedMapping || (out.campaign.upload && out.campaign.upload.mapping) || {};
+      paintCampaignMapping(mapHost, state);
+      toast('Uploaded ' + ((out.campaign.upload && out.campaign.upload.rowCount) || 0) + ' rows.', 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+    finally { uploadBtn.disabled = false; }
+  };
+
+  const mapBtn = el('button', { class: 'btn btn-ghost' }, '3. Apply mapping');
+  mapBtn.onclick = async () => {
+    if (!state.campaignId) return toast('Create the campaign first.', 'err');
+    mapBtn.disabled = true;
+    try {
+      const out = await api('/api/campaigns/' + encodeURIComponent(state.campaignId) + '/map', {
+        method: 'POST',
+        body: { mapping: state.mapping },
+      });
+      const c = out.counts || {};
+      reviewHost.innerHTML = '';
+      reviewHost.appendChild(el('div', { class: 'grid grid-3' }, [
+        statCard('READY', String(c.ready || 0), 'Valid E.164'),
+        statCard('INVALID', String(c.invalid || 0), 'Malformed phones'),
+        statCard('DUPLICATES', String(c.duplicates || 0), 'Same phone twice'),
+      ]));
+      if ((out.preview || []).length) {
+        reviewHost.appendChild(el('p', { class: 'muted', style: 'margin-top:10px' }, 'Preview'));
+        out.preview.forEach((row) => {
+          reviewHost.appendChild(el('div', { class: 'status-line' }, [
+            el('span', { class: 'k' }, (row.name || 'Lead') + ' · ' + (row.phone || '')),
+            el('span', { class: 'pill' }, row.status || ''),
+          ]));
+        });
+      }
+      toast('Mapped. Review counts, then validate.', 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+    finally { mapBtn.disabled = false; }
+  };
+
+  const validateBtn = el('button', { class: 'btn btn-ghost' }, '4. Validate');
+  validateBtn.onclick = async () => {
+    if (!state.campaignId) return toast('Create the campaign first.', 'err');
+    try {
+      const out = await api('/api/campaigns/' + encodeURIComponent(state.campaignId) + '/validate', { method: 'POST', body: {} });
+      const checks = out.checks || [];
+      reviewHost.appendChild(el('h4', { class: 't-h4', style: 'margin-top:14px' }, 'Launch checks'));
+      checks.forEach((ch) => {
+        reviewHost.appendChild(el('div', { class: 'status-line' }, [
+          el('span', { class: 'k' }, ch.message || ch.code),
+          el('span', { class: 'pill' }, ch.ok ? 'OK' : 'BLOCKED'),
+        ]));
+      });
+      toast(out.ok ? 'Ready to start.' : 'Fix blocked checks before start.', out.ok ? 'ok' : 'err');
+    } catch (e) {
+      // 422 still returns body via api() throw — show message.
+      toast(e.message, 'err');
+    }
+  };
+
+  const startBtn = el('button', { class: 'btn btn-primary' }, '5. Start / Schedule');
+  startBtn.onclick = () => {
+    if (!state.campaignId) return toast('Create the campaign first.', 'err');
+    modal({
+      title: 'Confirm campaign dials',
+      body: el('div', {}, [
+        el('p', {}, 'Places outbound CallJobs through the same path as Instant Leads. Confirm is required. Invalid phones are never dialed.'),
+      ]),
+      confirmText: 'Confirm start',
+      onConfirm: async () => {
+        const res = await api('/api/campaigns/' + encodeURIComponent(state.campaignId) + '/start', {
+          method: 'POST',
+          body: { confirm: true },
+        });
+        toast(
+          (res.scheduled ? ('Scheduled ' + res.scheduled + '. ') : '')
+            + 'Enqueued ' + (res.enqueued || 0) + ' lead(s).',
+          'ok',
+        );
+        location.hash = '#/campaigns?id=' + encodeURIComponent(state.campaignId);
+        await loadCampaigns(listHost);
+      },
+    });
+  };
+
+  host.appendChild(el('h3', { class: 't-h3' }, 'Create campaign'));
+  host.appendChild(el('p', { class: 'muted' }, [
+    document.createTextNode('Safe sample: '),
+    el('a', { href: '/api/campaigns/sample.csv', target: '_blank' }, 'demo CSV'),
+    document.createTextNode(' · '),
+    el('a', { href: '/api/campaigns/sample.xlsx', target: '_blank' }, 'demo Excel'),
+    document.createTextNode(' (5× 900000000x non-dialable + REPLACE_WITH_AUTHORIZED_TEST).'),
+  ]));
+  host.appendChild(field('Name', name));
+  host.appendChild(field('AI Employee', empSel));
+  host.appendChild(field('Language', language));
+  host.appendChild(field('Concurrency', concurrency));
+  host.appendChild(field('Launch', mode));
+  host.appendChild(field('Schedule (if scheduled)', scheduledAt));
+  host.appendChild(field('Excel / CSV file', fileInput));
+  host.appendChild(el('div', { class: 'flex gap-2', style: 'flex-wrap:wrap;margin:12px 0' }, [
+    createBtn, uploadBtn, mapBtn, validateBtn, startBtn,
+  ]));
+  host.appendChild(el('h4', { class: 't-h4' }, 'Column mapping'));
+  host.appendChild(mapHost);
+  host.appendChild(el('h4', { class: 't-h4', style: 'margin-top:14px' }, 'Review'));
+  host.appendChild(reviewHost);
+}
+
+function paintCampaignMapping(host, state) {
+  host.innerHTML = '';
+  if (!(state.fields || []).length) {
+    host.appendChild(el('div', { class: 'muted' }, 'No fields yet.'));
+    return;
+  }
+  state.fields.forEach((f) => {
+    const sel = el('select', { class: 'select' }, [
+      el('option', { value: '' }, f.required ? 'Select column' : 'Skip'),
+    ].concat((state.headers || []).map((h) =>
+      el('option', {
+        value: h,
+        selected: state.mapping[f.key] === h ? 'selected' : null,
+      }, h))));
+    if (state.mapping[f.key]) sel.value = state.mapping[f.key];
+    sel.onchange = () => {
+      if (sel.value) state.mapping[f.key] = sel.value;
+      else delete state.mapping[f.key];
+    };
+    host.appendChild(field(f.label + (f.required ? ' *' : ''), sel));
+  });
+}
+
+async function renderCampaignDetail(host, campaignId, listHost) {
+  host.innerHTML = '';
+  try {
+    const [detail, leadsOut, analyticsOut] = await Promise.all([
+      api('/api/campaigns/' + encodeURIComponent(campaignId)),
+      api('/api/campaigns/' + encodeURIComponent(campaignId) + '/leads'),
+      api('/api/campaigns/' + encodeURIComponent(campaignId) + '/analytics'),
+    ]);
+    const c = detail.campaign || {};
+    const a = (analyticsOut && analyticsOut.analytics) || {};
+    host.appendChild(el('div', { class: 'flex items-center justify-between gap-2' }, [
+      el('h3', { class: 't-h3' }, c.name || 'Campaign'),
+      el('span', { class: 'pill' }, c.status || ''),
+    ]));
+    host.appendChild(el('div', { class: 'grid grid-3', style: 'margin-top:12px' }, [
+      statCard('READY', String(c.readyCount || 0), 'Valid'),
+      statCard('INVALID', String(c.invalidCount || 0), 'Malformed'),
+      statCard('DUPLICATES', String(c.duplicateCount || 0), 'Dupes'),
+      statCard('CallJobs', String(a.callJobs || 0), 'Real queue'),
+      statCard('Conversations', String(a.calls || 0), 'Real calls'),
+      statCard('Dialed', String(c.dialedCount || 0), 'In progress / done'),
+    ]));
+    const cont = el('button', { class: 'btn btn-primary' }, 'Continue dialing');
+    cont.onclick = () => {
+      modal({
+        title: 'Confirm next batch',
+        body: el('p', {}, 'Enqueues the next concurrency batch on the Instant Leads dial path.'),
+        confirmText: 'Confirm',
+        onConfirm: async () => {
+          const res = await api('/api/campaigns/' + encodeURIComponent(campaignId) + '/start', {
+            method: 'POST', body: { confirm: true },
+          });
+          toast('Enqueued ' + (res.enqueued || 0) + '.', 'ok');
+          await renderCampaignDetail(host, campaignId, listHost);
+          await loadCampaigns(listHost);
+        },
+      });
+    };
+    const exportCsv = el('a', {
+      class: 'btn btn-ghost',
+      href: '/api/campaigns/' + encodeURIComponent(campaignId) + '/export?format=csv',
+      target: '_blank',
+    }, 'Export CSV');
+    const exportXlsx = el('a', {
+      class: 'btn btn-ghost',
+      href: '/api/campaigns/' + encodeURIComponent(campaignId) + '/export?format=xlsx',
+      target: '_blank',
+    }, 'Export Excel');
+    const back = el('button', { class: 'btn btn-ghost', onclick: () => { location.hash = '#/campaigns'; } }, 'New campaign');
+    host.appendChild(el('div', { class: 'flex gap-2', style: 'flex-wrap:wrap;margin:14px 0' }, [
+      cont, exportCsv, exportXlsx, back,
+    ]));
+    host.appendChild(el('h4', { class: 't-h4' }, 'Results'));
+    (leadsOut.leads || []).forEach((row) => {
+      const openLead = row.leadId
+        ? el('button', {
+          class: 'btn btn-ghost',
+          onclick: () => { location.hash = '#/leads'; toast('Open Instant Leads for timeline. Lead ' + row.leadId, 'info'); },
+        }, 'Timeline')
+        : null;
+      host.appendChild(el('div', { class: 'card card-pad', style: 'margin-bottom:8px' }, [
+        el('div', { class: 'flex items-center justify-between gap-2' }, [
+          el('b', {}, (row.name || 'Lead') + ' · ' + (row.phone || '')),
+          el('span', { class: 'pill' }, row.status || ''),
+        ]),
+        el('p', { class: 'muted' }, 'Outcome: ' + (row.outcomeKey || '—')
+          + (row.lastError ? (' · ' + row.lastError) : '')),
+        openLead,
+      ]));
+    });
+  } catch (e) {
+    host.appendChild(el('div', { class: 'muted' }, e.message));
+  }
 }
 
 async function loadCampaigns(host) {
@@ -4527,58 +4844,45 @@ async function loadCampaigns(host) {
     await ensureEmployees();
     const out = await api('/api/campaigns');
     host.innerHTML = '';
+    host.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:10px' }, 'Campaigns'));
     const empName = (id) => {
       const e = (State.employees || []).find((x) => x.id === id);
       return e ? e.name : (id || '—');
     };
     (out.campaigns || []).forEach((c) => {
+      const open = el('button', { class: 'btn btn-primary' }, 'Open');
+      open.onclick = () => { location.hash = '#/campaigns?id=' + encodeURIComponent(c.id); };
       const pause = el('button', { class: 'btn btn-ghost' }, c.status === 'paused' ? 'Resume' : 'Pause');
       pause.onclick = async () => {
         try {
-          await api('/api/campaigns/status', { method: 'POST', body: { campaignId: c.id, status: c.status === 'paused' ? 'running' : 'paused' } });
-          await loadCampaigns(host);
-        } catch (e) { toast(e.message, 'err'); }
-      };
-      const attach = el('select', { class: 'select' }, [
-        el('option', { value: '' }, 'Attach employee'),
-      ].concat((State.employees || []).filter((e) => e.status !== 'ARCHIVED').map((e) =>
-        el('option', { value: e.id, selected: c.employeeId === e.id ? 'selected' : null }, e.name || e.id))));
-      if (c.employeeId) attach.value = c.employeeId;
-      attach.onchange = async () => {
-        try {
-          await api('/api/campaigns/employee', {
+          await api('/api/campaigns/status', {
             method: 'POST',
-            body: { campaignId: c.id, employeeId: attach.value || null },
+            body: { campaignId: c.id, status: c.status === 'paused' ? 'running' : 'paused' },
           });
-          toast(attach.value ? 'Employee attached.' : 'Employee cleared.', 'ok');
           await loadCampaigns(host);
         } catch (e) { toast(e.message, 'err'); }
-      };
-      const enqueue = el('button', { class: 'btn btn-primary' }, 'Enqueue batch');
-      enqueue.onclick = () => {
-        modal({
-          title: 'Confirm outbound enqueue',
-          body: el('div', {}, [
-            el('p', {}, 'This queues up to ' + (c.ratePerMinute || 10) + ' CallJobs for "' + c.name + '"'
-              + (c.employeeId ? (' via ' + empName(c.employeeId)) : '')
-              + '. Same dial path as Instant Leads. Confirm is required.')
-          ]),
-          confirmText: 'Confirm enqueue',
-          onConfirm: async () => {
-            const res = await api('/api/campaigns/enqueue', { method: 'POST', body: { campaignId: c.id, confirm: true } });
-            toast('Enqueued ' + (res.enqueued || 0) + ' lead(s).', 'ok');
-            await loadCampaigns(host);
-          }
-        });
       };
       host.appendChild(el('article', { class: 'card ticket-card' }, [
-        el('div', { class: 'flex items-center justify-between gap-2' }, [el('h3', { class: 't-h3' }, c.name), el('span', { class: 'pill' }, c.status)]),
-        el('p', { class: 'muted' }, (c.leadCount || 0) + ' leads · ' + (c.dialedCount || 0) + ' dialed · employee ' + empName(c.employeeId) + ' · rate ' + (c.ratePerMinute || 10) + '/min'),
-        el('div', { class: 'flex gap-2', style: 'flex-wrap:wrap;align-items:center' }, [attach, enqueue, pause])
+        el('div', { class: 'flex items-center justify-between gap-2' }, [
+          el('h3', { class: 't-h3' }, c.name),
+          el('span', { class: 'pill' }, c.status),
+        ]),
+        el('p', { class: 'muted' },
+          (c.leadCount || 0) + ' leads · READY ' + (c.readyCount || 0)
+          + ' · INVALID ' + (c.invalidCount || 0)
+          + ' · DUPLICATES ' + (c.duplicateCount || 0)
+          + ' · employee ' + empName(c.employeeId)
+          + ' · concurrency ' + (c.concurrency || c.ratePerMinute || 2)),
+        el('div', { class: 'flex gap-2', style: 'flex-wrap:wrap' }, [open, pause]),
       ]));
     });
-    if (!(out.campaigns || []).length) host.appendChild(el('div', { class: 'card card-pad muted' }, 'No campaigns yet.'));
-  } catch (e) { host.innerHTML = ''; host.appendChild(el('div', { class: 'card card-pad muted' }, e.message)); }
+    if (!(out.campaigns || []).length) {
+      host.appendChild(el('div', { class: 'card card-pad muted' }, 'No campaigns yet.'));
+    }
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('div', { class: 'card card-pad muted' }, e.message));
+  }
 }
 
 function fmtPerf(value, emptyDash) {
@@ -5135,7 +5439,7 @@ function grantTestCredits(t) {
    7. SETTINGS
    =========================================================================== */
 async function viewSettings(root) {
-  root.appendChild(viewHead('Settings', 'Workspace identity, members, audit history, and implemented providers. Secrets stay in server .env only.'));
+  root.appendChild(viewHead('Account', 'Workspace identity, members, audit history, and runtime readiness. Secrets stay in server .env only.'));
 
   const provHost = el('div', { id: 'provHost' }, skeleton('sk-card', 3));
   root.appendChild(provHost);
@@ -5275,16 +5579,39 @@ async function loadByon(host) {
 
 function paintProviders(host, reg) {
   host.innerHTML = '';
+  // Customer payload: product layers only (no brand inventory).
+  if (reg && reg.layers) {
+    const rows = [
+      { key: 'voice', label: 'Voice' },
+      { key: 'brain', label: 'Brain' },
+      { key: 'listening', label: 'Listening' },
+      { key: 'telephony', label: 'Telephony' },
+    ];
+    host.appendChild(el('div', { class: 'card card-pad' }, [
+      el('h3', { class: 't-h3', style: 'margin-bottom:10px' }, 'Runtime'),
+      el('p', { class: 'muted', style: 'margin-bottom:12px' },
+        'Product readiness only. Provider brand inventory is Super Admin Diagnostics.'),
+      el('div', { class: 'prov-grid' }, rows.map((r) => el('div', { class: 'card prov-card' }, [
+        el('div', { class: 'pc-top' }, [
+          el('div', { class: 'pc-name' }, r.label),
+          reg.layers[r.key]
+            ? el('span', { class: 'badge-live' }, [el('span', { class: 'd' }), 'Ready'])
+            : el('span', { class: 'badge-ready' }, [el('span', { class: 'd' }), 'Not ready']),
+        ]),
+      ]))),
+    ]));
+    return;
+  }
   const layers = [
-    { key: 'tts', label: 'Text to speech' },
-    { key: 'llm', label: 'Brain, LLM' },
+    { key: 'tts', label: 'Voice' },
+    { key: 'llm', label: 'Brain' },
     { key: 'telephony', label: 'Telephony' }
   ];
   layers.forEach((L) => {
     const list = reg[L.key] || [];
     const wrap = el('div', { class: 'prov-layer' }, [
       el('div', { class: 'lh' }, [el('span', { class: 'lt' }, L.label)]),
-      el('div', { class: 'prov-grid' }, list.length ? list.map(provCard) : [el('div', { class: 'muted' }, 'No providers registered.')])
+      el('div', { class: 'prov-grid' }, list.length ? list.map(provCard) : [el('div', { class: 'muted' }, 'No adapters registered.')])
     ]);
     host.appendChild(wrap);
   });

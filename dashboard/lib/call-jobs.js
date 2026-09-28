@@ -1,13 +1,16 @@
 /**
  * Astra AI. CallJob queue for instant leads and campaign dials.
  *
- * Status: queued | dialing | completed | failed.
+ * Statuses: queued | scheduled | calling | dialing | connected | completed |
+ * no_answer | failed | retry_scheduled | cancelled.
+ * ("dialing" kept as alias of "calling" for Instant Leads compatibility.)
+ *
  * Links leadId, agentId, workflowId, phoneNumberId, providerRunId, resultCallId.
  * Public shapes never expose Dograh / VoBiz / provider ids (providerRunId stays
  * server-side only).
  *
  * Idempotency: tenant-scoped idempotencyKey returns the same job. An active
- * (queued|dialing) job for a lead is reused so retries do not double-dial.
+ * job for a lead is reused so retries do not double-dial.
  *
  * No em dashes anywhere. Commas and periods only.
  */
@@ -15,8 +18,32 @@
 
 const crypto = require('crypto');
 
-const JOB_STATUSES = new Set(['queued', 'dialing', 'completed', 'failed']);
-const ACTIVE_STATUSES = new Set(['queued', 'dialing']);
+const JOB_STATUSES = new Set([
+  'queued',
+  'scheduled',
+  'calling',
+  'dialing',
+  'connected',
+  'completed',
+  'no_answer',
+  'failed',
+  'retry_scheduled',
+  'cancelled',
+]);
+const ACTIVE_STATUSES = new Set([
+  'queued',
+  'scheduled',
+  'calling',
+  'dialing',
+  'connected',
+  'retry_scheduled',
+]);
+
+function normalizeJobStatus(status) {
+  const s = String(status || '').trim().toLowerCase();
+  if (s === 'dialing') return 'calling';
+  return s;
+}
 
 function genId(prefix) {
   return prefix + crypto.randomBytes(8).toString('hex');
@@ -212,19 +239,28 @@ function createCallJob(db, tenantId, input, actorUserId) {
 
 /**
  * Update job status and optional linkage fields.
- * Allowed statuses: queued | dialing | completed | failed.
  */
 function updateCallJobStatus(db, tenantId, id, status, patch = {}) {
-  if (!JOB_STATUSES.has(String(status))) {
-    return { ok: false, status: 422, error: 'status must be queued, dialing, completed, or failed', code: 'bad_status' };
+  const next = normalizeJobStatus(status);
+  if (!JOB_STATUSES.has(String(status)) && !JOB_STATUSES.has(next)) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'invalid call job status',
+      code: 'bad_status',
+    };
   }
   const job = findCallJob(db, tenantId, id);
   if (!job) return { ok: false, status: 404, error: 'call job not found', code: 'not_found' };
   const ts = nowIso();
-  job.status = String(status);
+  // Persist canonical calling instead of legacy dialing when possible.
+  job.status = next === 'calling' ? 'calling' : String(status);
+  if (job.status === 'dialing') job.status = 'calling';
   job.updatedAt = ts;
-  if (status === 'dialing' && !job.dialedAt) job.dialedAt = ts;
-  if (status === 'completed' || status === 'failed') job.completedAt = ts;
+  if ((next === 'calling' || next === 'dialing' || next === 'connected') && !job.dialedAt) job.dialedAt = ts;
+  if (next === 'completed' || next === 'failed' || next === 'no_answer' || next === 'cancelled') {
+    job.completedAt = ts;
+  }
   if (patch.providerRunId !== undefined) {
     job.providerRunId = patch.providerRunId ? String(patch.providerRunId) : null;
   }
@@ -244,6 +280,7 @@ function updateCallJobStatus(db, tenantId, id, status, patch = {}) {
 module.exports = {
   JOB_STATUSES,
   ACTIVE_STATUSES,
+  normalizeJobStatus,
   publicCallJob,
   findCallJob,
   findByIdempotencyKey,

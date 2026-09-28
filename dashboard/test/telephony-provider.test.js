@@ -171,6 +171,14 @@ test('createOutboundCall keeps numeric Dograh workflowId override', async () => 
     },
   };
   const provider = new DograhVobizProvider({ core: makeCore(db), telephony: tel });
-  await provider.createOutboundCall('t1', '+14155552671', { workflowId: 42 });
+  // Explicit server-side number ids satisfy fail-closed. No silent env fallback.
+  await provider.createOutboundCall('t1', '+14155552671', {
+    workflowId: 42,
+    telephonyConfigId: 2,
+    fromPhoneNumberId: 3,
+  });
   assert.equal(seenOpts.workflowId, 42);
+  assert.equal(seenOpts.telephonyConfigId, 2);
+  assert.equal(seenOpts.fromPhoneNumberId, 3);
+  assert.equal(seenOpts.failClosedNumbers, true);
 });

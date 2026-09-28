@@ -291,8 +291,9 @@ function migrateDb(parsed) {
   for (const emp of out.employees) {
     if (!Array.isArray(emp.actions)) emp.actions = [];
     if (!emp.voice || typeof emp.voice !== 'object') {
-      emp.voice = { language: 'en-IN', model: 'mulberry', speaker: 'speaker_1', f0_up_key: 0 };
+      emp.voice = { language: 'en-IN', tier: 'standard', model: 'mulberry', speaker: 'speaker_1', f0_up_key: 0 };
     } else {
+      if (!emp.voice.tier) emp.voice.tier = 'standard';
       const lang = String(emp.voice.language || 'en-IN');
       const allowed = new Set(['en-IN', 'hi-IN', 'te-IN', 'ta-IN']);
       if (!allowed.has(lang)) {

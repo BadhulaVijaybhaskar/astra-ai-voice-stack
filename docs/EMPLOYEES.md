@@ -60,7 +60,8 @@ Public JSON never includes Dograh / VoBiz / Deepgram / Groq / Rumik terms.
 - **My Employees**: cards, filters, Open / Test / Pause / Resume, + New Employee.
 - **Create Employee**: templates + brief → compose.
 - **Employee Studio**: header actions + tabs (Overview, Instructions, Workflow, Training, Assign Number, Leads, Timeline, Actions, Outcomes, Voice, Settings).
-  - Instructions / Workflow / Training / Assign Number / Outcomes / Leads / Timeline / Actions / Voice Language are real editors.
+  - Instructions / Workflow / Training / Assign Number / Outcomes / Leads / Timeline / Actions / Voice (Language + Voice tier stubs) are real editors.
+  - Voice tiers: Standard (live) / Regional Premium / Licensed Brand / Private Enterprise (placeholders). See [CELEBRITY-VOICES.md](./CELEBRITY-VOICES.md).
   - Assign Number includes Inbound ownership when a Phone Number is linked.
 - Customer nav: see [NAV-IA.md](./NAV-IA.md).
 
