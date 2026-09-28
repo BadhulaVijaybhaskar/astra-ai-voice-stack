@@ -1,6 +1,6 @@
 # Astra Voice Rebrand — Phase 1 Audit
 
-**Status:** Coordinator-ready (updated with approved AstraConnect brand kit). Docs only. No product UI/CSS/JS mutations in this phase.  
+**Status:** Coordinator-ready (brand kit + Design favicon / pending Voice AC mark notes). Docs only. No product UI/CSS/JS mutations in this phase.  
 **Repo:** `BadhulaVijaybhaskar/astra-ai-voice-stack` (working tree: `dashboard/` console + APIs)  
 **Date:** 2026-09-28  
 **Scope:** Inventory current **Astra AI** calling console against brand locks for **Astra Voice** (AstraConnect product family). Preserve backends, APIs, auth, providers, CallJob, and workflows.
@@ -10,8 +10,10 @@
 | Lock | Requirement |
 | --- | --- |
 | Wordmark | **Astra Voice** with approved AC symbol. Not “Astra AI”, not “AstraConnect Voice”. |
-| App lockup | Canonical kit `astravoice.png` — AC mark + “Astra voice” for sidebar / auth / product chrome. Prefer this over any purple `astra AI` SVG/PNG still in the calling repo. |
-| Colour | Electric blue primary (`--voice`). Neutrals: white / off-white / graphite / cool gray. Green only for **success** (not Chat theme). |
+| App lockup | Canonical kit **`astravoice.png`** — preferred Voice wordmark for sidebar / auth / product chrome. Prefer over any purple `astra AI` SVG/PNG in the calling repo. |
+| Discrete AC mark | Hub **`favicon.png`** (blue A + green C on black). No standalone approved AC monogram SVG in the marketing repo yet. |
+| Voice-only AC mark | **Pending from Design** (electric blue). Until then, favicon may seed sidebar icon work but Voice chrome must not give green equal weight. |
+| Colour | Electric blue primary (`--voice`). Neutrals: white / off-white / graphite / cool gray. Green only for **success** (not Chat theme; not equal-weight AC green in Voice chrome). |
 | Product feel | Operational calm/dense console. Not marketing/cinematic. Do **not** import website hero/orb/Guide patterns into the Voice app. |
 | Non-goals | Do not change CallJob dial path, provider adapters, auth, or invent metrics. |
 
@@ -21,11 +23,15 @@ Kit received as uploads (website / AstraConnect brand system). These are the **s
 
 | File | Use in Voice calling console | Do not use for |
 | --- | --- | --- |
-| **`astravoice.png`** | **USE THIS** — app wordmark / sidebar / auth brand lockup ([AC] + Astra voice) | — |
-| **`astraconnect-logo.png`** | AC symbol / parent mark alone (favicon crop, compact mark, OG glyph) | Do not substitute as the Voice app title |
+| **`astravoice.png`** | **Prefer this** — Voice app wordmark / sidebar / auth lockup ([AC] + Astra voice) | — |
+| **Hub `favicon.png`** (`astraconnect-favicon-ac.png`) | **Discrete AC mark** today — blue A + green C on black (64×64). Interim base for favicon / compact mark only | Do not treat green as co-primary in Voice chrome; not a Voice-only mark |
+| **`astraconnect-logo.png`** | Larger parent AC raster (same family as hub favicon). Optional high-res source | Do not substitute as the Voice app title; no approved standalone AC **SVG** yet |
 | **`astraconnect-full-logo.png`** | Full **AstraConnect** parent lockup | Marketing / parent only — **not** the Voice app title |
 | **`astrachat.png`** | Reference only (Chat product lockup) | **Do not** theme the Voice app green / Chat accent |
 | **`astraconnect-styles.css`** | Token extraction for Phase 2 (`--voice*`, neutrals, success) | Do not lift website cinematic utilities (`hero-orb`, `hero-canvas`, Guide orb, `shadow-guide`) into the console |
+| **Voice-only AC mark (electric blue)** | **Pending from Design** — block / swap when delivered | Do not invent a monochrome/blue-only SVG ahead of Design |
+
+**Design agent note (2026-09-28):** There is **no** standalone approved AC monogram SVG in the marketing repo yet. The discrete AC mark for geometry/reference is the hub **`favicon.png`**. Voice console should lead with **`astravoice.png`**; if the favicon is used as a sidebar-icon base, **do not give green equal visual weight** in Voice chrome. Await the Voice-only AC mark (electric blue) from Design.
 
 Earlier light-tree uploads (`logo.svg`, `logo-mark.png`) and in-repo `dashboard/public/assets/logo*` remain **deprecated Astra AI** assets (ribbon A / purple→cyan wordmark). Prefer **`astravoice.png`** over those for every customer-facing Voice surface.
 
@@ -37,7 +43,7 @@ Earlier light-tree uploads (`logo.svg`, `logo-mark.png`) and in-repo `dashboard/
 | Uploaded / repo `logo.svg` | Byte-identical. Old **astra AI** text wordmark. Do not ship. |
 | Uploaded / repo `logo-mark.png` | Byte-identical. Old ribbon-A mark. Do not ship. |
 | Repo `logo.png` / `logo-lockup.png` | Old Astra AI lockups + “exceed expectations”. Retire. |
-| Repo `favicon.svg` / `og.svg` | Astra AI + purple volt gradient. Rebuild from AC mark + `--voice`. |
+| Repo `favicon.svg` / `og.svg` | Astra AI + purple volt gradient. Rebuild from hub AC favicon geometry, then swap to **pending Voice AC mark** when Design delivers. |
 
 ---
 
@@ -47,33 +53,35 @@ Earlier light-tree uploads (`logo.svg`, `logo-mark.png`) and in-repo `dashboard/
 
 | Canonical kit file | Suggested console destination | Notes |
 | --- | --- | --- |
-| `astravoice.png` | Sidebar / auth primary lockup (replace `brandMark()` + `astra`/`AI` text combo, or replace both with single `<img>`) | **Primary Voice app brand.** Lockup art uses “Astra voice” (lowercase *v*); chrome aria/title strings still use **Astra Voice**. |
-| `astraconnect-logo.png` | Favicon / compact mark / empty-state glyph | Parent AC symbol only. Flat electric blue + teal; no purple gradient. |
+| `astravoice.png` | **Primary** sidebar / auth wordmark (replace `brandMark()` + `astra`/`AI` text, or single `<img>` lockup) | Prefer this asset. Lockup art uses “Astra voice” (lowercase *v*); chrome aria/title strings still use **Astra Voice**. |
+| Hub `favicon.png` (AC on black) | Interim browser favicon / optional compact sidebar icon **base** | Discrete approved AC mark today. Blue A + green C — **do not give green equal weight** in Voice chrome. **Pending Voice AC mark from Design** (electric blue) should replace this for Voice-native mark usage. |
+| `astraconnect-logo.png` | Optional high-res raster of parent AC | Same dual-colour family; no standalone approved AC **SVG** in marketing repo yet. |
 | `astraconnect-full-logo.png` | Optional marketing/footer parent credit only | Never as console product title. |
 | `astrachat.png` | None in Voice app | Reference so implementers do not confuse Chat green with Voice blue. |
+| Voice-only AC mark (electric blue) | Favicon + any mark-only chrome once delivered | **Pending from Design** — track as Phase 2/3 dependency. |
 
 ### Live product assets (`dashboard/public/assets/`) — current, to replace
 
 | File | Role today | Brand family | Phase-2+ action |
 | --- | --- | --- | --- |
-| `logo-mark.png` (620×620) | Sidebar / auth mark via `brandMark()` | Old Astra AI ribbon A | Replace with crop from `astraconnect-logo.png` or optimized AC mark |
+| `logo-mark.png` (620×620) | Sidebar / auth mark via `brandMark()` | Old Astra AI ribbon A | Prefer full `astravoice.png` lockup; interim mark may derive from hub favicon until **pending Voice AC mark** arrives |
 | `logo.png` / `logo-lockup.png` | Full lockups | Old Astra AI | Retire; Voice surfaces use `astravoice.png` |
 | `logo.svg` | Text-only “astra AI” wordmark | Old Astra AI | **Do not prefer** over `astravoice.png`; delete or stop referencing |
-| `favicon.svg` / `favicon.png` | Tab icon | Old Astra AI | Rebuild from AC mark |
-| `og.svg` | Social card | Old Astra AI + purple→cyan | New OG using AC + Astra Voice + `--voice` |
+| `favicon.svg` / `favicon.png` | Tab icon | Old Astra AI | Replace with hub AC favicon interim → then **pending Voice AC mark** |
+| `og.svg` | Social card | Old Astra AI + purple→cyan | New OG using `astravoice.png` / Voice AC mark + `--voice` |
 
 ### Approved vs old (critical distinction)
 
 ```
-APPROVED (canonical kit)              CURRENT REPO (shipped)
-─────────────────────────              ──────────────────────
-astravoice.png (AC + Astra voice)     logo-mark / logo.svg ribbon + “astra AI”
-astraconnect-logo.png (AC only)       purple → cyan 3D A + sparkle
-Electric blue + teal (flat)           Violet #6B21A8 + cyan #06B6D4 gradient
-Graphite wordmark                     Gradient “AI” wordmark
+APPROVED (canonical kit)                    CURRENT REPO (shipped)
+─────────────────────────                    ──────────────────────
+astravoice.png (preferred Voice wordmark)   logo-mark / logo.svg ribbon + “astra AI”
+Hub favicon.png (discrete AC; dual colour)  purple → cyan 3D A + sparkle
+Voice-only AC mark                          (missing — pending Design)
+Electric blue UI primary (--voice)          Violet #6B21A8 + cyan #06B6D4 gradient
 ```
 
-Light-tree `logo.svg` / `logo-mark.png` are **old marks** (MD5-identical to repo). They are **not** AstraConnect AC assets.
+Light-tree `logo.svg` / `logo-mark.png` are **old marks** (MD5-identical to repo). They are **not** AstraConnect AC assets. There is **no** approved standalone AC monogram SVG yet.
 
 ### Where logos render today
 
@@ -82,7 +90,7 @@ Light-tree `logo.svg` / `logo-mark.png` are **old marks** (MD5-identical to repo
 - Legacy: `console.html`, `demo.html` footer, HVAC desk eyebrows.
 - Docs/README badges reference `logo-lockup.png`.
 
-**Phase 2 rule:** wire **`astravoice.png`** into sidebar/auth first; keep layout dense (lockup height ~28–36px), no marketing-scale hero logo.
+**Phase 2 rule:** wire **`astravoice.png`** into sidebar/auth first (dense ~28–36px height). Use hub favicon only as interim mark/favicon seed; suppress equal green weight in Voice chrome; swap mark to **pending Voice AC mark from Design** when available.
 ---
 
 ## 2. Brand strings
@@ -209,7 +217,7 @@ Diagnostics remain Super Admin only.
 
 | Element | Current | Gap |
 | --- | --- | --- |
-| Sidebar brand | Old `logo-mark.png` + `astra`/`AI` | Swap to **`astravoice.png`** lockup (not parent full logo, not Chat) |
+| Sidebar brand | Old `logo-mark.png` + `astra`/`AI` | Prefer **`astravoice.png`** wordmark; interim mark may use hub favicon base without equal-weight green; swap to **pending Voice AC mark** |
 | Topbar crumb | Hardcoded `Astra AI` | → `Astra Voice` |
 | Health chips | TTS / Brain / Telephony from `GET /api/health` | Layer names OK; **non–super_admin public health omits `providers`**, so chips may stay empty/bad for customers |
 | Home “Demo path” runtime | Voice / Brain / Listening / Telephony via `/api/providers` layers | Customer-safe; keep |
@@ -365,8 +373,8 @@ These are **rebrand delivery phases**, not the historical product Phases 1–22 
 
 | Phase | Focus | Components | Size | Risk |
 | --- | --- | --- | --- | --- |
-| **2** | Asset pack | Stage kit: `astravoice.png` → sidebar/auth; `astraconnect-logo.png` → favicon/mark; retire purple `logo.svg` / ribbon marks; new OG | S | Using light-tree/old repo logos or Chat/parent full lockup by mistake |
-| **3** | Design tokens | Map kit `--voice` / `--voice-soft` / `--voice-foreground` + neutrals/success into `brand.css`; drop `--grad-volt`; **no** Chat/Guide/hero-orb import | M | Hardcoded hex leftovers; accidental Chat green |
+| **2** | Asset pack | Stage `astravoice.png` → sidebar/auth wordmark; hub `favicon.png` → interim favicon/mark base; retire purple `logo.svg` / ribbon marks; new OG; **swap mark when pending Voice AC mark arrives** | S | Equal-weight green from hub favicon; inventing blue SVG ahead of Design; using Chat/parent full lockup |
+| **3** | Design tokens | Map kit `--voice` / `--voice-soft` / `--voice-foreground` + neutrals/success into `brand.css`; drop `--grad-volt`; **no** Chat/Guide/hero-orb import | M | Hardcoded hex leftovers; accidental Chat green / AC green as UI primary |
 | **4** | Shell chrome | Sidebar/auth/topbar crumb → Astra Voice + AC mark | S | Miss legacy `console.html` |
 | **5** | Home KPIs | Replace chars/spend with truthful Performance/Employees/minutes/wallet teaser | M | Must not invent rates |
 | **6** | String sweep — console | Titles, crumbs, placeholders, HIPAA, Studio defaults, empty-state tone | M | Dual `public/app.js` vs `assets/app.js` |
@@ -385,25 +393,28 @@ These are **rebrand delivery phases**, not the historical product Phases 1–22 
 
 ## 15. Risks
 
-1. **Wrong logo adoption** — light-tree / repo `logo.svg` + ribbon `logo-mark.png` are old Astra AI. Canonical Voice app lockup is **`astravoice.png`**; mark-only is **`astraconnect-logo.png`**. Never use `astrachat.png` or `astraconnect-full-logo.png` as the console title.  
-2. **Purple token debt** — `--grad-volt` and hardcoded `#6B21A8`/`#7C3AED` appear across CSS, SVG, canvas sparks, marketing, OG, tenant branding default.  
-3. **Website CSS over-import** — `astraconnect-styles.css` includes Chat, Guide, and cinematic `hero-orb` / `hero-canvas` utilities. Phase 2 must extract Voice + neutrals + success only.  
-4. **Chat green confusion** — `--chat*` and `astrachat.png` are sibling-product reference; Voice stays electric blue; green = success only.  
-5. **“Astra Voice” dual meaning** — today marketing uses it as TTS brand; product rename requires layer-copy cleanup to avoid “Voice Voice”.  
-6. **Home economics honesty** — shipping “estimated spend” as brand proof violates claim safety; chars are Studio-scoped.  
-7. **Health chips vs sanitized health** — customers may see broken TTS/Brain/Telephony pills; fix carefully without exposing provider brands.  
-8. **Test fixtures** — workflows/phone-numbers/employees tests assert AstraNova / greeting strings.  
-9. **Legacy dual frontends** — `public/app.js` + `console.html` can miss a string sweep focused only on `assets/app.js`.  
-10. **rapidx ops identity** — cookie/env/deploy names are non-UI but brand-leaky in docs and support runbooks.  
-11. **Cinematic drift** — do not port Guide orb, hero washes, or glow utilities into the dense console.  
-12. **Lockup casing** — kit art shows “Astra voice”; product UI copy likely “Astra Voice”. Decide once in Phase 2 asset brief.
+1. **Wrong logo adoption** — light-tree / repo `logo.svg` + ribbon `logo-mark.png` are old Astra AI. Prefer **`astravoice.png`** for Voice chrome. Discrete AC mark today = hub **`favicon.png`** (not an approved standalone SVG). Never use `astrachat.png` or `astraconnect-full-logo.png` as the console title.  
+2. **Pending Voice AC mark from Design** — electric-blue Voice-only monogram not delivered yet. Interim hub favicon is dual-colour (blue A + green C); Voice chrome must not give green equal weight. Do not invent a replacement SVG ahead of Design.  
+3. **Purple token debt** — `--grad-volt` and hardcoded `#6B21A8`/`#7C3AED` appear across CSS, SVG, canvas sparks, marketing, OG, tenant branding default.  
+4. **Website CSS over-import** — `astraconnect-styles.css` includes Chat, Guide, and cinematic `hero-orb` / `hero-canvas` utilities. Phase 2 must extract Voice + neutrals + success only.  
+5. **Chat / AC green confusion** — `--chat*`, `astrachat.png`, and hub favicon green C are not Voice UI primary; green in app chrome = success only.  
+6. **“Astra Voice” dual meaning** — today marketing uses it as TTS brand; product rename requires layer-copy cleanup to avoid “Voice Voice”.  
+7. **Home economics honesty** — shipping “estimated spend” as brand proof violates claim safety; chars are Studio-scoped.  
+8. **Health chips vs sanitized health** — customers may see broken TTS/Brain/Telephony pills; fix carefully without exposing provider brands.  
+9. **Test fixtures** — workflows/phone-numbers/employees tests assert AstraNova / greeting strings.  
+10. **Legacy dual frontends** — `public/app.js` + `console.html` can miss a string sweep focused only on `assets/app.js`.  
+11. **rapidx ops identity** — cookie/env/deploy names are non-UI but brand-leaky in docs and support runbooks.  
+12. **Cinematic drift** — do not port Guide orb, hero washes, or glow utilities into the dense console.  
+13. **Lockup casing** — kit art shows “Astra voice”; product UI copy likely “Astra Voice”. Decide once in Phase 2 asset brief.
 
 ---
 
 ## 16. Coordinator checklist (Phase 1 exit)
 
 - [x] Canonical AstraConnect kit cited (`astravoice.png` preferred over purple repo SVG)  
-- [x] Logo inventory: Voice lockup vs AC mark vs parent full vs Chat reference vs old ribbon A  
+- [x] Discrete AC mark = hub `favicon.png`; **no** approved standalone AC SVG yet  
+- [x] Noted **pending Voice AC mark from Design** (electric blue); Voice chrome must not give green equal weight  
+- [x] Logo inventory: Voice lockup vs hub AC favicon vs parent full vs Chat reference vs old ribbon A  
 - [x] Brand string map (customer vs ops)  
 - [x] Colour token gap + Phase 2 plan from `--voice` / `--voice-soft` / `--voice-foreground` + neutrals  
 - [x] Explicit exclusion of Chat theme, Guide orb, website cinematic utilities  
@@ -416,4 +427,4 @@ These are **rebrand delivery phases**, not the historical product Phases 1–22 
 - [x] Phases 2–14 effort framing + risks  
 - [x] Zero product UI mutations in this PR  
 
-**Phase 1 success:** this document is sufficient to assign Phases 2–14 without further discovery of brand assets or Home metric honesty. Kit files are the asset/token source of truth; implementers should stage them into `dashboard/public/assets/` only when Phase 2 begins (not in this docs PR).
+**Phase 1 success:** this document is sufficient to assign Phases 2–14 without further discovery of brand assets or Home metric honesty. Kit files are the asset/token source of truth; implementers should stage them into `dashboard/public/assets/` only when Phase 2 begins (not in this docs PR). Track Design delivery of the Voice-only AC mark as a Phase 2/3 dependency.
