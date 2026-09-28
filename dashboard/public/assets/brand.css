@@ -1,12 +1,10 @@
 /* ==========================================================================
    Astra Voice / AstraConnect Brand & Design System (single source of truth)
-   Canonical family tokens: --astra-blue* (see docs/astraconnect-design-system.md).
-   Voice aliases: --voice → --astra-blue (Phase 2 compatibility).
-   Neutrals: white / off-white surfaces, graphite / navy ink.
-   Teal: AC mark artwork + restrained supporting accent only (not Chat green).
-   Status: success green, warning amber, error red (shared language).
-   Do NOT import Chat, Guide, or hero-orb website patterns into Voice chrome.
-   Loaded by the marketing site and the product dashboard.
+   Canonical: --astra-blue* ↔ --voice* (bidirectional equal literals).
+   --astra-green* ↔ --chat* documented for Chat; do NOT theme Voice green.
+   Status badges: --status-{ready|calling|connected|...}-*.
+   See docs/astraconnect-design-system.md.
+   Do NOT import Guide / hero-orb website patterns into Voice chrome.
    No em dashes anywhere in this codebase. Use commas or periods.
    ========================================================================== */
 
