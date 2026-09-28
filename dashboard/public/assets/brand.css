@@ -11,33 +11,38 @@
    ========================================================================== */
 
 :root {
-  /* ---- Canonical AstraConnect brand blues ---- */
+  /* ---- Brand blues (bidirectional: --astra-blue* ↔ --voice*) ----
+     Equal literals so either name resolves without circular var().
+     Website aliases --astra-blue → var(--voice) when this contract lands. */
   --astra-blue:            #0077ec; /* oklch(0.58 0.2 255) */
   --astra-blue-hover:      #0066c9;
   --astra-blue-soft:       #e7f5ff; /* oklch(0.965 0.025 250) */
   --astra-blue-foreground: #FFFFFF;
+  --voice:                 #0077ec; /* = --astra-blue */
+  --voice-soft:            #e7f5ff; /* = --astra-blue-soft */
+  --voice-foreground:      #FFFFFF; /* = --astra-blue-foreground */
 
-  /* Chat family greens (available for Chat; NOT Voice UI primary) */
-  --astra-green:      #2eb88a;
-  --astra-green-dark: #1f7a5c;
-  --astra-green-soft: #e8f8f2;
+  /* Chat family greens (= website --chat*). Document / parity only.
+     Do NOT theme Voice UI with these. Success status stays --success. */
+  --chat:      #00b180; /* oklch(0.67 0.15 166) */
+  --chat-dark: #005f40; /* oklch(0.42 0.11 167) */
+  --chat-soft: #e2faef; /* oklch(0.965 0.03 166) */
+  --astra-green:      #00b180; /* = --chat */
+  --astra-green-dark: #005f40; /* = --chat-dark */
+  --astra-green-soft: #e2faef; /* = --chat-soft */
 
   /* Neutrals */
-  --astra-navy:      #051223;
+  --astra-navy:      #051223; /* oklch(0.18 0.04 255) */
   --astra-graphite:  #1e2a3a;
-  --astra-gray:      #556272;
+  --astra-gray:      #556272; /* oklch(0.49 0.03 255) */
   --astra-gray-soft: #8492a6;
 
-  /* Voice primary aliases → canonical blue (keep Phase 2 call sites working) */
-  --voice:            var(--astra-blue);
-  --voice-foreground: var(--astra-blue-foreground);
-  --voice-soft:       var(--astra-blue-soft);
-  /* AC mark teal, logo / restrained accent only. Not a UI theme. */
+  /* AC mark teal, logo / restrained accent only. Not Chat green. */
   --mark-teal:        #09b5a5;
 
-  /* ---- Surfaces (canonical + Voice aliases) ---- */
-  --background:       #fcfeff;
-  --surface:          #f3f7fc;
+  /* ---- Surfaces ---- */
+  --background:       #fcfeff; /* oklch(0.995 0.002 245) */
+  --surface:          #f3f7fc; /* oklch(0.975 0.008 250) */
   --surface-elevated: #FFFFFF;
   --surface-muted:    #f8fafc;
   --bg:        var(--background);
@@ -45,13 +50,14 @@
   --panel:     var(--surface-elevated);
   --panel-2:   var(--surface-muted);
   --raised:    var(--surface);
-  --border:        #dae2eb;
+  --border:        #dae2eb; /* oklch(0.91 0.015 250) */
   --border-strong: #c8d3e0;
+  --border-focus:  rgba(0,119,236,0.7);
   --line:      var(--border);
   --line-2:    var(--border-strong);
   --line-strong: #94a3b8;
 
-  /* ---- Text (canonical + Voice aliases) ---- */
+  /* ---- Text ---- */
   --text-primary:   var(--astra-navy);
   --text-secondary: var(--astra-graphite);
   --text-muted:     var(--astra-gray);
@@ -67,7 +73,7 @@
   --ink-muted: var(--text-muted);
   --canvas:    var(--background);
 
-  /* ---- Accent aliases (legacy names → Astra blue) ---- */
+  /* ---- Accent aliases (legacy → Astra blue) ---- */
   --a-cyan:    var(--astra-blue);
   --a-sky:     var(--astra-blue-hover);
   --a-indigo:  var(--astra-blue);
@@ -75,21 +81,56 @@
   --accent:    var(--astra-blue);
   --accent-2:  var(--mark-teal);
   --accent-ink: var(--astra-blue-foreground);
-  /* Soft blue wash only. Purple→cyan volt identity retired. */
   --grad-volt: linear-gradient(115deg, var(--astra-blue-hover) 0%, var(--astra-blue) 55%, #1a8af0 100%);
   --grad-volt-soft: linear-gradient(115deg, rgba(0,119,236,0.12), rgba(9,181,165,0.06));
 
-  /* ---- Value/economics signal ---- */
   --gold:      var(--astra-blue);
   --gold-deep: var(--astra-blue-hover);
 
-  /* ---- Status (shared language; success ≠ Chat green) ---- */
-  --success: #24a656;
-  --warning: #e1a01d;
+  /* ---- Base status ---- */
+  --success: #24a656; /* oklch(0.64 0.16 151) */
+  --warning: #e1a01d; /* oklch(0.75 0.15 78) */
   --error:   #DC2626;
   --ok:      var(--success);
   --warn:    var(--warning);
   --bad:     var(--error);
+
+  /* ---- Call / lead / conversation status badges ---- */
+  --status-ready-fg: #0077ec;
+  --status-ready-bg: #e7f5ff;
+  --status-ready-border: rgba(0,119,236,0.28);
+
+  --status-calling-fg: #b45309;
+  --status-calling-bg: #fff7ed;
+  --status-calling-border: rgba(225,160,29,0.40);
+
+  --status-connected-fg: #24a656;
+  --status-connected-bg: #ecfdf3;
+  --status-connected-border: rgba(36,166,86,0.28);
+
+  --status-completed-fg: #15803d;
+  --status-completed-bg: #ecfdf3;
+  --status-completed-border: rgba(36,166,86,0.28);
+
+  --status-qualified-fg: #047857;
+  --status-qualified-bg: #ecfdf3;
+  --status-qualified-border: rgba(36,166,86,0.35);
+
+  --status-callback-fg: #e1a01d;
+  --status-callback-bg: #fffbeb;
+  --status-callback-border: rgba(225,160,29,0.40);
+
+  --status-not-interested-fg: #556272;
+  --status-not-interested-bg: #f3f7fc;
+  --status-not-interested-border: rgba(85,98,114,0.28);
+
+  --status-no-answer-fg: #8492a6;
+  --status-no-answer-bg: #f8fafc;
+  --status-no-answer-border: rgba(132,146,166,0.35);
+
+  --status-failed-fg: #DC2626;
+  --status-failed-bg: #fef2f2;
+  --status-failed-border: rgba(220,38,38,0.32);
 
   /* ---- Glow & shadow ---- */
   --shadow-sm:     0 1px 2px rgba(5,18,35,0.04), 0 8px 24px -14px rgba(5,18,35,0.10);
@@ -105,7 +146,7 @@
   --font: "Avenir Next", "Segoe UI Variable Text", "SF Pro Rounded", "SF Pro Display", "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, sans-serif;
   --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 
-  /* ---- Radii (canonical + Voice aliases) ---- */
+  /* ---- Radii ---- */
   --radius-sm:   8px;
   --radius-md:   12px;
   --radius-lg:   16px;
@@ -197,7 +238,7 @@ p { margin: 0; }
   box-shadow: var(--glow-accent);
   font-weight: 600;
 }
-.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(0,119,236,0.30), 0 14px 32px -12px rgba(0,119,236,0.32); background: #0066c9; }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(0,119,236,0.30), 0 14px 32px -12px rgba(0,119,236,0.32); background: var(--astra-blue-hover); }
 .btn-ghost {
   background: var(--panel); color: var(--ink);
   border-color: var(--line-2);
