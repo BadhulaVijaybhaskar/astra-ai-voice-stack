@@ -46,7 +46,13 @@ Public JSON never includes `providerRunId` or Dograh / VoBiz ids.
 
 ### Safe demo sample
 
-`public/samples/astra-campaign-demo-leads.csv` / `.xlsx` — only `+918065353938` (authorized test DID) plus clearly non-dialable rows. No random real mobiles.
+`dashboard/demo-assets/campaign-demo-leads.csv` / `.xlsx` (also mirrored under `public/samples/` for API download):
+
+- 5 non-dialable `900000000x` fixture rows (blocked by campaign phone normalize)
+- 1 `REPLACE_WITH_AUTHORIZED_TEST` placeholder (INVALID until replaced with an authorized test DID)
+
+Never ships random real mobiles. API: `GET /api/campaigns/sample.csv` / `sample.xlsx`.
+
 
 ## Performance (honest)
 

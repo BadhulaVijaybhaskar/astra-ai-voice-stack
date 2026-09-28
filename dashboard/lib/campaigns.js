@@ -42,12 +42,17 @@ function nowIso() {
 }
 
 function normalizePhone(value) {
+  const raw = String(value || '').trim();
+  // Explicit demo placeholders are never dialable until replaced by an authorized test DID.
+  if (!raw || /^REPLACE_WITH_AUTHORIZED_TEST$/i.test(raw)) return '';
   // Fail closed: return '' when unusable. Never invent a dialable number.
-  const e164 = leadsLib.normalizePhoneIN(value);
+  const e164 = leadsLib.normalizePhoneIN(raw);
   if (!e164 || !leadsLib.isValidE164(e164)) return '';
   // Reject all-zero / obviously fake national bodies (demo safety).
   const national = e164.replace(/^\+91/, '');
   if (/^0+$/.test(national) || /^(\d)\1+$/.test(national)) return '';
+  // Celebrity-demo safe block: 900000000x series is non-dialable fixture data only.
+  if (/^900000000\d$/.test(national)) return '';
   return e164;
 }
 
@@ -827,54 +832,64 @@ function exportCampaignRows(db, tenantId, campaignId) {
 function sampleLeadRows() {
   return [
     {
-      phone_number: '+918065353938',
-      name: 'Authorized Test DID',
+      phone_number: 'REPLACE_WITH_AUTHORIZED_TEST',
+      name: 'Authorized Test Slot',
       company: 'Astra Demo',
       email: 'demo@astra.local',
       language: 'en-IN',
       city: 'Hyderabad',
       lead_source: 'demo',
-      notes: 'AUTHORIZED_TEST_DID_ONLY',
+      notes: 'REPLACE_WITH_AUTHORIZED_TEST_DID_BEFORE_DIAL',
     },
     {
-      phone_number: '0000000000',
-      name: 'Invalid Zero',
-      company: 'Demo Co',
-      email: '',
-      language: 'en-IN',
-      city: 'Demo',
-      lead_source: 'demo',
-      notes: 'NON_DIALABLE',
-    },
-    {
-      phone_number: '91',
-      name: 'Short Bad',
-      company: 'Demo Co',
-      email: '',
-      language: 'hi-IN',
-      city: 'Demo',
-      lead_source: 'demo',
-      notes: 'NON_DIALABLE',
-    },
-    {
-      phone_number: 'NOT_A_PHONE',
-      name: 'Placeholder One',
+      phone_number: '9000000001',
+      name: 'Demo Lead One',
       company: 'Demo Co',
       email: 'one@example.invalid',
+      language: 'en-IN',
+      city: 'Demo City',
+      lead_source: 'demo',
+      notes: 'NON_DIALABLE_900000000x',
+    },
+    {
+      phone_number: '9000000002',
+      name: 'Demo Lead Two',
+      company: 'Demo Co',
+      email: 'two@example.invalid',
+      language: 'hi-IN',
+      city: 'Demo City',
+      lead_source: 'demo',
+      notes: 'NON_DIALABLE_900000000x',
+    },
+    {
+      phone_number: '9000000003',
+      name: 'Demo Lead Three',
+      company: 'Demo Co',
+      email: 'three@example.invalid',
       language: 'te-IN',
       city: 'Demo City',
       lead_source: 'demo',
-      notes: 'NON_DIALABLE_PLACEHOLDER',
+      notes: 'NON_DIALABLE_900000000x',
     },
     {
-      phone_number: '+91000',
-      name: 'Placeholder Two',
+      phone_number: '9000000004',
+      name: 'Demo Lead Four',
       company: 'Demo Co',
-      email: 'two@example.invalid',
+      email: 'four@example.invalid',
       language: 'ta-IN',
       city: 'Demo City',
       lead_source: 'demo',
-      notes: 'NON_DIALABLE_PLACEHOLDER',
+      notes: 'NON_DIALABLE_900000000x',
+    },
+    {
+      phone_number: '9000000005',
+      name: 'Demo Lead Five',
+      company: 'Demo Co',
+      email: 'five@example.invalid',
+      language: 'en-IN',
+      city: 'Demo City',
+      lead_source: 'demo',
+      notes: 'NON_DIALABLE_900000000x',
     },
   ];
 }

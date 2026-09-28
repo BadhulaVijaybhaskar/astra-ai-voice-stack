@@ -4723,7 +4723,7 @@ function renderCampaignCreateWizard(host, listHost) {
     el('a', { href: '/api/campaigns/sample.csv', target: '_blank' }, 'demo CSV'),
     document.createTextNode(' · '),
     el('a', { href: '/api/campaigns/sample.xlsx', target: '_blank' }, 'demo Excel'),
-    document.createTextNode(' (authorized test DID + non-dialable placeholders only).'),
+    document.createTextNode(' (5× 900000000x non-dialable + REPLACE_WITH_AUTHORIZED_TEST).'),
   ]));
   host.appendChild(field('Name', name));
   host.appendChild(field('AI Employee', empSel));

@@ -16,18 +16,29 @@
 
 **After this PR merges:** redeploy tip via `deploy/06-deploy-dashboard.sh` with `GIT_SHA` / `DEPLOYED_AT` and preserve VPS `.env` (`DOGRAH_*`, `DEEPGRAM_API_KEY`, `GROQ_API_KEY`, `RUMIK_API_KEY`).
 
-## Demo DID
+## Demo DID / sample file
 
-Test DID: `+918065353938`. Sample campaign file includes this DID once plus non-dialable placeholders only. Do not place paid real dials without human confirm. Live phone proof remains **AWAITING EXTERNAL ACCEPTANCE**.
+- Fixture: `dashboard/demo-assets/campaign-demo-leads.csv` (+ `.xlsx`)
+- 5× `900000000x` non-dialable + `REPLACE_WITH_AUTHORIZED_TEST` (must be replaced before any READY dial)
+- Authorized live test DID when approved: `+918065353938`
+- Do not place paid real dials without human confirm. Live phone proof remains **AWAITING EXTERNAL ACCEPTANCE**.
 
-## Smoke after deploy
+## VPS redeploy (required before claiming deployed)
+
+Live box is still stale (`app.js?v=20260915-polish`). After this PR merges onto the deploy branch:
 
 ```sh
-curl -s http://$VPS_IP:8787/api/health
-# expect: ok, version, gitSha|null — NO providers/models/selected
-
-curl -s -D- http://$VPS_IP:8787/console.html | head
-# expect: 302 /app.html for anon
-
-cd dashboard && npm test
+# on the VPS (paths may be /opt/rapidx-voice or /opt/astra-ai depending on install)
+cd /opt/astra-ai   # or /opt/rapidx-voice
+git fetch origin
+git checkout <merged-tip-sha>   # or: git pull origin main
+# preserve .env (DOGRAH_*, DEEPGRAM_API_KEY, GROQ_API_KEY, RUMIK_API_KEY)
+docker restart rapidx-voice     # container name from deploy/06-deploy-dashboard.sh
+# or: docker restart astra-ai
+curl -s http://127.0.0.1:8787/api/health
+# expect: no providers/models/selected on anon health; gitSha when GIT_SHA set
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/api/employees
+# expect: 401 (endpoint exists) not 404
 ```
+
+Do **not** claim the celebrity demo is live on VPS until the above redeploy is verified.

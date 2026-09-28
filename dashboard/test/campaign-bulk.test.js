@@ -13,14 +13,14 @@ const callJobs = require('../lib/call-jobs');
 test('sheet parse round-trips csv and xlsx sample', () => {
   const csv = campaigns.buildSampleCsv();
   const fromCsv = sheetParse.parseUpload(csv, 'sample.csv');
-  assert.equal(fromCsv.rows.length, 5);
+  assert.equal(fromCsv.rows.length, 6);
   assert.ok(fromCsv.headers.includes('phone_number'));
 
   const xlsx = campaigns.buildSampleXlsx();
   const fromX = sheetParse.parseUpload(xlsx, 'sample.xlsx');
-  assert.equal(fromX.rows.length, 5);
-  assert.equal(fromX.rows[0].phone_number, '+918065353938');
-  assert.equal(fromX.rows[1].phone_number, '0000000000');
+  assert.equal(fromX.rows.length, 6);
+  assert.equal(fromX.rows[0].phone_number, 'REPLACE_WITH_AUTHORIZED_TEST');
+  assert.equal(fromX.rows[1].phone_number, '9000000001');
 });
 
 test('upload map validate shows READY INVALID DUPLICATES and never dials malformed', () => {
@@ -66,24 +66,31 @@ test('upload map validate shows READY INVALID DUPLICATES and never dials malform
     text: campaigns.buildSampleCsv(),
   });
   assert.equal(uploaded.ok, true);
-  assert.equal(uploaded.campaign.upload.rowCount, 5);
+  assert.equal(uploaded.campaign.upload.rowCount, 6);
   assert.equal(uploaded.suggestedMapping.phone_number, 'phone_number');
 
   const mapped = campaigns.applyColumnMap(db, 't_a', created.campaign.id, uploaded.suggestedMapping);
   assert.equal(mapped.ok, true);
-  assert.equal(mapped.counts.ready, 1); // only authorized test DID
-  assert.equal(mapped.counts.invalid, 4);
+  // Sample ships with zero READY rows until REPLACE_WITH_AUTHORIZED_TEST is filled.
+  assert.equal(mapped.counts.ready, 0);
+  assert.equal(mapped.counts.invalid, 6);
 
+  // Inject one authorized READY row and re-map via addLeads path for dial safety check.
+  campaigns.addLeads(db, 't_a', created.campaign.id, '+918065353938, Authorized');
   const validation = campaigns.validateLaunch(db, 't_a', created.campaign.id, { providerAvailable: true });
   assert.equal(validation.ok, true);
   assert.equal(validation.counts.ready > 0, true);
 
-  // Only READY rows enqueue. Malformed never dialed.
   const batch = campaigns.enqueueCampaign(db, 't_a', created.campaign.id, { confirm: true, limit: 10 });
   assert.equal(batch.ok, true);
-  assert.equal(batch.enqueued, mapped.counts.ready);
+  assert.equal(batch.enqueued, validation.counts.ready);
+  const blocked = (db.campaignLeads || []).filter((l) =>
+    String(l.phone || '').includes('900000000') || /REPLACE_WITH/i.test(String(l.phone || '')));
+  blocked.forEach((l) => {
+    assert.ok(['invalid', 'duplicate'].includes(l.status) || l.dialedAt == null);
+  });
   const stillInvalid = (db.campaignLeads || []).filter((l) => l.status === 'invalid');
-  assert.ok(stillInvalid.length >= 1);
+  assert.ok(stillInvalid.length >= 5);
   stillInvalid.forEach((l) => {
     assert.equal(l.dialedAt, null);
   });
@@ -156,14 +163,15 @@ test('call job status set includes campaign lifecycle states', () => {
   assert.equal(up.job.status, 'calling');
 });
 
-test('sample files exist under public/samples', () => {
-  const csvPath = path.join(__dirname, '../public/samples/astra-campaign-demo-leads.csv');
-  const xlsxPath = path.join(__dirname, '../public/samples/astra-campaign-demo-leads.xlsx');
+test('sample files exist under demo-assets', () => {
+  const csvPath = path.join(__dirname, '../demo-assets/campaign-demo-leads.csv');
+  const xlsxPath = path.join(__dirname, '../demo-assets/campaign-demo-leads.xlsx');
   assert.equal(fs.existsSync(csvPath), true);
   assert.equal(fs.existsSync(xlsxPath), true);
   const text = fs.readFileSync(csvPath, 'utf8');
-  assert.ok(text.includes('AUTHORIZED_TEST_DID_ONLY'));
-  assert.ok(text.includes('NON_DIALABLE'));
-  // No random 10-digit mobiles that look like real people.
-  assert.equal(/,[6-9]\d{9},/.test(text), false);
+  assert.ok(text.includes('REPLACE_WITH_AUTHORIZED_TEST'));
+  assert.ok(text.includes('9000000001'));
+  assert.ok(text.includes('NON_DIALABLE_900000000x'));
+  // No random real-looking mobiles outside the safe 900000000x fixture series.
+  assert.equal(/,[6-8]\d{9},/.test(text), false);
 });
