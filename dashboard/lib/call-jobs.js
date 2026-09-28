@@ -223,6 +223,7 @@ function createCallJob(db, tenantId, input, actorUserId) {
     toE164,
     status: 'queued',
     providerRunId: null,
+    providerRunName: null,
     resultCallId: null,
     lastError: null,
     source: b.source ? String(b.source).slice(0, 40) : 'instant',
@@ -263,6 +264,9 @@ function updateCallJobStatus(db, tenantId, id, status, patch = {}) {
   }
   if (patch.providerRunId !== undefined) {
     job.providerRunId = patch.providerRunId ? String(patch.providerRunId) : null;
+  }
+  if (patch.providerRunName !== undefined) {
+    job.providerRunName = patch.providerRunName ? String(patch.providerRunName).slice(0, 120) : null;
   }
   if (patch.resultCallId !== undefined) {
     job.resultCallId = patch.resultCallId ? String(patch.resultCallId) : null;

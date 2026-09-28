@@ -13,8 +13,10 @@ const crypto = require('crypto');
 
 const PROVIDER_ID = 'dograh_vobiz';
 
-/** Documented Dograh candidate endpoints used by sync (may 404 until confirmed). */
+/** Documented Dograh candidate endpoints used by sync (canonical first). */
 const DOGRAH_SYNC_CANDIDATES = Object.freeze([
+  'GET /api/v1/workflow/{workflowId}/runs?page={page}&limit={limit}',
+  'GET /api/v1/workflow/{workflowId}/runs/{runId}',
   'GET /api/v1/workflows/{workflowId}/runs?limit={limit}',
   'GET /api/v1/workflow-runs?limit={limit}',
   'GET /api/v1/telephony/calls?limit={limit}',
@@ -215,6 +217,7 @@ function upsertCallFromProvider(db, tenantId, input = {}) {
   const providerMetadata = {
     providerRunId,
     providerCallId: input.providerCallId != null ? String(input.providerCallId) : providerRunId,
+    providerRunName: input.providerRunName ? String(input.providerRunName) : null,
     recordingUrl: input.providerRecordingUrl || null,
     rawStatus: input.rawStatus || null,
   };
@@ -408,7 +411,9 @@ function seedDemoCalls(db, tenantId, opts = {}) {
 
 /**
  * Map a flexible Dograh run / call log object into upsert input.
- * Field names vary across Dograh versions, so we accept several aliases.
+ * Field names vary across Dograh versions, so we accept several aliases,
+ * including the production shape with initial_context / usage_info /
+ * gathered_context and realtime log transcript events.
  */
 function mapDograhRunToCallInput(run, context = {}) {
   if (!run || typeof run !== 'object') return null;
@@ -417,40 +422,91 @@ function mapDograhRunToCallInput(run, context = {}) {
   ).trim();
   if (!providerRunId) return null;
 
-  const directionRaw = String(run.direction || run.call_direction || '').toLowerCase();
-  const direction = directionRaw.includes('out') ? 'outbound' : 'inbound';
+  const initial = (run.initial_context && typeof run.initial_context === 'object')
+    ? run.initial_context
+    : {};
+  const gathered = (run.gathered_context && typeof run.gathered_context === 'object')
+    ? run.gathered_context
+    : {};
+  const usage = (run.usage_info && typeof run.usage_info === 'object')
+    ? run.usage_info
+    : {};
+
+  const directionRaw = String(
+    run.direction || run.call_direction || run.call_type || initial.call_type || '',
+  ).toLowerCase();
+  const direction = directionRaw.includes('out') ? 'outbound' : (
+    directionRaw.includes('in') ? 'inbound' : (context.direction || 'outbound')
+  );
 
   const fromE164 = run.from_number || run.fromE164 || run.from || run.caller_number
+    || initial.caller_number || initial.from_number
     || (direction === 'outbound' ? context.fromE164 : null) || null;
   const toE164 = run.to_number || run.toE164 || run.to || run.callee_number
+    || initial.phone_number || initial.to_number || initial.callee_number
     || (direction === 'inbound' ? context.toE164 : null) || null;
 
   const startedAt = run.started_at || run.startedAt || run.created_at || run.createdAt || null;
-  const endedAt = run.ended_at || run.endedAt || run.completed_at || run.completedAt || null;
-  let durationSec = asInt(run.duration_sec || run.durationSec || run.duration);
+  const endedAt = run.ended_at || run.endedAt || run.completed_at || run.completedAt
+    || (run.is_completed ? (run.updated_at || run.updatedAt) : null) || null;
+  let durationSec = asInt(
+    run.duration_sec || run.durationSec || run.duration
+    || usage.call_duration_seconds || usage.duration_seconds
+    || gathered.call_duration_seconds,
+  );
   if (durationSec == null && startedAt && endedAt) {
     const a = Date.parse(startedAt);
     const b = Date.parse(endedAt);
     if (Number.isFinite(a) && Number.isFinite(b) && b >= a) durationSec = Math.round((b - a) / 1000);
   }
 
-  const transcript = run.transcript || run.messages || run.conversation || [];
-  const extracted = run.extracted_data || run.extractedData || run.outputs || run.result || {};
+  let transcript = run.transcript || run.messages || run.conversation || null;
+  if (!transcript && Array.isArray(run.logs)) {
+    const turns = [];
+    for (const entry of run.logs) {
+      if (!entry || typeof entry !== 'object') continue;
+      const role = entry.role || entry.speaker || entry.type;
+      const text = entry.text || entry.content || entry.message || entry.transcript;
+      if (!text) continue;
+      const normalizedRole = /user|human|caller/i.test(String(role || ''))
+        ? 'user'
+        : (/bot|agent|assistant/i.test(String(role || '')) ? 'bot' : (role || 'unknown'));
+      turns.push({
+        role: normalizedRole,
+        text: String(text),
+        at: entry.at || entry.timestamp || entry.created_at || null,
+      });
+    }
+    if (turns.length) transcript = turns;
+  }
+
+  const extracted = run.extracted_data || run.extractedData || run.outputs || run.result
+    || gathered.extracted_data || gathered || {};
   const latencySrc = run.latency || run.metrics || {};
+
+  const recordingUrl = run.recording_url || run.recordingUrl
+    || (run.recording && (run.recording.url || run.recording.mixed || run.recording.public_url))
+    || null;
+  const outcome = run.outcome || run.result_status || run.disposition
+    || gathered.disposition || gathered.outcome || null;
+  const summary = run.summary || run.synopsis || gathered.summary || null;
+  const providerCallId = run.call_id || run.callId || gathered.call_id
+    || gathered.vobiz_call_id || providerRunId;
 
   return {
     providerRunId,
-    providerCallId: run.call_id || run.callId || providerRunId,
+    providerCallId,
+    providerRunName: run.name || run.run_name || run.runName || null,
     direction,
     fromE164: fromE164 ? String(fromE164) : null,
     toE164: toE164 ? String(toE164) : null,
-    status: run.status || run.state || 'completed',
+    status: run.status || run.state || (run.is_completed ? 'completed' : 'completed'),
     startedAt,
     endedAt,
     durationSec,
-    outcome: run.outcome || run.result_status || null,
-    summary: run.summary || run.synopsis || null,
-    extractedData: typeof extracted === 'object' && !Array.isArray(extracted) ? extracted : {},
+    outcome,
+    summary,
+    extractedData: typeof extracted === 'object' && !Array.isArray(extracted) ? { ...extracted } : {},
     transcript: Array.isArray(transcript) ? transcript.map((t) => ({
       role: t.role || t.speaker || 'unknown',
       text: t.text || t.content || t.message || '',
@@ -462,15 +518,101 @@ function mapDograhRunToCallInput(run, context = {}) {
       llmMs: asInt(latencySrc.llm_ms || latencySrc.llmMs),
       ttsMs: asInt(latencySrc.tts_ms || latencySrc.ttsMs),
     },
-    recordingAvailable: !!(run.recording_url || run.recordingUrl || run.has_recording),
-    providerRecordingUrl: run.recording_url || run.recordingUrl || null,
+    recordingAvailable: !!(recordingUrl || run.has_recording || (run.recording && Object.keys(run.recording).length)),
+    providerRecordingUrl: recordingUrl,
     dograhWorkflowId: run.workflow_id || run.workflowId || context.workflowId || null,
     workflowVersion: run.workflow_version || run.workflowVersion || null,
     agentId: context.agentId || null,
     phoneNumberId: context.phoneNumberId || null,
-    rawStatus: run.status || null,
+    rawStatus: run.status || run.state || null,
     source: 'dograh_sync',
   };
+}
+
+function phoneDigitsKey(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '';
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+/**
+ * Link an imported/synced Call back to a matching Instant Lead CallJob (and
+ * lead) when destination phone and dial time align. Prefers failed
+ * call_not_tracked jobs and active calling jobs without a resultCallId.
+ * Returns { linked, job, lead } or { linked: false }.
+ */
+function linkCallJobToSyncedCall(db, tenantId, call, opts = {}) {
+  if (!db || !tenantId || !call) return { linked: false };
+  if (!Array.isArray(db.callJobs)) db.callJobs = [];
+  if (!Array.isArray(db.leads)) db.leads = [];
+
+  const wantPhone = phoneDigitsKey(call.toE164 || call.fromE164);
+  if (!wantPhone) return { linked: false };
+
+  const callStartMs = Date.parse(call.startedAt || call.createdAt || '') || Date.now();
+  const windowMs = Math.max(30_000, Number(opts.windowMs) || 15 * 60_000);
+
+  const candidates = (db.callJobs || []).filter((job) => {
+    if (!job || job.tenantId !== tenantId) return false;
+    if (job.resultCallId && job.resultCallId === call.id) return true;
+    if (job.providerRunId && String(job.providerRunId) === String(call.providerRunId)) return true;
+    if (phoneDigitsKey(job.toE164) !== wantPhone) return false;
+    if (job.resultCallId && job.status === 'completed') return false;
+    const dialMs = Date.parse(job.dialedAt || job.createdAt || '') || 0;
+    if (!dialMs) return job.status === 'calling' || job.status === 'dialing' || job.status === 'failed';
+    return Math.abs(callStartMs - dialMs) <= windowMs;
+  });
+
+  if (!candidates.length) return { linked: false };
+
+  candidates.sort((a, b) => {
+    const score = (job) => {
+      let s = 0;
+      if (job.providerRunId && String(job.providerRunId) === String(call.providerRunId)) s += 100;
+      if (job.resultCallId === call.id) s += 90;
+      if (job.status === 'failed' && /could not be tracked|call_not_tracked/i.test(String(job.lastError || ''))) s += 40;
+      if (job.status === 'calling' || job.status === 'dialing') s += 30;
+      if (job.status === 'failed') s += 10;
+      if (job.leadId) s += 5;
+      return s;
+    };
+    const diff = score(b) - score(a);
+    if (diff) return diff;
+    return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+  });
+
+  const job = candidates[0];
+  const ts = nowIso();
+  job.providerRunId = String(call.providerRunId || job.providerRunId || '');
+  job.resultCallId = call.id;
+  job.lastError = null;
+  job.status = 'completed';
+  job.completedAt = job.completedAt || ts;
+  job.updatedAt = ts;
+  if (call.providerRunName && !job.providerRunName) {
+    job.providerRunName = String(call.providerRunName);
+  }
+
+  let lead = null;
+  if (job.leadId) {
+    lead = (db.leads || []).find((l) => l.id === job.leadId && l.tenantId === tenantId) || null;
+    if (lead) {
+      lead.status = lead.status === 'failed' || lead.status === 'calling' || lead.status === 'assigned'
+        ? 'called'
+        : lead.status;
+      lead.lastCallJobId = job.id;
+      lead.lastCallId = call.id;
+      lead.lastError = null;
+      lead.updatedAt = ts;
+    }
+  }
+
+  // Attach agent/phone from the job onto the call when missing.
+  if (!call.agentId && job.agentId) call.agentId = job.agentId;
+  if (!call.phoneNumberId && job.phoneNumberId) call.phoneNumberId = job.phoneNumberId;
+  call.updatedAt = ts;
+
+  return { linked: true, job, lead };
 }
 
 function recordingAccess(call) {
@@ -496,6 +638,7 @@ module.exports = {
   importCalls,
   seedDemoCalls,
   mapDograhRunToCallInput,
+  linkCallJobToSyncedCall,
   recordingAccess,
   normalizeDirection,
   normalizeStatus,

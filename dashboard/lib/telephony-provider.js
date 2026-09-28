@@ -332,15 +332,33 @@ class DograhVobizProvider extends TelephonyProvider {
 
     // Ensure callers always see the normalized initiate shape.
     if (!result || typeof result !== 'object') {
-      result = { status: 200, data: result, providerRunId: null, ok: true };
-    } else if (result.providerRunId === undefined) {
+      result = { status: 200, data: result, providerRunId: null, providerRunName: null, dialAccepted: true, ok: true };
+    } else {
       const extract = providers.extractProviderRunId;
-      result = {
-        status: result.status,
-        data: result.data,
-        providerRunId: typeof extract === 'function' ? extract(result.data) : null,
-        ok: true,
-      };
+      const extractName = providers.extractProviderRunName;
+      if (result.providerRunId === undefined) {
+        result.providerRunId = typeof extract === 'function' ? extract(result.data) : null;
+      }
+      if (result.providerRunName === undefined) {
+        result.providerRunName = typeof extractName === 'function' ? extractName(result.data) : null;
+      }
+      if (result.dialAccepted === undefined) result.dialAccepted = true;
+      if (result.ok === undefined) result.ok = true;
+    }
+
+    // When Dograh accepted the dial but omitted workflow_run_id, reconcile
+    // against recent runs by destination phone and/or WR-TEL-OUT run name.
+    if (!result.providerRunId && typeof this.tel.resolveProviderRunAfterDial === 'function') {
+      try {
+        const resolved = await this.tel.resolveProviderRunAfterDial({
+          workflowId: dialOpts.workflowId,
+          phoneE164: /^\+[1-9]\d{6,14}$/.test(asE164) ? asE164 : null,
+          runName: result.providerRunName,
+        });
+        if (resolved) result.providerRunId = String(resolved);
+      } catch (_) {
+        // Soft-fail: dialAccepted stays true for CallJob tracking.
+      }
     }
 
     // Minimal safe upsert when Dograh returned a run id. The Call row stays
@@ -367,6 +385,8 @@ class DograhVobizProvider extends TelephonyProvider {
       status: result.status,
       data: result.data,
       providerRunId: result.providerRunId != null ? result.providerRunId : null,
+      providerRunName: result.providerRunName || null,
+      dialAccepted: result.dialAccepted !== false,
       ok: true,
       call: upsertedCall,
     };
@@ -432,8 +452,9 @@ class DograhVobizProvider extends TelephonyProvider {
 
   /**
    * Pull recent Dograh runs into Astra calls (idempotent on providerRunId).
-   * If Dograh is unreachable or returns an unknown shape, seed demo calls
-   * and accept optional manual import payloads.
+   * Uses the real Dograh GET /api/v1/workflow/{id}/runs path via listCallRuns.
+   * Links matching Instant Lead CallJobs by phone + dial time when possible.
+   * Does not fabricate demo calls when the live provider returns an empty list.
    */
   async syncCalls(tenantId, options = {}) {
     if (!this.core) throw new TelephonyProviderError('core store is required', 500, 'misconfigured');
@@ -441,6 +462,7 @@ class DograhVobizProvider extends TelephonyProvider {
     let fetched = 0;
     let created = 0;
     let updated = 0;
+    let linkedJobs = 0;
     let stubbed = true;
     let endpoint = null;
     let reason = null;
@@ -451,21 +473,28 @@ class DograhVobizProvider extends TelephonyProvider {
     const assignedNumber = (dbSnap.phoneNumbers || []).find(
       (n) => n.tenantId === tenantId && n.status === 'assigned',
     );
+    let workflowId = null;
+    if (assignedNumber && assignedNumber.providerMetadata) {
+      const meta = assignedNumber.providerMetadata;
+      workflowId = meta.inboundWorkflowId || meta.outboundWorkflowId || meta.dograhWorkflowId || null;
+    }
+    if (!workflowId && options.workflowId) workflowId = options.workflowId;
+    const numericWorkflowId = providers.positiveIntOption(workflowId);
+
     const context = {
       agentId: tenantAgents[0] && tenantAgents[0].id,
       phoneNumberId: assignedNumber && assignedNumber.id,
       fromE164: assignedNumber && assignedNumber.e164,
       toE164: assignedNumber && assignedNumber.e164,
-      workflowId: assignedNumber
-        && assignedNumber.providerMetadata
-        && assignedNumber.providerMetadata.inboundWorkflowId,
+      workflowId: numericWorkflowId || workflowId,
     };
 
-    if (this.tel && typeof this.tel.listCallRuns === 'function' && this.tel.live) {
+    const dograhLive = !!(this.tel && this.tel.live);
+    if (this.tel && typeof this.tel.listCallRuns === 'function' && dograhLive) {
       try {
         const listed = await this.tel.listCallRuns({
           limit,
-          workflowId: context.workflowId ? Number(context.workflowId) : undefined,
+          workflowId: numericWorkflowId || undefined,
         });
         stubbed = !!listed.stubbed;
         endpoint = listed.endpoint || null;
@@ -481,6 +510,10 @@ class DograhVobizProvider extends TelephonyProvider {
               const r = calls.upsertCallFromProvider(db, tenantId, input);
               if (r.created) created += 1;
               if (r.updated) updated += 1;
+              if (r && r.ok !== false && r.call) {
+                const linked = calls.linkCallJobToSyncedCall(db, tenantId, r.call);
+                if (linked && linked.linked) linkedJobs += 1;
+              }
             }
           });
         }
@@ -500,6 +533,11 @@ class DograhVobizProvider extends TelephonyProvider {
         if (imported.ok) {
           created += imported.created || 0;
           updated += imported.updated || 0;
+          for (const item of (imported.results || [])) {
+            if (!item || !item.ok || !item.call) continue;
+            const linked = calls.linkCallJobToSyncedCall(db, tenantId, item.call);
+            if (linked && linked.linked) linkedJobs += 1;
+          }
         }
       });
       if (imported && !imported.ok) {
@@ -507,10 +545,13 @@ class DograhVobizProvider extends TelephonyProvider {
       }
     }
 
-    // When Dograh unreachable or yielded nothing, seed demo calls for UI testing.
+    // Seed demos only when Dograh is not live / not configured. Never fabricate
+    // calls when a live provider returned an empty (but valid) run list.
     let demo = null;
-    const existingCount = calls.listTenantCalls(this.db(), tenantId, { limit: 1 }).length;
-    if (stubbed || fetched === 0) {
+    const allowDemo = !dograhLive
+      || reason === 'not_configured'
+      || reason === 'dograh_not_live';
+    if (allowDemo && (stubbed || fetched === 0) && !imported) {
       await this.core.mutate((db) => {
         demo = calls.seedDemoCalls(db, tenantId, {
           agentId: context.agentId,
@@ -531,8 +572,9 @@ class DograhVobizProvider extends TelephonyProvider {
       fetched,
       created,
       updated,
+      linkedJobs,
       imported: imported ? { created: imported.created, updated: imported.updated } : null,
-      demoSeeded: !!(demo && (demo.created || demo.updated || existingCount === 0 || stubbed)),
+      demoSeeded: !!(demo && (demo.created || demo.updated)),
       total: calls.listTenantCalls(this.db(), tenantId, { limit: 200 }).length,
     };
   }
