@@ -1,68 +1,78 @@
 /* ==========================================================================
-   Astra AI , Brand & Design System (single source of truth)
-   Official logo palette: deep violet/purple (#6B21A8) → bright cyan (#06B6D4),
-   dark charcoal text (#111827), muted gray (#6B7280), clean white canvas.
-   Loaded by BOTH the marketing site and the product dashboard so they
-   look like one funded product. Do not fork the tokens; extend here.
+   Astra Voice , Brand & Design System (single source of truth)
+   Primary: electric blue (--voice ≈ oklch(0.58 0.2 255) / #0077ec).
+   Neutrals: white / off-white surfaces, graphite / navy ink.
+   Teal: AC mark artwork + restrained supporting accent only (not Chat green).
+   Status: success green, warning amber, error red.
+   Values adapted from AstraConnect kit (--voice* / neutrals / success only).
+   Do NOT import Chat, Guide, or hero-orb website patterns.
+   Loaded by the marketing site and the product dashboard.
    No em dashes anywhere in this codebase. Use commas or periods.
    ========================================================================== */
 
 :root {
-  /* ---- Canvas & surfaces, clean white with soft elevation ---- */
-  --bg:        #FFFFFF;
-  --bg-2:      #F4F4F5;
-  --panel:     #FFFFFF;
-  --panel-2:   #FAFAFA;
-  --raised:    #F4F4F5;
-  --line:      #E4E4E7;
-  --line-2:    #D4D4D8;
-  --line-strong: #A1A1AA;
+  /* ---- Voice primary (kit --voice*) ---- */
+  --voice:            #0077ec; /* oklch(0.58 0.2 255) */
+  --voice-foreground: #FFFFFF; /* oklch(1 0 0) */
+  --voice-soft:       #e7f5ff; /* oklch(0.965 0.025 250) */
+  /* AC mark teal, logo / restrained accent only. Not a UI theme. */
+  --mark-teal:        #09b5a5;
 
-  /* ---- Text, charcoal ink on white (high contrast) ---- */
-  --ink:       #111827;
-  --ink-soft:  #374151;
-  --ink-dim:   #6B7280;
-  --ink-faint: #9CA3AF;
-  /* Alias used by console helpers; keep in sync with --ink-dim */
-  --muted:     #6B7280;
-  --text-dim:  #9CA3AF;
+  /* ---- Canvas & surfaces (kit background / surface / card / border) ---- */
+  --bg:        #fcfeff; /* oklch(0.995 0.002 245) */
+  --bg-2:      #f3f7fc; /* oklch(0.975 0.008 250) surface */
+  --panel:     #FFFFFF; /* card */
+  --panel-2:   #f8fafc;
+  --raised:    #f3f7fc;
+  --line:      #dae2eb; /* oklch(0.91 0.015 250) */
+  --line-2:    #c8d3e0;
+  --line-strong: #94a3b8;
 
-  /* ---- Light-canvas text aliases (kept for marketing lockups) ---- */
-  --ink-dark:  #111827;
-  --ink-muted: #6B7280;
-  --canvas:    #FFFFFF;
+  /* ---- Text, graphite / navy (kit foreground / muted) ---- */
+  --ink:       #051223; /* oklch(0.18 0.04 255) */
+  --ink-soft:  #1e2a3a;
+  --ink-dim:   #556272; /* oklch(0.49 0.03 255) */
+  --ink-faint: #8492a6;
+  --muted:     #556272;
+  --text-dim:  #8492a6;
 
-  /* ---- Accent: official Astra AI purple → cyan ---- */
-  --a-cyan:    #06B6D4;
-  --a-sky:     #0891B2;
-  --a-indigo:  #6B21A8;
-  --a-violet:  #642C8F;
-  --accent:    #6B21A8;
-  --accent-2:  #06B6D4;
-  --accent-ink:#FFFFFF;
-  --grad-volt: linear-gradient(115deg, #6B21A8 0%, #642C8F 28%, #7C3AED 55%, #06B6D4 100%);
-  --grad-volt-soft: linear-gradient(115deg, rgba(107,33,168,0.12), rgba(6,182,212,0.08));
+  /* ---- Light-canvas text aliases ---- */
+  --ink-dark:  #051223;
+  --ink-muted: #556272;
+  --canvas:    #fcfeff;
 
-  /* ---- Value/economics signal (kept as --gold alias for existing class names) ---- */
-  --gold:      #0891B2;
-  --gold-deep: #6B21A8;
+  /* ---- Accent aliases (legacy names → Voice blue) ---- */
+  --a-cyan:    var(--voice);
+  --a-sky:     #0066c9;
+  --a-indigo:  var(--voice);
+  --a-violet:  var(--voice);
+  --accent:    var(--voice);
+  --accent-2:  var(--mark-teal);
+  --accent-ink: var(--voice-foreground);
+  /* Solid primary wash. Purple→cyan volt gradient retired. */
+  --grad-volt: linear-gradient(115deg, #0066c9 0%, var(--voice) 55%, #1a8af0 100%);
+  --grad-volt-soft: linear-gradient(115deg, rgba(0,119,236,0.12), rgba(9,181,165,0.06));
 
-  /* ---- Status (tuned for light backgrounds) ---- */
-  --ok:        #059669;
-  --warn:      #D97706;
-  --bad:       #E11D48;
+  /* ---- Value/economics signal ---- */
+  --gold:      var(--voice);
+  --gold-deep: #0066c9;
 
-  /* ---- Glow & shadow (soft depth on white) ---- */
-  --glow-accent: 0 0 0 1px rgba(107,33,168,0.22), 0 10px 28px -12px rgba(6,182,212,0.28);
-  --glow-soft:   0 0 48px -18px rgba(6,182,212,0.18);
-  --shadow-card: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -14px rgba(15,23,42,0.10);
-  --shadow-pop:  0 20px 48px -24px rgba(15,23,42,0.18);
+  /* ---- Status (restrained; success ≠ Chat green) ---- */
+  --ok:        #24a656; /* kit --success oklch(0.64 0.16 151) */
+  --warn:      #e1a01d; /* kit --warning oklch(0.75 0.15 78) */
+  --bad:       #DC2626; /* restrained error red */
 
-  /* ---- Type (geometric sans, rounded terminals like the wordmark) ---- */
+  /* ---- Glow & shadow (soft depth, Voice blue) ---- */
+  --glow-accent: 0 0 0 1px rgba(0,119,236,0.22), 0 10px 28px -12px rgba(0,119,236,0.28);
+  --glow-soft:   0 0 48px -18px rgba(0,119,236,0.16);
+  --shadow-card: 0 1px 2px rgba(5,18,35,0.04), 0 8px 24px -14px rgba(5,18,35,0.10);
+  --shadow-pop:  0 20px 48px -24px rgba(5,18,35,0.18);
+
+  /* ---- Type ---- */
   --font: "Avenir Next", "Segoe UI Variable Text", "SF Pro Rounded", "SF Pro Display", "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, sans-serif;
   --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 
-  /* ---- Radii (soft but denser than marketing hero pills) ---- */
+  /* ---- Radii ---- */
   --r-sm: 8px;
   --r:    12px;
   --r-lg: 16px;
@@ -94,7 +104,7 @@ body {
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
 }
-::selection { background: rgba(107,33,168,0.22); color: var(--ink); }
+::selection { background: rgba(0,119,236,0.22); color: var(--ink); }
 a { color: inherit; text-decoration: none; }
 img, svg, canvas, video { max-width: 100%; display: block; }
 button, input, textarea, select { font: inherit; color: inherit; }
@@ -119,7 +129,7 @@ p { margin: 0; }
   color: var(--ink-dim);
 }
 
-/* gradient text */
+/* gradient text → Voice blue wash */
 .grad-text {
   background: var(--grad-volt);
   -webkit-background-clip: text; background-clip: text;
@@ -145,18 +155,18 @@ p { margin: 0; }
 }
 .btn:active { transform: translateY(1px) scale(0.99); }
 .btn-primary {
-  background: var(--grad-volt); color: #FFFFFF;
+  background: var(--voice); color: var(--voice-foreground);
   box-shadow: var(--glow-accent);
   font-weight: 600;
 }
-.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(107,33,168,0.30), 0 14px 32px -12px rgba(6,182,212,0.32); }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(0,119,236,0.30), 0 14px 32px -12px rgba(0,119,236,0.32); background: #0066c9; }
 .btn-ghost {
   background: var(--panel); color: var(--ink);
   border-color: var(--line-2);
 }
-.btn-ghost:hover { background: var(--bg-2); border-color: rgba(6,182,212,0.45); transform: translateY(-1px); }
+.btn-ghost:hover { background: var(--bg-2); border-color: rgba(0,119,236,0.45); transform: translateY(-1px); }
 .btn-quiet { background: transparent; color: var(--ink-soft); }
-.btn-quiet:hover { color: var(--ink); background: rgba(107,33,168,0.08); }
+.btn-quiet:hover { color: var(--ink); background: rgba(0,119,236,0.08); }
 .btn-lg { --pad-y: 0.88em; --pad-x: 1.45em; font-size: 0.97rem; }
 .btn-sm { --pad-y: 0.5em; --pad-x: 0.9em; font-size: 0.82rem; }
 .btn[disabled] { opacity: 0.5; pointer-events: none; }
@@ -172,7 +182,7 @@ p { margin: 0; }
 .card-pad { padding: clamp(18px, 2.2vw, 26px); }
 .card-glow::before {
   content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px;
-  background: var(--grad-volt); opacity: 0; transition: opacity 0.4s var(--ease);
+  background: var(--voice); opacity: 0; transition: opacity 0.4s var(--ease);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
 }
@@ -185,12 +195,12 @@ p { margin: 0; }
   background: var(--bg-2); border: 1px solid var(--line);
   font-size: 0.8rem; color: var(--ink-soft); font-weight: 500;
 }
-.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(5,150,105,0.16); }
-.pill .dot.warn { background: var(--warn); box-shadow: 0 0 0 3px rgba(217,119,6,0.16); }
-.pill .dot.bad  { background: var(--bad);  box-shadow: 0 0 0 3px rgba(225,29,72,0.16); }
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(36,166,86,0.16); }
+.pill .dot.warn { background: var(--warn); box-shadow: 0 0 0 3px rgba(225,160,29,0.16); }
+.pill .dot.bad  { background: var(--bad);  box-shadow: 0 0 0 3px rgba(220,38,38,0.16); }
 .badge-gold {
-  background: linear-gradient(180deg, rgba(6,182,212,0.12), rgba(107,33,168,0.06));
-  border: 1px solid rgba(6,182,212,0.35); color: var(--gold);
+  background: var(--voice-soft);
+  border: 1px solid rgba(0,119,236,0.28); color: var(--voice);
 }
 
 /* ---- Inputs ---- */
@@ -203,8 +213,8 @@ p { margin: 0; }
   transition: border-color 0.25s, box-shadow 0.25s, background 0.25s;
 }
 .input:focus, .textarea:focus, .select:focus {
-  border-color: rgba(6,182,212,0.7);
-  box-shadow: 0 0 0 4px rgba(107,33,168,0.12);
+  border-color: rgba(0,119,236,0.7);
+  box-shadow: 0 0 0 4px rgba(0,119,236,0.12);
   background: var(--panel);
 }
 .textarea { resize: vertical; min-height: 96px; line-height: 1.5; }
@@ -212,17 +222,17 @@ p { margin: 0; }
 .select:disabled,
 .select.is-empty { color: var(--ink-soft); }
 
-/* ---- Backdrop atmosphere (soft brand wash on white) ---- */
+/* ---- Backdrop atmosphere (soft Voice wash on white) ---- */
 .atmos { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
 .atmos .glow {
   position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.45;
 }
 .atmos .g1 { width: 640px; height: 640px; top: -280px; left: 42%; transform: translateX(-50%);
-  background: radial-gradient(circle, rgba(107,33,168,0.10), transparent 64%); }
+  background: radial-gradient(circle, rgba(0,119,236,0.10), transparent 64%); }
 .atmos .g2 { width: 480px; height: 480px; top: 48%; left: -200px;
   background: radial-gradient(circle, rgba(148,163,184,0.12), transparent 65%); }
 .atmos .g3 { width: 520px; height: 520px; bottom: -280px; right: -180px;
-  background: radial-gradient(circle, rgba(6,182,212,0.08), transparent 65%); }
+  background: radial-gradient(circle, rgba(0,119,236,0.06), transparent 65%); }
 .grain::after {
   content: ""; position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0.02;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
