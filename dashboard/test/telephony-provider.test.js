@@ -182,3 +182,90 @@ test('createOutboundCall keeps numeric Dograh workflowId override', async () => 
   assert.equal(seenOpts.fromPhoneNumberId, 3);
   assert.equal(seenOpts.failClosedNumbers, true);
 });
+
+test('createOutboundCall reconciles providerRunId when initiate returns only run name', async () => {
+  const db = {
+    phoneNumbers: [],
+    providerResources: [],
+    agents: [],
+    workflows: [],
+    calls: [],
+  };
+  phoneNumbers.seedPlatformInventory(db);
+  db.agents.push({ id: 'ag_1', tenantId: 't1', name: 'Desk', telephony: { did: '' } });
+  phoneNumbers.assignNumber(db, {
+    numberId: phoneNumbers.PLATFORM_SEED_ID,
+    tenantId: 't1',
+    agentId: 'ag_1',
+    outboundEnabled: true,
+  });
+
+  const tel = {
+    live: true,
+    async initiateCall() {
+      return {
+        status: 200,
+        data: { message: 'Call initiated successfully with run name WR-TEL-OUT-63869822' },
+        providerRunId: null,
+        providerRunName: 'WR-TEL-OUT-63869822',
+        dialAccepted: true,
+        ok: true,
+      };
+    },
+    async resolveProviderRunAfterDial({ runName, phoneE164 }) {
+      assert.equal(runName, 'WR-TEL-OUT-63869822');
+      assert.equal(phoneE164, '+919618824700');
+      return '99';
+    },
+  };
+
+  const provider = new DograhVobizProvider({ core: makeCore(db), telephony: tel });
+  const result = await provider.createOutboundCall('t1', '+919618824700', {});
+  assert.equal(result.ok, true);
+  assert.equal(result.dialAccepted, true);
+  assert.equal(result.providerRunId, '99');
+  assert.equal(result.providerRunName, 'WR-TEL-OUT-63869822');
+  assert.ok(result.call);
+  assert.equal(result.call.providerRunId, '99');
+});
+
+test('createOutboundCall stays dialAccepted without inventing id when reconcile misses', async () => {
+  const db = {
+    phoneNumbers: [],
+    providerResources: [],
+    agents: [],
+    workflows: [],
+    calls: [],
+  };
+  phoneNumbers.seedPlatformInventory(db);
+  db.agents.push({ id: 'ag_1', tenantId: 't1', name: 'Desk', telephony: { did: '' } });
+  phoneNumbers.assignNumber(db, {
+    numberId: phoneNumbers.PLATFORM_SEED_ID,
+    tenantId: 't1',
+    agentId: 'ag_1',
+    outboundEnabled: true,
+  });
+
+  const tel = {
+    live: true,
+    async initiateCall() {
+      return {
+        status: 200,
+        data: { message: 'Call initiated successfully with run name WR-TEL-OUT-XXXX' },
+        providerRunId: null,
+        providerRunName: 'WR-TEL-OUT-XXXX',
+        dialAccepted: true,
+        ok: true,
+      };
+    },
+    async resolveProviderRunAfterDial() { return null; },
+  };
+
+  const provider = new DograhVobizProvider({ core: makeCore(db), telephony: tel });
+  const result = await provider.createOutboundCall('t1', '+919618824700', {});
+  assert.equal(result.ok, true);
+  assert.equal(result.dialAccepted, true);
+  assert.equal(result.providerRunId, null);
+  assert.equal(result.call, null);
+  assert.equal(db.calls.length, 0);
+});

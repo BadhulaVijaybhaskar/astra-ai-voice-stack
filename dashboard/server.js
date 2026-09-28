@@ -816,6 +816,7 @@ async function apiTelephonyDial(req, res, ctx) {
       await core.mutate((d) => {
         const up = calls.upsertCallFromProvider(d, ctx.tenant.id, {
           providerRunId: r.providerRunId,
+          providerRunName: r.providerRunName || null,
           direction: 'outbound',
           toE164: phoneNumbers.normalizeE164(b.number) || null,
           status: (r.data && (r.data.status || r.data.state)) || 'queued',
@@ -825,6 +826,15 @@ async function apiTelephonyDial(req, res, ctx) {
       });
     }
     if (!callRow) {
+      // Provider accepted the dial. Tracking may complete on the next sync.
+      if (r.dialAccepted !== false && r.ok !== false) {
+        return core.sendJson(res, 200, {
+          ok: true,
+          code: 'dial_accepted_pending_track',
+          trackingPending: true,
+          call: null,
+        });
+      }
       return core.sendJson(res, 502, {
         error: 'Call was placed but could not be tracked',
         code: 'call_not_tracked',
@@ -2321,9 +2331,56 @@ async function placeOutboundCallJob({
   const providerRunId = upstream && upstream.providerRunId != null
     ? String(upstream.providerRunId)
     : null;
+  const providerRunName = upstream && upstream.providerRunName
+    ? String(upstream.providerRunName)
+    : null;
+  const dialAccepted = !!(upstream && upstream.dialAccepted !== false && upstream.ok !== false);
   let callRow = (upstream && upstream.call) || null;
 
-  // Never invent providerRunId. Without a real run id the Call cannot be tracked.
+  // Dograh accepted the dial (HTTP 2xx) but the immediate response may omit
+  // workflow_run_id. Do NOT mark the CallJob failed solely for missing id.
+  // Keep it in calling so a later /api/calls/sync can attach the real run.
+  if (!providerRunId && !callRow && dialAccepted) {
+    await core.mutate((d) => {
+      callJobs.updateCallJobStatus(d, tenantId, jobId, 'calling', {
+        providerRunId: null,
+        providerRunName: providerRunName || null,
+        lastError: null,
+        phoneNumberId: astraPhoneNumberId,
+        workflowId: astraWorkflowId,
+        agentId: astraAgentId,
+      });
+      if (leadId) {
+        leads.updateLead(d, tenantId, leadId, {
+          status: 'calling',
+          lastCallJobId: jobId,
+          lastError: null,
+        });
+      }
+      if (ctx) {
+        addAudit(d, ctx, 'calljob.dial_accepted', 'call_job', jobId, {
+          tracking: 'pending_sync',
+          providerRunName: providerRunName || null,
+          leadId: leadId || null,
+        });
+      }
+    });
+    bumpUsage(tenantId, 'calls', 1).catch(() => {});
+    core.mutate((d) => {
+      plans.debitUsage(d, tenantId, { chars: 0, calls: 1 }, userId, addLedgerEntry);
+    }).catch(() => {});
+    return {
+      ok: true,
+      status: 200,
+      code: 'dial_accepted_pending_track',
+      trackingPending: true,
+      jobId,
+      callId: null,
+      job: callJobs.publicCallJob(callJobs.findCallJob(core.db(), tenantId, jobId)),
+      call: null,
+    };
+  }
+
   if (!providerRunId && !callRow) {
     const msg = 'Call was placed but could not be tracked';
     await core.mutate((d) => {
@@ -2351,6 +2408,7 @@ async function placeOutboundCallJob({
     if (providerRunId) {
       const up = calls.upsertCallFromProvider(d, tenantId, {
         providerRunId,
+        providerRunName: providerRunName || null,
         direction: 'outbound',
         toE164,
         fromE164: callRow && callRow.fromE164,
@@ -2376,6 +2434,7 @@ async function placeOutboundCallJob({
 
     callJobs.updateCallJobStatus(d, tenantId, jobId, 'completed', {
       providerRunId: providerRunId || null,
+      providerRunName: providerRunName || null,
       resultCallId,
       lastError: null,
       phoneNumberId: astraPhoneNumberId,
@@ -2531,6 +2590,8 @@ async function apiLeadsCall(req, res, ctx) {
     ok: true,
     job: dial.job,
     call: dial.call,
+    trackingPending: dial.trackingPending === true,
+    code: dial.code || undefined,
     lead: leads.publicLead(leads.findLead(core.db(), ctx.tenant.id, lead.id)),
   });
 }

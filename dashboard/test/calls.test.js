@@ -114,6 +114,95 @@ test('mapDograhRunToCallInput accepts flexible aliases', () => {
   assert.equal(mapped.agentId, 'ag_1');
 });
 
+test('mapDograhRunToCallInput reads Dograh production run shape', () => {
+  const mapped = calls.mapDograhRunToCallInput({
+    id: 99,
+    name: 'WR-TEL-OUT-63869822',
+    workflow_id: 8,
+    call_type: 'outbound',
+    state: 'completed',
+    is_completed: true,
+    created_at: '2026-09-28T10:10:23.792Z',
+    initial_context: {
+      phone_number: '+919618824700',
+      caller_number: '+918065353938',
+    },
+    usage_info: { call_duration_seconds: 184 },
+    gathered_context: {
+      call_id: 'f50e294c-83f9-4104-9a90-916a2751546f',
+      disposition: 'user_hangup',
+      summary: 'WhatsApp lead gen interest',
+    },
+    recording: { mixed: 'recordings/99.wav' },
+    logs: [
+      { role: 'bot', text: 'Hi', at: '2026-09-28T10:10:38Z' },
+      { role: 'user', text: 'Hello', at: '2026-09-28T10:10:43Z' },
+    ],
+  }, { agentId: 'ag_1', phoneNumberId: 'pn_1', workflowId: 8 });
+  assert.equal(mapped.providerRunId, '99');
+  assert.equal(mapped.providerRunName, 'WR-TEL-OUT-63869822');
+  assert.equal(mapped.direction, 'outbound');
+  assert.equal(mapped.toE164, '+919618824700');
+  assert.equal(mapped.fromE164, '+918065353938');
+  assert.equal(mapped.durationSec, 184);
+  assert.equal(mapped.providerCallId, 'f50e294c-83f9-4104-9a90-916a2751546f');
+  assert.equal(mapped.outcome, 'user_hangup');
+  assert.equal(mapped.summary, 'WhatsApp lead gen interest');
+  assert.equal(mapped.recordingAvailable, true);
+  assert.equal(mapped.transcript.length, 2);
+  assert.equal(mapped.transcript[0].role, 'bot');
+});
+
+test('linkCallJobToSyncedCall matches failed call_not_tracked jobs by phone+time', () => {
+  const dialedAt = '2026-09-28T10:10:23.589Z';
+  const db = {
+    calls: [],
+    providerResources: [],
+    callJobs: [{
+      id: 'cjob_3b84ba10a95aef0e',
+      tenantId: 't_a',
+      leadId: 'lead_1',
+      toE164: '+919618824700',
+      status: 'failed',
+      lastError: 'Call was placed but could not be tracked',
+      providerRunId: null,
+      resultCallId: null,
+      dialedAt,
+      createdAt: dialedAt,
+      updatedAt: dialedAt,
+    }],
+    leads: [{
+      id: 'lead_1',
+      tenantId: 't_a',
+      phone: '+919618824700',
+      status: 'failed',
+      lastError: 'Call was placed but could not be tracked',
+      lastCallJobId: 'cjob_3b84ba10a95aef0e',
+      lastCallId: null,
+    }],
+  };
+  const up = calls.upsertCallFromProvider(db, 't_a', {
+    providerRunId: '99',
+    providerRunName: 'WR-TEL-OUT-63869822',
+    direction: 'outbound',
+    toE164: '+919618824700',
+    fromE164: '+918065353938',
+    status: 'completed',
+    startedAt: '2026-09-28T10:10:23.792Z',
+    durationSec: 185,
+    outcome: 'user_hangup',
+    summary: 'imported',
+  });
+  assert.equal(up.created, true);
+  const linked = calls.linkCallJobToSyncedCall(db, 't_a', up.call);
+  assert.equal(linked.linked, true);
+  assert.equal(db.callJobs[0].status, 'completed');
+  assert.equal(db.callJobs[0].providerRunId, '99');
+  assert.equal(db.callJobs[0].resultCallId, up.call.id);
+  assert.equal(db.leads[0].status, 'called');
+  assert.equal(db.leads[0].lastCallId, up.call.id);
+});
+
 test('DograhVobizProvider.syncCalls seeds demos when Dograh stubbed', async () => {
   const store = {
     _db: {
@@ -136,6 +225,122 @@ test('DograhVobizProvider.syncCalls seeds demos when Dograh stubbed', async () =
   const second = await provider.syncCalls('t_a');
   assert.equal(second.ok, true);
   assert.equal(store._db.calls.length, first.total);
+});
+
+test('syncCalls does not fabricate demo calls when live provider returns empty', async () => {
+  const store = {
+    _db: {
+      calls: [], providerResources: [], callJobs: [], leads: [],
+      agents: [{ id: 'ag_1', tenantId: 't_a', name: 'Desk' }],
+      phoneNumbers: [{
+        id: 'pn_1', tenantId: 't_a', status: 'assigned', e164: '+918065353938',
+        providerMetadata: { inboundWorkflowId: 8 },
+      }],
+    },
+    db() { return this._db; },
+    async mutate(fn) { fn(this._db); },
+  };
+  const tel = {
+    live: true,
+    async listCallRuns(opts) {
+      assert.equal(opts.workflowId, 8);
+      return {
+        runs: [],
+        stubbed: false,
+        endpoint: '/api/v1/workflow/8/runs?page=1&limit=20',
+        workflowId: 8,
+      };
+    },
+  };
+  const provider = new DograhVobizProvider({ core: store, telephony: tel });
+  const result = await provider.syncCalls('t_a');
+  assert.equal(result.ok, true);
+  assert.equal(result.stubbed, false);
+  assert.equal(result.fetched, 0);
+  assert.equal(result.demoSeeded, false);
+  assert.equal(result.total, 0);
+  assert.equal(store._db.calls.length, 0);
+});
+
+test('syncCalls imports Dograh runs on singular workflow path and links CallJobs', async () => {
+  const dialedAt = new Date().toISOString();
+  const store = {
+    _db: {
+      calls: [], providerResources: [],
+      callJobs: [{
+        id: 'cjob_pending',
+        tenantId: 't_a',
+        leadId: 'lead_1',
+        toE164: '+919618824700',
+        status: 'calling',
+        providerRunId: null,
+        resultCallId: null,
+        lastError: null,
+        dialedAt,
+        createdAt: dialedAt,
+        updatedAt: dialedAt,
+        agentId: 'ag_1',
+        phoneNumberId: 'pn_1',
+      }],
+      leads: [{
+        id: 'lead_1', tenantId: 't_a', phone: '+919618824700',
+        status: 'calling', lastCallJobId: 'cjob_pending', lastCallId: null,
+      }],
+      agents: [{ id: 'ag_1', tenantId: 't_a', name: 'Desk' }],
+      phoneNumbers: [{
+        id: 'pn_1', tenantId: 't_a', status: 'assigned', e164: '+918065353938',
+        providerMetadata: { inboundWorkflowId: 8 },
+      }],
+    },
+    db() { return this._db; },
+    async mutate(fn) { fn(this._db); },
+  };
+  const tel = {
+    live: true,
+    async listCallRuns() {
+      return {
+        stubbed: false,
+        endpoint: '/api/v1/workflow/8/runs?page=1&limit=20',
+        runs: [{
+          id: 99,
+          name: 'WR-TEL-OUT-63869822',
+          call_type: 'outbound',
+          state: 'completed',
+          is_completed: true,
+          created_at: dialedAt,
+          initial_context: { phone_number: '+919618824700', caller_number: '+918065353938' },
+          usage_info: { call_duration_seconds: 185 },
+          gathered_context: { disposition: 'user_hangup', summary: 'WhatsApp services' },
+          recording: { mixed: 'recordings/99.wav' },
+          logs: [
+            { role: 'bot', text: 'Hi' },
+            { role: 'user', text: 'Hello' },
+          ],
+        }],
+      };
+    },
+  };
+  const provider = new DograhVobizProvider({ core: store, telephony: tel });
+  const result = await provider.syncCalls('t_a');
+  assert.equal(result.ok, true);
+  assert.equal(result.stubbed, false);
+  assert.equal(result.fetched, 1);
+  assert.equal(result.created, 1);
+  assert.equal(result.linkedJobs, 1);
+  assert.equal(result.demoSeeded, false);
+  assert.equal(store._db.calls.length, 1);
+  assert.equal(store._db.calls[0].providerRunId, '99');
+  assert.equal(store._db.calls[0].durationSec, 185);
+  assert.equal(store._db.calls[0].transcript.length, 2);
+  assert.equal(store._db.callJobs[0].status, 'completed');
+  assert.equal(store._db.callJobs[0].providerRunId, '99');
+  assert.equal(store._db.callJobs[0].resultCallId, store._db.calls[0].id);
+  assert.equal(store._db.leads[0].status, 'called');
+});
+
+test('DOGRAH_SYNC_CANDIDATES documents singular workflow path first', () => {
+  assert.ok(calls.DOGRAH_SYNC_CANDIDATES[0].includes('/api/v1/workflow/{workflowId}/runs'));
+  assert.equal(calls.DOGRAH_SYNC_CANDIDATES[0].includes('/workflows/'), false);
 });
 
 test('HTTP calls routes: list, detail, sync idempotency, recording 404, tenant isolation', async (t) => {

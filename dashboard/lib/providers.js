@@ -409,27 +409,121 @@ function positiveIntOption(value) {
 
 /**
  * Pull a stable provider run / call id from a Dograh initiate-call response.
- * Accepts common top-level and nested aliases. Returns null when none exist
- * (never invents a fake id).
+ * Accepts common top-level and nested aliases, plus a few response headers.
+ * Returns null when none exist (never invents a fake id).
  */
-function extractProviderRunId(data) {
+function extractProviderRunId(data, headers) {
+  if (data && typeof data === 'object') {
+    const bags = [data];
+    if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+      bags.push(data.data);
+    }
+    const keys = [
+      'id', 'run_id', 'runId', 'workflow_run_id', 'workflowRunId',
+      'call_id', 'callId', 'telephony_call_id', 'telephonyCallId',
+    ];
+    for (const bag of bags) {
+      for (const key of keys) {
+        if (bag[key] == null || bag[key] === '') continue;
+        const id = String(bag[key]).trim();
+        // Skip run *names* like WR-TEL-OUT-... here; those are not numeric ids.
+        if (/^WR-TEL-/i.test(id)) continue;
+        if (id) return id;
+      }
+    }
+  }
+  if (headers && typeof headers === 'object') {
+    const headerKeys = [
+      'x-workflow-run-id', 'x-run-id', 'x-call-id',
+      'workflow-run-id', 'run-id',
+    ];
+    for (const key of headerKeys) {
+      const raw = headers[key] != null ? headers[key] : headers[key.toLowerCase()];
+      if (raw == null || raw === '') continue;
+      const id = String(Array.isArray(raw) ? raw[0] : raw).trim();
+      if (id && !/^WR-TEL-/i.test(id)) return id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse Dograh's initiate-call success message for the run name
+ * (e.g. "Call initiated successfully with run name WR-TEL-OUT-63869822").
+ * Returns null when the message does not contain a recognizable name.
+ */
+function extractProviderRunName(data) {
   if (!data || typeof data !== 'object') return null;
   const bags = [data];
   if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
     bags.push(data.data);
   }
-  const keys = [
-    'id', 'run_id', 'runId', 'workflow_run_id', 'workflowRunId',
-    'call_id', 'callId', 'telephony_call_id', 'telephonyCallId',
-  ];
   for (const bag of bags) {
-    for (const key of keys) {
+    for (const key of ['name', 'run_name', 'runName', 'workflow_run_name', 'workflowRunName']) {
       if (bag[key] == null || bag[key] === '') continue;
-      const id = String(bag[key]).trim();
-      if (id) return id;
+      const name = String(bag[key]).trim();
+      if (/^WR-TEL-[A-Za-z0-9_-]+$/i.test(name)) return name;
     }
+    const message = bag.message != null ? String(bag.message) : '';
+    const match = message.match(/\b(WR-TEL-[A-Za-z0-9_-]+)\b/i);
+    if (match) return match[1];
   }
   return null;
+}
+
+/** Normalize phones to trailing digits for fuzzy match (last 10). */
+function phoneMatchKey(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '';
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+/**
+ * Pick the best matching Dograh workflow run for an outbound dial that
+ * returned no explicit id. Prefer exact run-name match, then phone + recent
+ * created_at window. Never invents an id.
+ */
+function matchRecentWorkflowRun(runs, { phoneE164, runName, sinceMs = 120000, nowMs } = {}) {
+  if (!Array.isArray(runs) || !runs.length) return null;
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const wantName = runName ? String(runName).trim() : '';
+  const wantPhone = phoneMatchKey(phoneE164);
+
+  if (wantName) {
+    const byName = runs.find((run) => {
+      const name = String(run && (run.name || run.run_name || run.runName) || '').trim();
+      return name && name === wantName;
+    });
+    if (byName && byName.id != null && byName.id !== '') return byName;
+  }
+
+  if (!wantPhone) return null;
+  let best = null;
+  let bestAge = Infinity;
+  for (const run of runs) {
+    if (!run || run.id == null || run.id === '') continue;
+    const ctx = (run.initial_context && typeof run.initial_context === 'object')
+      ? run.initial_context
+      : {};
+    const runPhone = phoneMatchKey(
+      run.to_number || run.toE164 || run.to || run.callee_number
+      || ctx.phone_number || ctx.caller_number || ctx.to_number || '',
+    );
+    if (!runPhone || runPhone !== wantPhone) continue;
+    const createdRaw = run.created_at || run.createdAt || run.started_at || run.startedAt;
+    const created = createdRaw ? Date.parse(createdRaw) : NaN;
+    if (!Number.isFinite(created)) {
+      if (!best) best = run;
+      continue;
+    }
+    const age = now - created;
+    if (age < 0 || age > sinceMs) continue;
+    if (age < bestAge) {
+      bestAge = age;
+      best = run;
+    }
+  }
+  return best;
 }
 
 const telVobiz = {
@@ -535,6 +629,11 @@ const telVobiz = {
   // are positive integers. Env fallback for number ids is allowed only for
   // legacy ops paths. Product dials set failClosedNumbers and must pass
   // resolved Astra Phone Number mappings (no silent DOGRAH_* number fallback).
+  //
+  // Dograh often returns only `{ message: "... run name WR-TEL-OUT-..." }` with
+  // no workflow_run_id. When that happens we (1) parse the run name, (2) try a
+  // best-effort pre-create + pass workflow_run_id, then (3) reconcile against
+  // recent workflow runs by name/phone. Never invent a fake id.
   async initiateCall(phoneE164, options = {}) {
     if (!hasEnv(this.needs)) throw notConfigured(this.label, this.needs);
     const phone = String(phoneE164 || '').trim();
@@ -556,42 +655,116 @@ const telVobiz = {
         'phone_number_required',
       );
     }
-    const result = await this.request('POST', '/api/v1/telephony/initiate-call', {
+
+    // Optional pre-create so we know the run id before dialing. Off by default
+    // because many Dograh builds create the run inside initiate-call. Soft-fail
+    // when Dograh does not support POST /workflow/{id}/runs.
+    let precreatedRunId = positiveIntOption(options.workflowRunId);
+    if (!precreatedRunId && workflowId && options.precreateRun === true) {
+      try {
+        const created = await this.request('POST', `/api/v1/workflow/${workflowId}/runs`, {
+          mode: 'vobiz',
+        });
+        if (created.up.status >= 200 && created.up.status < 300) {
+          const id = extractProviderRunId(created.data, created.up.headers);
+          if (id) precreatedRunId = positiveIntOption(id) || id;
+        }
+      } catch (_) {
+        // Soft-fail: dial still proceeds without a pre-created id.
+      }
+    }
+
+    const payload = {
       workflow_id: workflowId,
       telephony_configuration_id: telephonyConfigId,
       from_phone_number_id: fromPhoneNumberId,
       phone_number: phone,
-    });
+    };
+    if (precreatedRunId != null) {
+      payload.workflow_run_id = typeof precreatedRunId === 'number'
+        ? precreatedRunId
+        : (positiveIntOption(precreatedRunId) || precreatedRunId);
+    }
+
+    const result = await this.request('POST', '/api/v1/telephony/initiate-call', payload);
     if (result.up.status < 200 || result.up.status >= 300) {
       throw new ProviderError('Dograh could not initiate the VoBiz call', upstreamStatus(result.up.status),
         'upstream', upstreamMessage(result.data, 'The call was not placed.'));
     }
-    // Normalized shape for Full-Stack Call upsert. providerRunId is null when
-    // Dograh returns no id. Never invent a fake id.
+
+    let providerRunId = extractProviderRunId(result.data, result.up.headers)
+      || (precreatedRunId != null ? String(precreatedRunId) : null);
+    const providerRunName = extractProviderRunName(result.data);
+
+    // Optional inline reconcile (off unless options.reconcile === true) so unit
+    // tests that only mock POST are not forced into live GETs.
+    if (!providerRunId && workflowId && options.reconcile === true) {
+      try {
+        const resolved = await this.resolveProviderRunAfterDial({
+          workflowId,
+          phoneE164: phone,
+          runName: providerRunName,
+        });
+        if (resolved) providerRunId = resolved;
+      } catch (_) {
+        // Soft-fail: dialAccepted stays true; sync can attach later.
+      }
+    }
+
     return {
       status: result.up.status,
       data: result.data,
-      providerRunId: extractProviderRunId(result.data),
+      providerRunId: providerRunId != null ? String(providerRunId) : null,
+      providerRunName: providerRunName || null,
+      dialAccepted: true,
       ok: true,
     };
   },
 
   /**
+   * After a successful initiate-call that omitted workflow_run_id, look up the
+   * newest matching Dograh workflow run by run name and/or destination phone.
+   * Returns the run id string, or null. Never invents an id.
+   */
+  async resolveProviderRunAfterDial({
+    workflowId, phoneE164, runName, sinceMs = 180000, limit = 20,
+  } = {}) {
+    if (!hasEnv(this.needs)) return null;
+    const wf = positiveIntOption(workflowId)
+      || (() => { try { return positiveIntEnv('DOGRAH_WORKFLOW_ID'); } catch { return null; } })();
+    if (!wf && !runName && !phoneE164) return null;
+    const listed = await this.listCallRuns({ workflowId: wf || undefined, limit });
+    if (listed.stubbed || !Array.isArray(listed.runs) || !listed.runs.length) return null;
+    const matched = matchRecentWorkflowRun(listed.runs, {
+      phoneE164,
+      runName,
+      sinceMs,
+    });
+    if (!matched || matched.id == null || matched.id === '') return null;
+    return String(matched.id);
+  },
+
+  /**
    * Best-effort list of recent workflow runs / call logs from Dograh.
-   * Tries several documented candidate paths. Returns { runs, endpoint, stubbed }
-   * without throwing when shapes are uncertain (caller seeds demos instead).
+   * Prefers the real Dograh path GET /api/v1/workflow/{id}/runs (singular).
+   * Returns { runs, endpoint, stubbed } without throwing when shapes are
+   * uncertain (caller seeds demos only when Dograh is not live).
    */
   async listCallRuns(options = {}) {
     if (!hasEnv(this.needs)) {
       return { runs: [], endpoint: null, stubbed: true, reason: 'not_configured' };
     }
     const limit = Math.max(1, Math.min(100, Number(options.limit) || 20));
+    const page = Math.max(1, Number(options.page) || 1);
     const workflowId = Number.isInteger(options.workflowId) && options.workflowId > 0
       ? options.workflowId
       : (() => { try { return positiveIntEnv('DOGRAH_WORKFLOW_ID'); } catch { return null; } })();
 
     const candidates = [];
     if (workflowId) {
+      // Canonical Dograh path (singular workflow).
+      candidates.push(`/api/v1/workflow/${workflowId}/runs?page=${page}&limit=${limit}`);
+      // Legacy / mistaken plural path kept last for older forks.
       candidates.push(`/api/v1/workflows/${workflowId}/runs?limit=${limit}`);
     }
     candidates.push(
@@ -631,16 +804,24 @@ const telVobiz = {
     };
   },
 
-  async getCallRun(runId) {
+  async getCallRun(runId, options = {}) {
     if (!hasEnv(this.needs)) {
       return { run: null, stubbed: true, reason: 'not_configured' };
     }
     const id = encodeURIComponent(String(runId || '').trim());
     if (!id) return { run: null, stubbed: true, reason: 'missing_id' };
-    const candidates = [
+    const workflowId = Number.isInteger(options.workflowId) && options.workflowId > 0
+      ? options.workflowId
+      : (() => { try { return positiveIntEnv('DOGRAH_WORKFLOW_ID'); } catch { return null; } })();
+    const candidates = [];
+    if (workflowId) {
+      candidates.push(`/api/v1/workflow/${workflowId}/runs/${id}`);
+      candidates.push(`/api/v1/workflows/${workflowId}/runs/${id}`);
+    }
+    candidates.push(
       `/api/v1/workflow-runs/${id}`,
       `/api/v1/telephony/calls/${id}`,
-    ];
+    );
     for (const pathname of candidates) {
       try {
         const result = await this.request('GET', pathname);
@@ -651,16 +832,24 @@ const telVobiz = {
     return { run: null, stubbed: true, reason: 'not_found_or_unreachable', tried: candidates };
   },
 
-  async getCallRecording(runId) {
+  async getCallRecording(runId, options = {}) {
     if (!hasEnv(this.needs)) {
       return { available: false, stubbed: true, reason: 'not_configured' };
     }
     const id = encodeURIComponent(String(runId || '').trim());
     if (!id) return { available: false, stubbed: true, reason: 'missing_id' };
-    const candidates = [
+    const workflowId = Number.isInteger(options.workflowId) && options.workflowId > 0
+      ? options.workflowId
+      : (() => { try { return positiveIntEnv('DOGRAH_WORKFLOW_ID'); } catch { return null; } })();
+    const candidates = [];
+    if (workflowId) {
+      candidates.push(`/api/v1/workflow/${workflowId}/runs/${id}/recording`);
+      candidates.push(`/api/v1/workflow/${workflowId}/runs/${id}`);
+    }
+    candidates.push(
       `/api/v1/workflow-runs/${id}/recording`,
       `/api/v1/telephony/calls/${id}/recording`,
-    ];
+    );
     for (const pathname of candidates) {
       try {
         const connection = dograhConnection();
@@ -670,8 +859,16 @@ const telVobiz = {
         const contentType = String(up.headers['content-type'] || 'application/octet-stream');
         if (contentType.includes('json')) {
           const data = parseJsonResponse(up);
-          const url = data.url || data.recording_url || data.recordingUrl || null;
-          if (url) return { available: true, redirectUrl: url, endpoint: pathname, stubbed: false };
+          const url = data.url || data.recording_url || data.recordingUrl
+            || (data.recording && (data.recording.url || data.recording.mixed))
+            || null;
+          if (url && /^https?:\/\//i.test(String(url))) {
+            return { available: true, redirectUrl: url, endpoint: pathname, stubbed: false };
+          }
+          // Detail endpoint may only confirm availability via storage keys.
+          if (data.recording || data.recording_url || data.has_recording) {
+            continue;
+          }
           continue;
         }
         return {
@@ -794,5 +991,6 @@ module.exports = {
   stt, tts, llm, telephony,
   MAX_TEXT, TTS_MODELS, TTS_SPEAKERS,
   BROWSER_UA, MODEL_ID_RE,
-  extractProviderRunId, positiveIntOption,
+  extractProviderRunId, extractProviderRunName, matchRecentWorkflowRun,
+  phoneMatchKey, positiveIntOption,
 };
