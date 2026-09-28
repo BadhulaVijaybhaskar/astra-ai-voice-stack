@@ -1751,11 +1751,56 @@ async function apiIntegrationsLeadCreated(req, res, ctx) {
 }
 
 /* ==========================================================================
-   Campaigns + Analytics (Sprint 5)
+   Campaigns + Analytics (Sprint 5 + Excel/CSV bulk)
+   Same CallJob + createOutboundCall path as Instant Leads.
    ========================================================================== */
+
+function matchCampaignsRoute(route) {
+  if (route === '/api/campaigns') return { action: 'list_or_create' };
+  if (route === '/api/campaigns/leads') return { action: 'leads_qs' };
+  if (route === '/api/campaigns/sample.csv') return { action: 'sample_csv' };
+  if (route === '/api/campaigns/sample.xlsx') return { action: 'sample_xlsx' };
+  if (route === '/api/campaigns/fields') return { action: 'fields' };
+  const one = route.match(/^\/api\/campaigns\/([^/]+)$/);
+  if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
+  const sub = route.match(/^\/api\/campaigns\/([^/]+)\/(upload|map|validate|start|enqueue|results|export|analytics|leads|settings)$/);
+  if (sub) return { action: sub[2], id: decodeURIComponent(sub[1]) };
+  return null;
+}
 
 function apiCampaignsList(req, res, ctx) {
   core.sendJson(res, 200, { campaigns: campaigns.listCampaigns(core.db(), ctx.tenant.id) });
+}
+
+function apiCampaignsFields(req, res) {
+  core.sendJson(res, 200, { fields: campaigns.STANDARD_FIELDS.map((f) => ({ ...f })) });
+}
+
+function apiCampaignsSampleCsv(req, res) {
+  const csv = campaigns.buildSampleCsv();
+  core.send(res, 200, csv, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': 'attachment; filename="astra-campaign-demo-leads.csv"',
+    'Cache-Control': 'no-store',
+  });
+}
+
+function apiCampaignsSampleXlsx(req, res) {
+  const buf = campaigns.buildSampleXlsx();
+  core.send(res, 200, buf, {
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': 'attachment; filename="astra-campaign-demo-leads.xlsx"',
+    'Cache-Control': 'no-store',
+  });
+}
+
+function apiCampaignsGet(req, res, ctx) {
+  const row = campaigns.findCampaign(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!row) return core.sendJson(res, 404, { error: 'campaign not found', code: 'not_found' });
+  core.sendJson(res, 200, {
+    campaign: campaigns.publicCampaign(row, campaigns.countLeads(core.db(), row.id)),
+    fields: campaigns.STANDARD_FIELDS.map((f) => ({ ...f })),
+  });
 }
 
 async function apiCampaignsCreate(req, res, ctx) {
@@ -1769,10 +1814,23 @@ async function apiCampaignsCreate(req, res, ctx) {
   core.sendJson(res, 201, { campaign: campaigns.publicCampaign(result.campaign, campaigns.countLeads(core.db(), result.campaign.id)) });
 }
 
+async function apiCampaignsSettings(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = campaigns.updateCampaignSettings(d, ctx.tenant.id, ctx.params.id, ctx.body || {});
+    if (result.ok) addAudit(d, ctx, 'campaign.settings', 'campaign', ctx.params.id, {});
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, {
+    campaign: campaigns.publicCampaign(result.campaign, campaigns.countLeads(core.db(), result.campaign.id)),
+  });
+}
+
 async function apiCampaignsAddLeads(req, res, ctx) {
   if (rejectImpersonated(res, ctx)) return;
   const b = ctx.body || {};
-  const id = String(b.campaignId || b.id || '');
+  const id = String(b.campaignId || b.id || (ctx.params && ctx.params.id) || '');
   let result;
   await core.mutate((d) => {
     result = campaigns.addLeads(d, ctx.tenant.id, id, b.leads != null ? b.leads : b.text);
@@ -1780,6 +1838,54 @@ async function apiCampaignsAddLeads(req, res, ctx) {
   });
   if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
   core.sendJson(res, 200, result);
+}
+
+async function apiCampaignsUpload(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const id = String(b.campaignId || b.id || ctx.params.id || '');
+  let result;
+  await core.mutate((d) => {
+    result = campaigns.storeUpload(d, ctx.tenant.id, id, {
+      filename: b.filename,
+      contentBase64: b.contentBase64 || b.base64,
+      text: b.text || b.csv,
+    });
+    if (result.ok) addAudit(d, ctx, 'campaign.upload', 'campaign', id, {
+      filename: b.filename || null,
+      rows: result.campaign && result.campaign.upload ? result.campaign.upload.rowCount : 0,
+    });
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result);
+}
+
+async function apiCampaignsMap(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const id = String(b.campaignId || b.id || ctx.params.id || '');
+  let result;
+  await core.mutate((d) => {
+    result = campaigns.applyColumnMap(d, ctx.tenant.id, id, b.mapping || b.map || {});
+    if (result.ok) addAudit(d, ctx, 'campaign.mapped', 'campaign', id, result.counts || {});
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result);
+}
+
+async function apiCampaignsValidate(req, res, ctx) {
+  const id = String((ctx.body && (ctx.body.campaignId || ctx.body.id)) || ctx.params.id || '');
+  let providerAvailable = true;
+  try {
+    providerAvailable = !!(providers.telephony && providers.telephony.live);
+  } catch (_) {
+    providerAvailable = true;
+  }
+  let result;
+  await core.mutate((d) => {
+    result = campaigns.validateLaunch(d, ctx.tenant.id, id, { providerAvailable });
+  });
+  core.sendJson(res, result.ok ? 200 : 422, result);
 }
 
 async function apiCampaignsStatus(req, res, ctx) {
@@ -1818,18 +1924,64 @@ async function apiCampaignsAttachEmployee(req, res, ctx) {
   });
 }
 
+/**
+ * Start / enqueue: validate, create formal Leads (timeline), CallJobs via
+ * placeOutboundCallJob → createOutboundCall. Idempotent per campaign lead phone.
+ */
 async function apiCampaignsEnqueue(req, res, ctx) {
   if (rejectImpersonated(res, ctx)) return;
   const b = ctx.body || {};
-  const id = String(b.campaignId || b.id || '');
+  const id = String(b.campaignId || b.id || (ctx.params && ctx.params.id) || '');
+  if (b.confirm !== true) {
+    return core.sendJson(res, 400, {
+      error: 'confirm:true required to place or schedule campaign dials',
+      code: 'needs_confirm',
+    });
+  }
+
+  let providerAvailable = true;
+  try {
+    providerAvailable = !!(providers.telephony && providers.telephony.live);
+  } catch (_) {
+    providerAvailable = true;
+  }
+
+  if (b.mode || b.scheduledAt || b.concurrency != null || b.employeeId || b.phoneNumberId || b.language) {
+    let settings;
+    await core.mutate((d) => {
+      settings = campaigns.updateCampaignSettings(d, ctx.tenant.id, id, b);
+    });
+    if (settings && !settings.ok) {
+      return core.sendJson(res, settings.status, { error: settings.error, code: settings.code });
+    }
+  }
+
+  let validation;
+  await core.mutate((d) => {
+    validation = campaigns.validateLaunch(d, ctx.tenant.id, id, { providerAvailable });
+  });
+  if (!validation.ok) {
+    return core.sendJson(res, 422, validation);
+  }
+
   let result;
   await core.mutate((d) => {
-    result = campaigns.enqueueCampaign(d, ctx.tenant.id, id, { confirm: b.confirm === true });
-    if (result.ok) addAudit(d, ctx, 'campaign.enqueued', 'campaign', id, { enqueued: result.enqueued, confirm: true });
+    result = campaigns.enqueueCampaign(d, ctx.tenant.id, id, {
+      confirm: true,
+      limit: b.limit != null ? b.limit : undefined,
+    });
+    if (result.ok) addAudit(d, ctx, 'campaign.enqueued', 'campaign', id, {
+      enqueued: result.enqueued,
+      scheduled: result.scheduled || 0,
+      confirm: true,
+    });
   });
   if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
 
-  // Soft real dial: advance stub_queued leads through the shared outbound helper.
+  if (result.scheduled && !result.enqueued) {
+    return core.sendJson(res, 200, { ...result, results: result.results || [] });
+  }
+
   const dialedResults = [];
   for (const item of result.results || []) {
     if (item.status !== 'stub_queued') {
@@ -1844,37 +1996,123 @@ async function apiCampaignsEnqueue(req, res, ctx) {
       dialedResults.push({ id: item.id, status: 'failed', error: 'lead missing after enqueue' });
       continue;
     }
+
+    let formalLeadId = leadRow.leadId || null;
+    await core.mutate((d) => {
+      if (formalLeadId) return;
+      const created = leads.createLead(d, ctx.tenant.id, {
+        name: leadRow.name || 'Campaign lead',
+        phone: leadRow.phone,
+        employeeId: campaign && campaign.employeeId,
+        agentId: campaign && campaign.agentId,
+        phoneNumberId: campaign && campaign.phoneNumberId,
+        idempotencyKey: 'cmp:' + id + ':' + leadRow.phone,
+        meta: {
+          ...(leadRow.meta || {}),
+          campaignId: id,
+          campaignLeadId: leadRow.id,
+        },
+      }, ctx.user.id);
+      if (created.ok) {
+        formalLeadId = created.lead.id;
+        const row = (d.campaignLeads || []).find((l) => l.id === leadRow.id);
+        if (row) row.leadId = formalLeadId;
+      }
+    });
+
     const dial = await placeOutboundCallJob({
       tenantId: ctx.tenant.id,
       userId: ctx.user.id,
       toE164: leadRow.phone,
       agentId: campaign && campaign.agentId,
       employeeId: campaign && campaign.employeeId,
+      phoneNumberId: campaign && campaign.phoneNumberId,
+      leadId: formalLeadId,
       campaignLeadId: leadRow.id,
       source: 'campaign',
+      idempotencyKey: 'cmpjob:' + id + ':' + leadRow.phone,
       ctx,
     });
     await core.mutate((d) => {
       const row = (d.campaignLeads || []).find((l) => l.id === leadRow.id && l.tenantId === ctx.tenant.id);
       if (!row) return;
+      row.lastCallJobId = dial.jobId || null;
+      row.lastCallId = dial.callId || null;
       if (dial.ok) {
-        row.status = 'dialed';
+        row.status = 'calling';
         row.dialedAt = new Date().toISOString();
         row.lastError = null;
       } else {
         row.status = 'failed';
         row.lastError = String(dial.error || 'dial failed').slice(0, 200);
       }
+      if (formalLeadId) {
+        leads.updateLead(d, ctx.tenant.id, formalLeadId, {
+          status: dial.ok ? 'calling' : 'failed',
+          lastCallJobId: dial.jobId || null,
+          lastCallId: dial.callId || null,
+          lastError: dial.ok ? null : String(dial.error || 'dial failed').slice(0, 200),
+        });
+      }
     });
     dialedResults.push({
       id: item.id,
-      status: dial.ok ? 'dialed' : 'failed',
+      status: dial.ok ? 'calling' : 'failed',
       error: dial.ok ? undefined : dial.error,
       jobId: dial.jobId || null,
       callId: dial.callId || null,
+      leadId: formalLeadId,
     });
   }
-  core.sendJson(res, 200, { ...result, results: dialedResults });
+  const campaignPub = campaigns.publicCampaign(
+    campaigns.findCampaign(core.db(), ctx.tenant.id, id),
+    campaigns.countLeads(core.db(), id),
+  );
+  core.sendJson(res, 200, { ...result, campaign: campaignPub, results: dialedResults });
+}
+
+function apiCampaignsLeads(req, res, ctx) {
+  const url = new URL(req.url, 'http://localhost');
+  const id = String((ctx.params && ctx.params.id) || url.searchParams.get('campaignId') || '');
+  const result = campaigns.listLeads(core.db(), ctx.tenant.id, id);
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result);
+}
+
+function apiCampaignsAnalytics(req, res, ctx) {
+  const result = campaigns.campaignAnalytics(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result);
+}
+
+function apiCampaignsExport(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const format = String(url.searchParams.get('format') || 'csv').toLowerCase();
+  const result = campaigns.exportCampaignRows(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  if (format === 'xlsx' || format === 'xls') {
+    const sheetParse = require('./lib/sheet-parse');
+    const buf = sheetParse.buildXlsx(result.headers, result.rows);
+    return core.send(res, 200, buf, {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': 'attachment; filename="campaign-results.xlsx"',
+      'Cache-Control': 'no-store',
+    });
+  }
+  if (format === 'json') {
+    return core.sendJson(res, 200, { headers: result.headers, rows: result.rows, campaign: result.campaign });
+  }
+  core.send(res, 200, result.csv, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': 'attachment; filename="campaign-results.csv"',
+    'Cache-Control': 'no-store',
+  });
+}
+
+
+function apiAnalytics(req, res, ctx) {
+  const dash = analytics.buildDashboard(core.db(), ctx.tenant.id);
+  core.sendJson(res, 200, { analytics: dash, performance: dash });
 }
 
 /* ==========================================================================
@@ -2689,18 +2927,6 @@ function apiCallJobsGet(req, res, ctx) {
   });
 }
 
-function apiCampaignsLeads(req, res, ctx) {
-  const url = new URL(req.url, 'http://localhost');
-  const id = String(url.searchParams.get('campaignId') || '');
-  const result = campaigns.listLeads(core.db(), ctx.tenant.id, id);
-  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
-  core.sendJson(res, 200, result);
-}
-
-function apiAnalytics(req, res, ctx) {
-  const dash = analytics.buildDashboard(core.db(), ctx.tenant.id);
-  core.sendJson(res, 200, { analytics: dash, performance: dash });
-}
 
 async function apiMemberRole(req, res, ctx) {
   const b = ctx.body || {};
@@ -3021,8 +3247,30 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/knowledge') return core.requireAuth(req, res, apiKnowledgeList);
         if (route === '/api/knowledge/retrieve') return core.requireAuth(req, res, apiKnowledgeRetrieve);
         if (route === '/api/integrations') return core.requireAuth(req, res, apiIntegrationsList);
-        if (route === '/api/campaigns') return core.requireAuth(req, res, apiCampaignsList);
-        if (route === '/api/campaigns/leads') return core.requireAuth(req, res, apiCampaignsLeads);
+        const campGet = matchCampaignsRoute(route);
+        if (campGet) {
+          if (campGet.action === 'list_or_create') return core.requireAuth(req, res, apiCampaignsList);
+          if (campGet.action === 'leads_qs') return core.requireAuth(req, res, apiCampaignsLeads);
+          if (campGet.action === 'fields') return core.requireAuth(req, res, apiCampaignsFields);
+          if (campGet.action === 'sample_csv') return core.requireAuth(req, res, apiCampaignsSampleCsv);
+          if (campGet.action === 'sample_xlsx') return core.requireAuth(req, res, apiCampaignsSampleXlsx);
+          if (campGet.action === 'one') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsGet(rq, rs, { ...ctx, params: { id: campGet.id } }));
+          }
+          if (campGet.action === 'leads' || campGet.action === 'results') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsLeads(rq, rs, { ...ctx, params: { id: campGet.id } }));
+          }
+          if (campGet.action === 'validate') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsValidate(rq, rs, { ...ctx, params: { id: campGet.id } }));
+          }
+          if (campGet.action === 'analytics') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsAnalytics(rq, rs, { ...ctx, params: { id: campGet.id } }));
+          }
+          if (campGet.action === 'export') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsExport(rq, rs, { ...ctx, params: { id: campGet.id } }));
+          }
+          return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+        }
         if (route === '/api/analytics') return core.requireAuth(req, res, apiAnalytics);
         if (route === '/api/performance') return core.requireAuth(req, res, apiAnalytics);
         const leadsGet = matchLeadsRoute(route);
@@ -3207,7 +3455,8 @@ const server = http.createServer(async (req, res) => {
       // ---- POST routes: read the body once, with a bigger cap for STT audio ----
       let body;
       try {
-        body = await core.readBody(req, route === '/api/stt' ? 12 * 1024 * 1024 : 64 * 1024);
+        body = await core.readBody(req, route === '/api/stt' ? 12 * 1024 * 1024
+          : (/\/api\/campaigns\/.+\/upload$/.test(route) ? 2 * 1024 * 1024 : 64 * 1024));
       } catch (e) {
         const tooBig = /too large/.test(String(e.message));
         return core.sendJson(res, tooBig ? 413 : 400, {
@@ -3284,11 +3533,35 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/integrations/webhooks/update') return core.requireRole(req, res, 'owner', apiIntegrationsWebhookUpdate, body);
       if (route === '/api/integrations/webhooks/delete') return core.requireRole(req, res, 'owner', apiIntegrationsWebhookDelete, body);
       if (route === '/api/integrations/lead-created') return core.requireAuth(req, res, apiIntegrationsLeadCreated, body);
-      if (route === '/api/campaigns') return core.requireAuth(req, res, apiCampaignsCreate, body);
-      if (route === '/api/campaigns/leads') return core.requireAuth(req, res, apiCampaignsAddLeads, body);
+      const campPost = matchCampaignsRoute(route);
+      if (campPost) {
+        if (campPost.action === 'list_or_create') return core.requireAuth(req, res, apiCampaignsCreate, body);
+        if (campPost.action === 'leads_qs') return core.requireAuth(req, res, apiCampaignsAddLeads, body);
+        if (campPost.action === 'leads') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsAddLeads(rq, rs, { ...ctx, params: { id: campPost.id } }), body);
+        }
+        if (campPost.action === 'upload') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsUpload(rq, rs, { ...ctx, params: { id: campPost.id } }), body);
+        }
+        if (campPost.action === 'map') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsMap(rq, rs, { ...ctx, params: { id: campPost.id } }), body);
+        }
+        if (campPost.action === 'validate') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsValidate(rq, rs, { ...ctx, params: { id: campPost.id }, body }), body);
+        }
+        if (campPost.action === 'settings') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsSettings(rq, rs, { ...ctx, params: { id: campPost.id } }), body);
+        }
+        if (campPost.action === 'start' || campPost.action === 'enqueue') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiCampaignsEnqueue(rq, rs, { ...ctx, params: { id: campPost.id } }), body);
+        }
+        return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+      }
       if (route === '/api/campaigns/status') return core.requireAuth(req, res, apiCampaignsStatus, body);
       if (route === '/api/campaigns/employee') return core.requireAuth(req, res, apiCampaignsAttachEmployee, body);
       if (route === '/api/campaigns/enqueue') return core.requireAuth(req, res, apiCampaignsEnqueue, body);
+      if (route === '/api/campaigns/leads') return core.requireAuth(req, res, apiCampaignsAddLeads, body);
+      if (route === '/api/campaigns') return core.requireAuth(req, res, apiCampaignsCreate, body);
       const leadsPost = matchLeadsRoute(route);
       if (leadsPost) {
         if (leadsPost.action === 'list_or_create') {

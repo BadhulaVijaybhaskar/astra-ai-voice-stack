@@ -1,0 +1,6 @@
+phone_number,name,company,email,language,city,lead_source,notes
++918065353938,Authorized Test DID,Astra Demo,demo@astra.local,en-IN,Hyderabad,demo,AUTHORIZED_TEST_DID_ONLY
+0000000000,Invalid Zero,Demo Co,,en-IN,Demo,demo,NON_DIALABLE
+91,Short Bad,Demo Co,,hi-IN,Demo,demo,NON_DIALABLE
+NOT_A_PHONE,Placeholder One,Demo Co,one@example.invalid,te-IN,Demo City,demo,NON_DIALABLE_PLACEHOLDER
++91000,Placeholder Two,Demo Co,two@example.invalid,ta-IN,Demo City,demo,NON_DIALABLE_PLACEHOLDER

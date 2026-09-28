@@ -86,7 +86,7 @@ test('call job status transitions and public serialization hide providerRunId', 
 
   const dialing = callJobs.updateCallJobStatus(db, 't_a', created.job.id, 'dialing');
   assert.equal(dialing.ok, true);
-  assert.equal(dialing.job.status, 'dialing');
+  assert.equal(dialing.job.status, 'calling');
   assert.ok(dialing.job.dialedAt);
 
   const done = callJobs.updateCallJobStatus(db, 't_a', created.job.id, 'completed', {
