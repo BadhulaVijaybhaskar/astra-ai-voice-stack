@@ -650,7 +650,7 @@ function paintHomeQuickActions(host, steps) {
   host.innerHTML = '';
   const next = (steps || []).find((s) => !s.done) || null;
   const primaryHref = next ? next.href : '#/leads';
-  const primaryLabel = next ? next.cta + ': ' + next.label : 'Call a Lead';
+  const primaryLabel = next ? ('Next: ' + next.label) : 'Call a Lead';
 
   host.appendChild(el('h3', {}, 'Quick actions'));
   host.appendChild(el('p', { class: 'qa-sub muted' }, next
