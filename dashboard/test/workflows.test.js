@@ -77,40 +77,68 @@ test('publish soft-fails when Dograh is offline but keeps mapping', async () => 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'astra-wf-pub-'));
   const dbFile = path.join(tmpDir, 'db.json');
   process.env.RAPIDX_DB_FILE = dbFile;
-  for (const key of Object.keys(require.cache)) {
-    if (key.includes(`${path.sep}dashboard${path.sep}`)) delete require.cache[key];
+
+  // Top-level requires already loaded core (via providers) before RAPIDX_DB_FILE
+  // was set, baking DB_FILE to data/db.json. On VPS (/app) the old
+  // `${sep}dashboard${sep}` cache clear never matched, so publish looked up the
+  // wrong workflow id from the live DB ("workflow not found"). Always clear by
+  // resolved module path so Docker and monorepo both reload against the temp DB.
+  const bust = [
+    '../lib/core',
+    '../lib/workflows',
+    '../lib/workflow-provider',
+    '../lib/providers',
+    '../lib/org',
+  ];
+  for (const rel of bust) {
+    try { delete require.cache[require.resolve(rel)]; } catch (_) {}
   }
+  const libRoot = path.resolve(__dirname, '..', 'lib') + path.sep;
+  for (const key of Object.keys(require.cache)) {
+    if (key.startsWith(libRoot)) delete require.cache[key];
+  }
+
   const core = require('../lib/core');
-  core.loadEnv();
+  // Do not call loadEnv here: it is unnecessary for soft-fail and can confuse
+  // env-sensitive adapters. Telephony is forced offline below.
   fs.writeFileSync(dbFile, JSON.stringify({
-    schemaVersion: 7,
+    schemaVersion: 13,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
     hvacJobs: [], hvacSettings: [], paymentEvents: [], demoLinks: [],
     callbackJobs: [], phoneNumbers: [], providerResources: [], calls: [],
     knowledgeEntries: [], integrationWebhooks: [], campaigns: [], campaignLeads: [],
-    workflows: [],
+    workflows: [], leads: [], callJobs: [], employees: [],
   }, null, 2));
 
-  // Rebuild after cache clear.
   const wf = require('../lib/workflows');
   const { DograhWorkflowProvider: Provider } = require('../lib/workflow-provider');
 
+  let createdId = null;
   await core.mutate((d) => {
     d.tenants.push({ id: 't1', name: 'T', slug: 't', createdAt: new Date().toISOString() });
     const created = wf.createWorkflow(d, 't1', { templateKey: 'receptionist', name: 'Live map' }, 'u1');
+    assert.equal(created.ok, true);
     created.workflow.providerWorkflowId = '8';
+    createdId = created.workflow.id;
   });
-  const id = core.db().workflows[0].id;
+  assert.ok(createdId);
+  // Use the id we just created, never workflows[0] from a polluted store.
+  assert.equal(core.db().workflows.some((w) => w.id === createdId && w.tenantId === 't1'), true);
+
   const provider = new Provider({
     core,
+    // Explicit offline: soft-fail must retain mapping without claiming remote sync.
     telephony: { live: false, request: async () => { throw new Error('nope'); } },
   });
-  const result = await provider.publishWorkflow('t1', id, { providerWorkflowId: '8' });
+  const result = await provider.publishWorkflow('t1', createdId, { providerWorkflowId: '8' });
   assert.equal(result.workflow.status, 'published');
   assert.equal(String(result.providerWorkflowId), '8');
-  assert.ok(['mapped_offline', 'sync_failed', 'synced'].includes(result.syncStatus));
+  // Offline with mapping → mapped_offline. Never pretend successful remote publish.
+  assert.equal(result.syncStatus, 'mapped_offline');
+  assert.ok(result.syncError);
+  assert.match(String(result.syncError), /not configured|offline|mapping/i);
 
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
   delete process.env.RAPIDX_DB_FILE;
@@ -151,21 +179,31 @@ test('HTTP workflow APIs enforce tenant isolation and hide provider id', async (
   const dbFile = path.join(tmpDir, 'db.json');
   process.env.RAPIDX_DB_FILE = dbFile;
 
+  const bust = [
+    '../lib/core',
+    '../lib/workflows',
+    '../lib/workflow-provider',
+    '../lib/providers',
+    '../lib/org',
+  ];
+  for (const rel of bust) {
+    try { delete require.cache[require.resolve(rel)]; } catch (_) {}
+  }
+  const libRoot = path.resolve(__dirname, '..', 'lib') + path.sep;
   for (const key of Object.keys(require.cache)) {
-    if (key.includes(`${path.sep}dashboard${path.sep}`)) delete require.cache[key];
+    if (key.startsWith(libRoot)) delete require.cache[key];
   }
 
   const core = require('../lib/core');
-  core.loadEnv();
   fs.writeFileSync(dbFile, JSON.stringify({
-    schemaVersion: 7,
+    schemaVersion: 13,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
     hvacJobs: [], hvacSettings: [], paymentEvents: [], demoLinks: [],
     callbackJobs: [], phoneNumbers: [], providerResources: [], calls: [],
     knowledgeEntries: [], integrationWebhooks: [], campaigns: [], campaignLeads: [],
-    workflows: [],
+    workflows: [], leads: [], callJobs: [], employees: [],
   }, null, 2));
 
   const wf = require('../lib/workflows');

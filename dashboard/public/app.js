@@ -16,8 +16,8 @@ $$('.tab').forEach((t) => t.onclick = () => {
 /* ---------- health ---------- */
 fetch('/api/health').then((r) => r.json()).then((h) => {
   const el = $('#health');
-  if (h.ok && h.rumik && h.gemini) { el.textContent = 'rumik ✓  brain ✓'; el.className = 'pill ok'; }
-  else { el.textContent = 'keys: rumik ' + (h.rumik ? '✓' : '✗') + ' brain ' + (h.gemini ? '✓' : '✗'); el.className = 'pill err'; }
+  if (h.ok && (h.voice || h.voice) && (h.brain || h.gemini)) { el.textContent = 'voice ✓  brain ✓'; el.className = 'pill ok'; }
+  else { el.textContent = 'keys: voice ' + ((h.voice || h.voice) ? '✓' : '✗') + ' brain ' + ((h.brain || h.gemini) ? '✓' : '✗'); el.className = 'pill err'; }
   $('#footHealth').textContent = 'brain: ' + (h.model || '');
 }).catch(() => { $('#health').textContent = 'server offline'; $('#health').className = 'pill err'; });
 
@@ -118,12 +118,12 @@ const SAMPLES = [
    ========================================================= */
 (function renderEcon() {
   const data = [
-    ['Rumik mulberry · promo', 5.9, true],
+    ['Astra Voice · promo', 5.9, true],
     ['OpenAI tts-1', 15, false],
-    ['Deepgram Aura-2', 15, false],
-    ['Rumik mulberry · list', 29, false],
+    ['Listening Aura-2', 15, false],
+    ['Astra Voice · list', 29, false],
     ['Cartesia Sonic', 35, false],
-    ['Rumik muga · list', 59, false],
+    ['Astra Voice Plus · list', 59, false],
     ['ElevenLabs (PAYG)', 99, false],
   ];
   const max = 99, ul = $('#econBars');
@@ -134,13 +134,13 @@ const SAMPLES = [
   });
   $('#verdictText').innerHTML =
     "Real, but read the fine print. <b>The capability is genuinely modern</b> , description-steered expressive TTS, four preset speakers, pitch control, tone tags, and a streaming WS path that returns first audio in ~1.3s. " +
-    "<b>The pricing is the headline.</b> At the launch promo, mulberry at ₹0.50/1k (~$5.9/1M) is cheaper than OpenAI and Deepgram and a fraction of ElevenLabs , and your meter is reading 0 credits used so far. " +
-    "At the <b>permanent</b> rate (₹2.5/1k for mulberry, ₹5/1k for muga) it's no longer a giveaway: mulberry lands near Cartesia and under ElevenLabs, but OpenAI/Deepgram undercut it. " +
+    "<b>The pricing is the headline.</b> At the launch promo, mulberry at ₹0.50/1k (~$5.9/1M) is cheaper than OpenAI and other stacks and a fraction of ElevenLabs , and your meter is reading 0 credits used so far. " +
+    "At the <b>permanent</b> rate (₹2.5/1k for mulberry, ₹5/1k for muga) it's no longer a giveaway: mulberry lands near Cartesia and under ElevenLabs, but OpenAI and peers undercut it. " +
     "So the move is: <b>build on it now while it's cheap, but design the stack so the TTS engine is swappable</b>, and judge the voice by ear vs ElevenLabs before betting a client product on permanent pricing. For INR-billed Indian voice agents, native rupee pricing + expressiveness is a real edge.";
 })();
 
 /* =========================================================
-   LIVE , mic → brain → Rumik streaming TTS
+   LIVE , mic → brain → Voice streaming TTS
    ========================================================= */
 let liveModel = 'mulberry';
 $$('#liveModel button').forEach((b) => b.onclick = () => {
@@ -164,7 +164,7 @@ function addBubble(role, text) {
   tr.appendChild(b); tr.scrollTop = tr.scrollHeight;
 }
 
-/* speak text through Rumik streaming WS; resolves when done. */
+/* speak text through Voice streaming WS; resolves when done. */
 function speak(text) {
   return new Promise(async (resolve) => {
     let frameText = text, model = liveModel;
