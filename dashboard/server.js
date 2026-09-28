@@ -212,9 +212,11 @@ async function boot() {
 function publicUser(u) {
   return { id: u.id, tenantId: u.tenantId, email: u.email, name: u.name, role: u.role, status: u.status, createdAt: u.createdAt };
 }
-function publicTenant(t) {
+function publicTenant(t, opts) {
   // Workspace and organization are product aliases for the same tenant record.
-  return org.publicWorkspace(t);
+  // Customer payloads never include providers. Super Admin diagnostics stay on
+  // /api/admin/providers and /api/admin/diagnostics.
+  return org.publicWorkspace(t, opts);
 }
 function publicAgent(a) {
   return {
@@ -361,7 +363,17 @@ async function apiLogout(req, res) {
    ========================================================================== */
 
 function apiMe(req, res, ctx) {
-  core.sendJson(res, 200, { user: publicUser(ctx.user), tenant: publicTenant(ctx.tenant), impersonation: ctx.impersonator ? { actor: publicUser(ctx.impersonator), reason: ctx.session.impersonationReason, expiresAt: new Date(ctx.session.exp).toISOString() } : null });
+  // Normal customer /api/me must not expose tenant.providers or vendor inventory.
+  // Super Admin keeps provider diagnostics on authorized admin surfaces only.
+  core.sendJson(res, 200, {
+    user: publicUser(ctx.user),
+    tenant: publicTenant(ctx.tenant),
+    impersonation: ctx.impersonator ? {
+      actor: publicUser(ctx.impersonator),
+      reason: ctx.session.impersonationReason,
+      expiresAt: new Date(ctx.session.exp).toISOString(),
+    } : null,
+  });
 }
 
 const HVAC_TIMEZONE = 'Asia/Kolkata';
@@ -547,19 +559,20 @@ async function apiTts(req, res, ctx) {
   }
 }
 
-// POST /api/ws-connect -> { ws_url, token } (Rumik streaming mint).
+// POST /api/ws-connect -> { ws_url, token, model } (streaming voice mint).
 async function apiWsConnect(req, res, ctx) {
   const b = ctx.body || {};
   try {
     const selected = providers.resolveSelection('tts', { provider: b.provider, model: b.model });
     const data = await selected.adapter.wsConnect({ text: b.text, model: selected.model });
-    core.sendJson(res, 200, { ...data, provider: selected.provider, model: selected.model });
+    // Customer JSON: mint credentials + model only. Never vendor provider ids.
+    core.sendJson(res, 200, { ...data, model: selected.model });
   } catch (e) {
     handleProviderError(res, e);
   }
 }
 
-// POST /api/chat -> { text, finish, provider, model, latency_ms } (Groq brain).
+// POST /api/chat -> { text, finish, model, latency_ms } (Brain).
 async function apiChat(req, res, ctx) {
   const b = ctx.body || {};
   try {
@@ -568,18 +581,20 @@ async function apiChat(req, res, ctx) {
     // Rough token accounting for the usage view (4 chars ~= 1 token).
     const approxTokens = Math.ceil((out.text || '').length / 4);
     bumpUsage(ctx.tenant.id, 'llmTokens', approxTokens).catch(() => {});
-    core.sendJson(res, 200, out);
+    const { provider: _provider, ...safe } = out && typeof out === 'object' ? out : {};
+    core.sendJson(res, 200, safe);
   } catch (e) {
     handleProviderError(res, e);
   }
 }
 
-// POST /api/stt -> { text, provider, model, latency_ms } (Deepgram Nova-3).
+// POST /api/stt -> { text, model, latency_ms } (Listening).
 async function apiStt(req, res, ctx) {
   const b = ctx.body || {};
   try {
     const out = await providers.stt.transcribe({ audio: b.audio, mime: b.mime });
-    core.sendJson(res, 200, out);
+    const { provider: _provider, ...safe } = out && typeof out === 'object' ? out : {};
+    core.sendJson(res, 200, safe);
   } catch (e) {
     handleProviderError(res, e);
   }
@@ -607,7 +622,7 @@ async function mintDograhVoiceSession(req, context) {
   const text = await upstream.text(); let data = {};
   try { data = JSON.parse(text); } catch (_) {}
   if (!upstream.ok) {
-    const error = new Error(String(data.detail || 'Dograh could not start the realtime voice session'));
+    const error = new Error(String(data.detail || 'Could not start the realtime voice session'));
     error.status = upstream.status; error.code = 'voice_session_failed'; throw error;
   }
   const sessionToken = String(data.session_token || '');
@@ -635,18 +650,18 @@ async function mintDograhVoiceSession(req, context) {
     workflowId: data.config && data.config.workflow_id,
     signalingUrl: base.replace(/^http/, 'ws') + '/api/v1/ws/public/signaling/' + encodeURIComponent(data.session_token),
     turnCredentials,
-    runtime: 'Dograh SmallWebRTC',
+    runtime: 'Astra Voice Runtime',
   };
 }
 
 async function apiVoiceSession(req, res, ctx) {
   try {
     const session = await mintDograhVoiceSession(req, {
-      source: 'rumik_studio', tenantId: ctx.tenant.id, agentId: (ctx.body || {}).agentId,
+      source: 'astra_studio', tenantId: ctx.tenant.id, agentId: (ctx.body || {}).agentId,
     });
     core.sendJson(res, 200, session);
   } catch (error) {
-    core.sendJson(res, error.status || 502, { error: error.message || 'Dograh realtime voice session failed', code: error.code || 'voice_session_failed' });
+    core.sendJson(res, error.status || 502, { error: error.message || 'Realtime voice session failed', code: error.code || 'voice_session_failed' });
   }
 }
 
@@ -1300,7 +1315,7 @@ async function apiOutboundCallback(req, res, body) {
       ok: true,
       scheduled: false,
       call_id: summary.call_id,
-      dograh: summary,
+      call: summary,
       phone: parsed.phone,
       name: parsed.name || undefined,
       source: parsed.source || undefined,
@@ -1538,8 +1553,29 @@ async function apiSupportReply(req, res, ctx) {
   core.sendJson(res, 201, { message: msg });
 }
 
+function publicByonConnection(x) {
+  if (!x) return null;
+  // Map internal trunk provider ids to product language for customers.
+  const raw = String(x.provider || '').toLowerCase();
+  const providerLabel = raw === 'vobiz' || raw === 'dograh' || raw === 'dograh_vobiz'
+    ? 'trunk'
+    : (raw || 'trunk');
+  return {
+    id: x.id,
+    tenantId: x.tenantId,
+    provider: providerLabel,
+    address: x.address,
+    label: x.label,
+    status: x.status,
+    createdBy: x.createdBy,
+    createdAt: x.createdAt,
+  };
+}
+
 function apiByonList(req, res, ctx) {
-  const connections = core.db().byonConnections.filter((x) => x.tenantId === ctx.tenant.id).map((x) => ({ ...x, credentials: undefined }));
+  const connections = core.db().byonConnections
+    .filter((x) => x.tenantId === ctx.tenant.id)
+    .map(publicByonConnection);
   core.sendJson(res, 200, { connections });
 }
 
@@ -1547,13 +1583,24 @@ function apiPrivacyGet(req, res, ctx) { core.sendJson(res, 200, { mode: ctx.tena
 
 async function apiByonSave(req, res, ctx) {
   const b = ctx.body || {};
-  const provider = String(b.provider || '').toLowerCase();
-  if (!['vobiz', 'twilio', 'telnyx', 'plivo', 'vonage', 'sip'].includes(provider)) return core.sendJson(res, 422, { error: 'unsupported BYON provider', code: 'bad_provider' });
+  let provider = String(b.provider || '').toLowerCase();
+  // Accept product aliases without exposing vendor names in the customer UI.
+  if (provider === 'trunk' || provider === 'byo' || provider === 'byo_trunk') provider = 'sip';
+  if (!['vobiz', 'twilio', 'telnyx', 'plivo', 'vonage', 'sip'].includes(provider)) {
+    return core.sendJson(res, 422, { error: 'unsupported BYON provider', code: 'bad_provider' });
+  }
   const address = String(b.address || '').replace(/[^0-9+]/g, '').slice(0, 32);
   if (!address) return core.sendJson(res, 422, { error: 'phone address required', code: 'bad_address' });
-  const connection = { id: core.genId('byon_'), tenantId: ctx.tenant.id, provider, address, label: String(b.label || '').slice(0, 64), status: 'pending_verification', createdBy: ctx.user.id, createdAt: new Date().toISOString() };
-  await core.mutate((d) => { d.byonConnections.push(connection); addAudit(d, ctx, 'telephony.byon.created', 'byon_connection', connection.id, { provider, address }); });
-  core.sendJson(res, 201, { connection });
+  const connection = {
+    id: core.genId('byon_'), tenantId: ctx.tenant.id, provider, address,
+    label: String(b.label || '').slice(0, 64), status: 'pending_verification',
+    createdBy: ctx.user.id, createdAt: new Date().toISOString(),
+  };
+  await core.mutate((d) => {
+    d.byonConnections.push(connection);
+    addAudit(d, ctx, 'telephony.byon.created', 'byon_connection', connection.id, { provider, address });
+  });
+  core.sendJson(res, 201, { connection: publicByonConnection(connection) });
 }
 
 async function apiPrivacyMode(req, res, ctx) {
@@ -2965,7 +3012,16 @@ function apiAdminTenantDetail(req, res) {
   const url = new URL(req.url, 'http://localhost'); const tenantId = String(url.searchParams.get('tenantId') || ''); const d = core.db();
   const tenant = d.tenants.find((t) => t.id === tenantId);
   if (!tenant) return core.sendJson(res, 404, { error: 'tenant not found', code: 'not_found' });
-  core.sendJson(res, 200, { tenant: publicTenant(tenant), users: d.users.filter((u) => u.tenantId === tenantId).map(publicUser), agents: d.agents.filter((a) => a.tenantId === tenantId).map(publicAgent), numbers: d.byonConnections.filter((x) => x.tenantId === tenantId).map((x) => ({ id: x.id, provider: x.provider, address: x.address, label: x.label, status: x.status, createdAt: x.createdAt })), usage: d.usage.filter((x) => x.tenantId === tenantId).slice(-100).reverse(), tickets: d.supportTickets.filter((x) => x.tenantId === tenantId), wallet: publicWallet(d.wallets.find((w) => w.tenantId === tenantId) || { id: null, tenantId, currency: 'INR', balancePaise: 0 }), ledger: d.ledger.filter((x) => x.tenantId === tenantId).slice(-100).reverse() });
+  core.sendJson(res, 200, {
+    tenant: publicTenant(tenant),
+    users: d.users.filter((u) => u.tenantId === tenantId).map(publicUser),
+    agents: d.agents.filter((a) => a.tenantId === tenantId).map(publicAgent),
+    numbers: d.byonConnections.filter((x) => x.tenantId === tenantId).map(publicByonConnection),
+    usage: d.usage.filter((x) => x.tenantId === tenantId).slice(-100).reverse(),
+    tickets: d.supportTickets.filter((x) => x.tenantId === tenantId),
+    wallet: publicWallet(d.wallets.find((w) => w.tenantId === tenantId) || { id: null, tenantId, currency: 'INR', balancePaise: 0 }),
+    ledger: d.ledger.filter((x) => x.tenantId === tenantId).slice(-100).reverse(),
+  });
 }
 
 async function apiAdminImpersonate(req, res, ctx) {
@@ -3705,8 +3761,8 @@ server.on('upgrade', async (req, socket, head) => {
 sttWss.on('connection', (client) => {
   const key = process.env.DEEPGRAM_API_KEY;
   if (!key) {
-    client.send(JSON.stringify({ type: 'ProxyError', message: 'Deepgram is not configured.' }));
-    return client.close(1011, 'Deepgram unavailable');
+    client.send(JSON.stringify({ type: 'ProxyError', message: 'Listening is not configured.' }));
+    return client.close(1011, 'Listening unavailable');
   }
 
   const query = new URLSearchParams({
@@ -3741,7 +3797,7 @@ sttWss.on('connection', (client) => {
   upstream.on('open', () => {
     upstreamReady = true;
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({ type: 'ProxyReady', provider: 'deepgram', model: providers.stt.model }));
+      client.send(JSON.stringify({ type: 'ProxyReady', layer: 'listening', model: providers.stt.model }));
     }
   });
   upstream.on('message', (data, isBinary) => {
@@ -3749,7 +3805,7 @@ sttWss.on('connection', (client) => {
   });
   upstream.on('error', () => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({ type: 'ProxyError', message: 'Deepgram live stream failed.' }));
+      client.send(JSON.stringify({ type: 'ProxyError', message: 'Live listening stream failed.' }));
     }
     closeBoth();
   });

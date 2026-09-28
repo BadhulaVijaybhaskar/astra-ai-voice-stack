@@ -40,11 +40,15 @@ function roleAtLeast(role, minimum) {
 /**
  * Normalize tenant public fields so UI can say workspace/organization without
  * inventing a second store.
+ *
+ * Customer-facing payloads never include tenant.providers or vendor ids.
+ * Super Admin diagnostics use /api/admin/providers and /api/admin/diagnostics.
+ * Pass includeProviders:true only for authorized Super Admin serializers.
  */
-function publicWorkspace(tenant) {
+function publicWorkspace(tenant, opts = {}) {
   const t = tenant || {};
   const planId = (!t.plan || t.plan === 'studio') ? 'starter' : t.plan;
-  return {
+  const out = {
     id: t.id,
     name: t.name,
     slug: t.slug,
@@ -52,12 +56,15 @@ function publicWorkspace(tenant) {
     organizationName: t.name,
     createdAt: t.createdAt,
     branding: t.branding,
-    providers: t.providers,
     plan: planId,
     includedNumbers: t.includedNumbers != null ? t.includedNumbers : (planId === 'scale' ? 10 : planId === 'growth' ? 3 : 1),
     status: t.status || 'active',
     privacyMode: t.privacyMode || 'standard',
   };
+  if (opts && opts.includeProviders) {
+    out.providers = t.providers || null;
+  }
+  return out;
 }
 
 function sanitizeTenantUpdate(body) {

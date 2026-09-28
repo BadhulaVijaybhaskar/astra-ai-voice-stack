@@ -74,18 +74,18 @@
         <div class="mini" id="aVoice" style="margin:4px 0 14px"></div>
 
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button id="greetBtn" class="btn btn-ghost btn-sm">▶ Play greeting (Rumik voice)</button>
+          <button id="greetBtn" class="btn btn-ghost btn-sm">▶ Play greeting (Voice)</button>
           <span id="voiceStatus" class="mini"></span>
         </div>
 
-        <div class="chatbox" id="chat"><div class="mini" style="margin:auto">Type to the agent. It replies in its Rumik voice.</div></div>
+        <div class="chatbox" id="chat"><div class="mini" style="margin:auto">Type to the agent. It replies in its Astra Voice.</div></div>
         <div class="dialer">
           <input id="chatInput" class="input" placeholder="Type a message to test the agent…" />
           <button id="sendBtn" class="btn btn-primary">Send</button>
         </div>
 
         <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:14px">
-          <label class="field-label">📞 Outbound call (real, paid VoBiz call)</label>
+          <label class="field-label">📞 Outbound call (real, paid phone call)</label>
           <div class="dialer">
             <input id="dialNum" class="input" placeholder="10-digit mobile, e.g. 9876543210" />
             <button id="dialBtn" class="btn btn-primary">Call</button>
@@ -97,7 +97,7 @@
 
     <!-- COL 3: telephony status -->
     <section class="col-card">
-      <h3 style="font-size:14px;margin-bottom:12px">VoBiz via Dograh</h3>
+      <h3 style="font-size:14px;margin-bottom:12px">Phone Numbers</h3>
       <div id="vlStatus"><div class="mini">loading…</div></div>
       <div class="inbound-note" id="inboundNote" hidden></div>
       <a id="cdrLink" class="btn btn-ghost btn-sm" style="width:100%;margin-top:12px;text-decoration:none;text-align:center" href="#" target="_blank">Open call log ↗</a>
@@ -113,14 +113,14 @@ function ctx(){ if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAu
 
 fetch('/api/health').then(r=>r.json()).then(h=>{
   const el=$('#health');
-  const rumik=!!(h.providers&&h.providers.tts&&h.providers.tts.rumik);
-  const gemini=!!(h.providers&&h.providers.llm&&h.providers.llm.gemini);
-  const vobiz=!!(h.providers&&h.providers.telephony&&h.providers.telephony.vobiz);
-  el.textContent='rumik '+(rumik?'✓':'✗')+'  brain '+(gemini?'✓':'✗')+'  vobiz '+(vobiz?'✓':'✗');
-  el.className='pill '+((rumik&&gemini&&vobiz)?'ok':'err');
+  const voiceReady=!!(h.providers&&h.providers.tts&&Object.values(h.providers.tts).some(Boolean));
+  const brainReady=!!(h.providers&&h.providers.llm&&Object.values(h.providers.llm).some(Boolean));
+  const phoneReady=!!(h.providers&&h.providers.telephony&&Object.values(h.providers.telephony).some(Boolean));
+  el.textContent='voice '+(voiceReady?'✓':'✗')+'  brain '+(brainReady?'✓':'✗')+'  phone '+(phoneReady?'✓':'✗');
+  el.className='pill '+((voiceReady&&brainReady&&phoneReady)?'ok':'err');
 }).catch(()=>{});
 
-// ---- Rumik streaming voice ----
+// ---- Astra Voice streaming ----
 function speak(text, model, speaker){
   return new Promise(async resolve=>{
     let mint; try{ mint=await(await fetch('/api/ws-connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model,text})})).json(); }catch(e){ return resolve(0); }
@@ -151,8 +151,8 @@ function renderDetail(){
   if(!selected){ $('#emptyPick').hidden=false; $('#agentDetail').hidden=true; return; }
   $('#emptyPick').hidden=true; $('#agentDetail').hidden=false;
   $('#aName').textContent=selected.name;
-  $('#aVoice').textContent='voice: Rumik '+selected.model+(selected.model==='mulberry'?' · '+selected.speaker:'')+'  ·  id '+selected.id;
-  $('#chat').innerHTML='<div class="mini" style="margin:auto">Type to the agent. It replies in its Rumik voice.</div>';
+  $('#aVoice').textContent='voice: '+selected.model+(selected.model==='mulberry'?' · '+selected.speaker:'')+'  ·  id '+selected.id;
+  $('#chat').innerHTML='<div class="mini" style="margin:auto">Type to the agent. It replies in its Astra Voice.</div>';
 }
 
 $('#mintBtn').onclick=async()=>{
@@ -184,19 +184,19 @@ $('#sendBtn').onclick=send; $('#chatInput').addEventListener('keydown',e=>{ if(e
 $('#dialBtn').onclick=async()=>{
   if(!selected){ $('#dialStatus').textContent='pick an agent first'; return; }
   const num=$('#dialNum').value.trim(); if(!num){ $('#dialStatus').textContent='enter a number'; return; }
-  if(!confirm('Place a REAL paid VoBiz call to '+num+' through Dograh?')) return;
+  if(!confirm('Place a REAL paid phone call to '+num+'?')) return;
   $('#dialStatus').textContent='dialing…';
   const r=await fetch('/api/telephony/dial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:num,confirm:true})});
   const d=await r.json();
   $('#dialStatus').textContent = r.ok ? ('call queued ✓ '+(d.message||JSON.stringify(d).slice(0,80))) : ('error: '+(d.error||d.message||r.status));
 };
 
-// ---- VoBiz status from Dograh ----
+// ---- Phone Number status ----
 fetch('/api/telephony/status').then(r=>r.json()).then(s=>{
   const box=$('#vlStatus');
   if(s.error){ box.innerHTML='<div class="mini" style="color:var(--bad)">'+s.error+'</div>'; return; }
   let html='';
-  html+='<div class="status-line"><span>Provider</span><span class="badge '+(s.connected?'ok':'bad')+'">VoBiz via Dograh</span></div>';
+  html+='<div class="status-line"><span>Provider</span><span class="badge '+(s.connected?'ok':'bad')+'">Phone Numbers</span></div>';
   html+='<div class="status-line"><span>Configuration</span><b>'+((s.configuration&&s.configuration.name)||'?')+'</b></div>';
   (s.dids||[]).forEach(r=>{
     const active=r.status==='active';
@@ -206,7 +206,7 @@ fetch('/api/telephony/status').then(r=>r.json()).then(s=>{
   box.innerHTML=html;
   $('#cdrLink').href=s.dashboard||'#';
   $('#inboundNote').hidden=false;
-  $('#inboundNote').innerHTML='<b>Routing:</b> Dograh initiates outbound calls through VoBiz. Inbound calls follow the workflow assigned to each active number.';
+  $('#inboundNote').innerHTML='<b>Routing:</b> Astra initiates outbound calls on your Phone Numbers. Inbound calls follow the workflow assigned to each active number.';
 }).catch(e=>{ $('#vlStatus').innerHTML='<div class="mini" style="color:var(--bad)">status failed</div>'; });
 
 loadAgents();

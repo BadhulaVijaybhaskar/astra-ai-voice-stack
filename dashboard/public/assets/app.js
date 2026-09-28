@@ -2130,7 +2130,7 @@ function buildAgentForm(existing, options) {
     card.appendChild(el('p', { class: 'hint' }, existing ? 'Update the persona, voice, or assigned number.' : 'Describe the persona and pick a voice. You can preview it instantly before assigning a number.'));
   } else if (preset && (preset.direction === 'inbound' || preset.agentType === 'inbound_receptionist')) {
     card.appendChild(el('p', { class: 'hint' }, 'Starts from the inbound receptionist pattern. Bind an Astra workflow after create.'));
-  } else if (preset && (preset.workflowKey || preset.dograhWorkflowKey)) {
+  } else if (preset && preset.workflowKey) {
     card.appendChild(el('p', { class: 'hint' }, 'Outbound callback pattern: permission, discovery, then reschedule.'));
   }
   card.appendChild(form);
@@ -2499,7 +2499,7 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath(); ctx.fill();
 }
 
-/* ---- streaming TTS (PCM int16 LE 24kHz) via /api/ws-connect then wss Rumik ---- */
+/* ---- streaming TTS (PCM int16 LE 24kHz) via /api/ws-connect then voice WS ---- */
 async function streamSynthesize(text, st, canvas, btn) {
   const mint = await api('/api/ws-connect', { method: 'POST', body: { text: text, model: st.model } });
   if (!mint.ws_url) throw new ApiError(0, 'No ws_url returned.');
@@ -2706,7 +2706,7 @@ async function viewTalk(root) {
   const statusDot = el('span', { class: 'conversation-dot', 'aria-hidden': 'true' });
   const statusText = el('span', {}, 'Ready');
   const statusPill = el('div', { class: 'conversation-status idle', role: 'status' }, [statusDot, statusText]);
-  const runtimePill = el('div', { class: 'conversation-pipeline' }, 'Realtime voice · Deepgram · Groq · Rumik');
+  const runtimePill = el('div', { class: 'conversation-pipeline' }, 'Realtime voice · Listening · Brain · Voice');
   const timingText = el('div', { class: 'conversation-timing', 'aria-live': 'polite' }, 'Latency is measured inside the live call runtime');
   const sessionBtn = el('button', { class: 'btn btn-primary conversation-btn', 'aria-label': 'Start voice call' }, [
     el('span', { class: 'conversation-btn-icon', 'aria-hidden': 'true', html: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.62 2.63a2 2 0 0 1-.45 2.11L8 9.73a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.85.29 1.73.5 2.63.62A2 2 0 0 1 22 16.9z"/></svg>' }),
@@ -2799,7 +2799,7 @@ async function viewTalk(root) {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       const session = await api('/api/voice/session', { method: 'POST', timeoutMs: 15000, body: { agentId: State.activeAgentId } });
       // Prefer the same-origin session response. A direct credentialed fetch to
-      // Dograh can reject browsers when its CORS response uses `*`.
+      // Upstream WebRTC signaling may reject browsers when CORS uses `*`.
       // Prefer same-origin proxy when available.
       const turn = session.turnCredentials || await fetchTurn(session.turnCredentialsUrl);
       const iceServers = [{ urls: ['stun:stun.l.google.com:19302'] }];
@@ -2807,12 +2807,12 @@ async function viewTalk(root) {
         iceServers.push({ urls: turn.uris, username: turn.username, credential: turn.password });
       }
       pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: turn ? 'relay' : 'all' });
-      window.__rumikPc = pc;
+      window.__voicePc = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       pc.ontrack = (event) => { if (event.track.kind === 'audio') { audio.srcObject = event.streams[0]; audio.play().catch(() => {}); } };
       pc.onconnectionstatechange = () => {
         if (!pc) return;
-        console.log('Rumik WebRTC state', pc.connectionState, pc.iceConnectionState);
+        console.log('Voice WebRTC state', pc.connectionState, pc.iceConnectionState);
         timingText.textContent = 'WebRTC ' + pc.connectionState + ' · ICE ' + pc.iceConnectionState;
         if (pc.connectionState === 'connected') { callStarted = Date.now(); setStatus('listening', 'Live call connected'); }
         if (pc.connectionState === 'failed') { setStatus('error', 'Connection failed'); stopCall('Connection failed'); }
@@ -2827,7 +2827,7 @@ async function viewTalk(root) {
       await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = () => reject(new Error('Realtime signaling connection failed')); });
       pc.onicecandidate = (event) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        console.log('Rumik WebRTC candidate', event.candidate ? event.candidate.type : 'complete');
+        console.log('Voice WebRTC candidate', event.candidate ? event.candidate.type : 'complete');
         if (event.candidate) timingText.textContent = 'ICE candidate: ' + event.candidate.type + ' · ' + event.candidate.protocol;
         ws.send(JSON.stringify({ type: 'ice-candidate', payload: { candidate: event.candidate ? { candidate: event.candidate.candidate, sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex } : null, pc_id: peerId } }));
       };
@@ -2854,7 +2854,7 @@ async function viewTalk(root) {
   ]);
   const info = el('div', { class: 'talk-side' }, [el('div', { class: 'card card-pad' }, [
     el('h3', { class: 't-h3' }, 'The actual phone runtime'),
-    el('p', { class: 'muted' }, 'Your microphone is connected over WebRTC. The published Astra workflow runs the same Deepgram, Groq and Rumik pipeline used for phone calls.'),
+    el('p', { class: 'muted' }, 'Your microphone is connected over WebRTC. The published Astra workflow runs the same Listening, Brain and Voice pipeline used for phone calls.'),
     el('hr', { class: 'divider' }),
     el('p', { class: 'muted' }, 'Turn detection, interruption, agent speech and latency now happen inside the call engine. Transcript text is a live diagnostic view, not the mechanism driving the page.'),
     el('p', { class: 'muted' }, 'Use End voice call to release the microphone and close the peer connection.')
@@ -2887,7 +2887,7 @@ async function viewTalkLegacy(root) {
   const statusDot = el('span', { class: 'conversation-dot', 'aria-hidden': 'true' });
   const statusText = el('span', {}, 'Ready');
   const statusPill = el('div', { class: 'conversation-status idle', role: 'status' }, [statusDot, statusText]);
-  const pipelinePill = el('div', { class: 'conversation-pipeline' }, 'Deepgram Nova-3 → Groq Llama 3.3 70B → Rumik Mulberry');
+  const pipelinePill = el('div', { class: 'conversation-pipeline' }, 'Listening → Brain → Voice');
   const timingText = el('div', { class: 'conversation-timing', 'aria-live': 'polite' }, 'Latency appears after the first turn');
 
   function getActiveAgent() { return State.agents.find((a) => a.id === State.activeAgentId) || State.agents[0]; }
@@ -2911,7 +2911,7 @@ async function viewTalkLegacy(root) {
   let audioCtx = null;
   let analyser = null;
   let mediaRec = null;
-  let deepgramSocket = null;
+  let sttSocket = null;
   let vadTimer = null;
   let recChunks = [];
   let discardCapture = false;
@@ -2936,8 +2936,8 @@ async function viewTalkLegacy(root) {
   function updateTiming() {
     const parts = [];
     if (turnTiming.stt != null) parts.push('STT ' + (turnTiming.stt / 1000).toFixed(2) + 's');
-    if (turnTiming.llm != null) parts.push('Groq ' + (turnTiming.llm / 1000).toFixed(2) + 's');
-    if (turnTiming.tts != null) parts.push('Rumik ' + (turnTiming.tts / 1000).toFixed(2) + 's');
+    if (turnTiming.llm != null) parts.push('Brain ' + (turnTiming.llm / 1000).toFixed(2) + 's');
+    if (turnTiming.tts != null) parts.push('Voice ' + (turnTiming.tts / 1000).toFixed(2) + 's');
     timingText.textContent = parts.length ? parts.join('  ·  ') : 'Latency appears after the first turn';
   }
 
@@ -2970,10 +2970,10 @@ async function viewTalkLegacy(root) {
     liveBubble = null;
   }
 
-  async function openDeepgramStream() {
+  async function openListeningStream() {
     const wsScheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(wsScheme + '//' + location.host + '/api/stt/stream');
-    deepgramSocket = socket;
+    sttSocket = socket;
     const segments = [];
     let interim = '';
     let finalizeStarted = 0;
@@ -3000,7 +3000,7 @@ async function viewTalkLegacy(root) {
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.type === 'ProxyReady') { readyResolved = true; resolveReady(); return; }
       if (msg.type === 'ProxyError') {
-        const err = new Error(msg.message || 'Deepgram live stream failed.');
+        const err = new Error(msg.message || 'Live listening stream failed.');
         rejectReady(err);
         if (readyResolved && !settled) rejectFinal(err);
         return;
@@ -3020,17 +3020,17 @@ async function viewTalkLegacy(root) {
       if (msg.from_finalize) settle(segments.concat(interim ? [interim] : []).join(' '));
     };
     socket.onerror = () => {
-      const err = new Error('Deepgram live stream failed.');
+      const err = new Error('Live listening stream failed.');
       if (!readyResolved) rejectReady(err);
       else if (!settled) rejectFinal(err);
     };
     socket.onclose = () => {
-      if (!readyResolved) rejectReady(new Error('Deepgram connection closed early.'));
+      if (!readyResolved) rejectReady(new Error('Listening connection closed early.'));
       else if (!settled) settle(segments.concat(interim ? [interim] : []).join(' '));
     };
 
-    const readyTimeout = setTimeout(() => rejectReady(new Error('Deepgram connection timed out.')), 8000);
-    socket.addEventListener('error', () => rejectReady(new Error('Deepgram connection failed.')), { once: true });
+    const readyTimeout = setTimeout(() => rejectReady(new Error('Listening connection timed out.')), 8000);
+    socket.addEventListener('error', () => rejectReady(new Error('Listening connection failed.')), { once: true });
     try {
       await ready.finally(() => clearTimeout(readyTimeout));
     } catch (e) {
@@ -3060,7 +3060,7 @@ async function viewTalkLegacy(root) {
       discardCapture = true;
       try { mediaRec.stop(); } catch (e) {}
     }
-    if (deepgramSocket) { try { deepgramSocket.close(); } catch (e) {} deepgramSocket = null; }
+    if (sttSocket) { try { sttSocket.close(); } catch (e) {} sttSocket = null; }
     clearLiveTranscript();
   }
 
@@ -3111,7 +3111,7 @@ async function viewTalkLegacy(root) {
         method: 'POST', timeoutMs: 12000,
         body: { text: text.slice(0, 2000), model: tts.model || 'mulberry' }
       });
-      if (!mint.ws_url) throw new Error('Rumik stream URL was not returned.');
+      if (!mint.ws_url) throw new Error('Voice stream URL was not returned.');
       const url = mint.ws_url + (mint.token && mint.ws_url.indexOf('token=') === -1
         ? (mint.ws_url.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(mint.token)
         : '');
@@ -3123,7 +3123,7 @@ async function viewTalkLegacy(root) {
         let nextTime = 0;
         let receivedAudio = false;
         let finished = false;
-        const timeout = setTimeout(() => finish(new Error('Rumik stream timed out.')), 20000);
+        const timeout = setTimeout(() => finish(new Error('Voice stream timed out.')), 20000);
 
         function finish(error) {
           if (finished) return;
@@ -3148,7 +3148,7 @@ async function viewTalkLegacy(root) {
           if (typeof event.data === 'string') {
             try {
               const message = JSON.parse(event.data);
-              if (message.type === 'end' || message.type === 'done' || message.done) finish(receivedAudio ? null : new Error('Rumik returned no audio.'));
+              if (message.type === 'end' || message.type === 'done' || message.done) finish(receivedAudio ? null : new Error('Voice returned no audio.'));
             } catch (_) {}
             return;
           }
@@ -3172,12 +3172,12 @@ async function viewTalkLegacy(root) {
           source.start(nextTime);
           nextTime += buffer.duration;
         };
-        socket.onerror = () => finish(new Error('Rumik stream connection failed.'));
-        socket.onclose = () => { if (!finished) finish(receivedAudio ? null : new Error('Rumik stream closed early.')); };
+        socket.onerror = () => finish(new Error('Voice stream connection failed.'));
+        socket.onclose = () => { if (!finished) finish(receivedAudio ? null : new Error('Voice stream closed early.')); };
       });
     } catch (streamError) {
       // Keep a reliable batch fallback, but the normal path above starts audio
-      // on Rumik's first PCM chunk and is the path reflected in the latency UI.
+      // on Voice's first PCM chunk and is the path reflected in the latency UI.
       try {
         const res = await api('/api/tts', { method: 'POST', timeoutMs: 60000, body: { text: text.slice(0, 2000), model: tts.model || 'mulberry', speaker: tts.speaker, f0_up_key: tts.f0_up_key, description: tts.description } });
         const buf = await res.arrayBuffer();
@@ -3210,11 +3210,11 @@ async function viewTalkLegacy(root) {
     setPhase('connecting');
     let dg;
     try {
-      dg = await openDeepgramStream();
+      dg = await openListeningStream();
     } catch (ex) {
       setPhase('error');
-      addBubble('sys', 'Deepgram could not open a live transcription stream. Retrying.');
-      toast(ex.message || 'Deepgram connection failed.', 'err');
+      addBubble('sys', 'Listening could not open a live transcription stream. Retrying.');
+      toast(ex.message || 'Listening connection failed.', 'err');
       if (sessionActive) setTimeout(listenForTurn, 900);
       return;
     }
@@ -3385,10 +3385,10 @@ async function viewTalkLegacy(root) {
   const side = el('div', { class: 'talk-side' }, [
     el('div', { class: 'card card-pad' }, [
       el('h3', { class: 't-h3' }, 'How it works'),
-      el('p', { class: 'soft', style: 'font-size:.88rem' }, 'Start once. Rumik greets you, then Deepgram streams every word into the transcript while you speak. Groq answers, Rumik speaks, and listening resumes automatically.'),
+      el('p', { class: 'soft', style: 'font-size:.88rem' }, 'Start once. Voice greets you, then Listening streams every word into the transcript while you speak. Brain answers, Voice speaks, and listening resumes automatically.'),
       el('div', { class: 'divider', style: 'margin:6px 0' }),
       el('div', { class: 'soft', style: 'font-size:.84rem' },
-        'The status and measured Deepgram, Groq and Rumik latency make every stage of the turn explicit.'),
+        'The status and measured Listening, Brain and Voice latency make every stage of the turn explicit.'),
       el('div', { class: 'soft', style: 'font-size:.84rem;margin-top:10px' }, 'Use End conversation to release the microphone. Typed messages remain available at any time.')
     ])
   ]);
@@ -3707,7 +3707,7 @@ function paintWorkflowBuilder(host, wf) {
     host.appendChild(el('div', { class: 'inbound-note', style: 'margin-top:18px' }, [
       el('b', {}, 'Super Admin · provider mapping'),
       el('div', { class: 'muted', style: 'margin-top:6px' },
-        'provider=' + esc(wf.provider || 'dograh')
+        'provider=' + esc(wf.provider || 'n/a')
         + ' · providerWorkflowId=' + esc(wf.providerWorkflowId != null ? String(wf.providerWorkflowId) : 'none')
         + ' · sync=' + esc(wf.syncStatus || 'n/a')
         + (wf.syncError ? (' · ' + esc(wf.syncError)) : ''))
@@ -5533,7 +5533,7 @@ async function viewSettings(root) {
     try { await api('/api/privacy', { method: 'POST', body: { mode: privacySelect.value } }); toast('Privacy mode saved.', 'ok'); }
     catch (e) { toast(e.message, 'err'); } finally { privacySave.disabled = false; }
   };
-  const provider = el('select', { class: 'select' }, [el('option', { value: 'vobiz' }, 'Bring your own trunk'), el('option', { value: 'telnyx' }, 'Telnyx'), el('option', { value: 'sip' }, 'SIP trunk')]);
+  const provider = el('select', { class: 'select' }, [el('option', { value: 'sip' }, 'Bring your own trunk'), el('option', { value: 'telnyx' }, 'Cloud SIP'), el('option', { value: 'twilio' }, 'SIP trunk')]);
   const address = el('input', { class: 'input', placeholder: 'Verified E.164 number or SIP address' });
   const label = el('input', { class: 'input', placeholder: 'Main sales line' });
   const byonList = el('div', { class: 'byon-list muted' }, 'Loading connections...');

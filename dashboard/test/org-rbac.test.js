@@ -12,11 +12,14 @@ const org = require('../lib/org');
 test('publicWorkspace aliases organization and workspace to tenant name', () => {
   const pub = org.publicWorkspace({
     id: 't1', name: 'Acme', slug: 'acme', createdAt: 't',
-    branding: { color: '#6B21A8' }, providers: {}, plan: 'starter', status: 'active', privacyMode: 'standard',
+    branding: { color: '#6B21A8' },
+    providers: { stt: 'deepgram', tts: 'rumik', llm: 'groq', telephony: 'vobiz' },
+    plan: 'starter', status: 'active', privacyMode: 'standard',
   });
   assert.equal(pub.workspaceName, 'Acme');
   assert.equal(pub.organizationName, 'Acme');
   assert.equal(pub.plan, 'starter');
+  assert.equal(Object.prototype.hasOwnProperty.call(pub, 'providers'), false);
 });
 
 test('sanitizeTenantUpdate accepts workspaceName and validates color', () => {

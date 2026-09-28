@@ -179,12 +179,30 @@ test('unauthenticated GET /api/version is auth-gated (401)', async (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'astra-ver-auth-'));
   const dbFile = path.join(tmpDir, 'db.json');
   process.env.RAPIDX_DB_FILE = dbFile;
+
+  // Pin deploy identity for THIS test process. Live host DEPLOYED_AT must not
+  // leak into assertions. Restore previous values on teardown.
+  const prevDeployedAt = process.env.DEPLOYED_AT;
+  const prevBuiltAt = process.env.BUILT_AT;
+  const prevGitSha = process.env.GIT_SHA;
   process.env.GIT_SHA = 'feedface01';
   process.env.BUILT_AT = '2026-09-17T09:00:00Z';
+  process.env.DEPLOYED_AT = '2026-09-17T09:00:00Z';
 
+  // Clear lib modules regardless of checkout path (/workspace/dashboard or /app).
+  const libRoot = path.resolve(__dirname, '..', 'lib') + path.sep;
   for (const key of Object.keys(require.cache)) {
-    if (key.includes('/dashboard/lib/')) delete require.cache[key];
+    if (key.startsWith(libRoot) || key.includes(`${path.sep}lib${path.sep}`)) {
+      if (key.includes(`${path.sep}dashboard${path.sep}lib${path.sep}`)
+        || key.startsWith(libRoot)) {
+        delete require.cache[key];
+      }
+    }
   }
+  // Explicit resolves so Docker (/app/lib) and monorepo paths both reload.
+  try { delete require.cache[require.resolve('../lib/core')]; } catch (_) {}
+  try { delete require.cache[require.resolve('../lib/org')]; } catch (_) {}
+
   const core = require('../lib/core');
   const orgMod = require('../lib/org');
 
@@ -207,7 +225,12 @@ test('unauthenticated GET /api/version is auth-gated (401)', async (t) => {
     const route = (req.url || '').split('?')[0];
     if (req.method === 'GET' && route === '/api/version') {
       return core.requireAuth(req, res, (rq, rs) => {
-        core.sendJson(rs, 200, orgMod.versionPayload(process.env, { version: '1.0.0' }));
+        // Pass an explicit env snapshot so host process.env cannot pollute.
+        core.sendJson(rs, 200, orgMod.versionPayload({
+          GIT_SHA: 'feedface01',
+          BUILT_AT: '2026-09-17T09:00:00Z',
+          DEPLOYED_AT: '2026-09-17T09:00:00Z',
+        }, { version: '1.0.0' }));
       });
     }
     core.sendJson(res, 404, { error: 'missing' });
@@ -222,8 +245,9 @@ test('unauthenticated GET /api/version is auth-gated (401)', async (t) => {
     server.close();
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
     delete process.env.RAPIDX_DB_FILE;
-    delete process.env.GIT_SHA;
-    delete process.env.BUILT_AT;
+    if (prevGitSha === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = prevGitSha;
+    if (prevBuiltAt === undefined) delete process.env.BUILT_AT; else process.env.BUILT_AT = prevBuiltAt;
+    if (prevDeployedAt === undefined) delete process.env.DEPLOYED_AT; else process.env.DEPLOYED_AT = prevDeployedAt;
   });
 
   function request(pathName, cookieHeader) {

@@ -85,7 +85,7 @@
 
   <!-- Sub copy -->
   <text x="90" y="486" font-family="SF Pro Display, Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
-        font-size="27" font-weight="440" letter-spacing="-0.3" fill="#C2C8D6">Rumik silk TTS, about 20x cheaper than ElevenLabs. Swappable</text>
+        font-size="27" font-weight="440" letter-spacing="-0.3" fill="#C2C8D6">Astra Voice, about 20x cheaper than ElevenLabs. Swappable</text>
   <text x="90" y="524" font-family="SF Pro Display, Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
         font-size="27" font-weight="440" letter-spacing="-0.3" fill="#C2C8D6">TTS, brain, and telephony. One folder, zero dependencies.</text>
 
