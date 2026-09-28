@@ -1,17 +1,14 @@
 /* ==========================================================================
-   Astra Voice / AstraConnect Brand & Design System (single source of truth)
-   Canonical: --astra-blue* ↔ --voice* (bidirectional equal literals).
-   --astra-green* ↔ --chat* documented for Chat; do NOT theme Voice green.
+   Astra Voice Brand & Design System (this app only)
+   --astra-blue* ↔ --voice* equal literals. See docs/astraconnect-design-system.md.
+   --astra-green* / --chat* reserved; do NOT theme Voice green.
    Status badges: --status-{ready|calling|connected|...}-*.
-   See docs/astraconnect-design-system.md.
-   Do NOT import Guide / hero-orb website patterns into Voice chrome.
+   No Guide / hero-orb cinematic patterns in Voice chrome.
    No em dashes anywhere in this codebase. Use commas or periods.
    ========================================================================== */
 
 :root {
-  /* ---- Brand blues (bidirectional: --astra-blue* ↔ --voice*) ----
-     Equal literals so either name resolves without circular var().
-     Website aliases --astra-blue → var(--voice) when this contract lands. */
+  /* ---- Brand blues (--astra-blue* ↔ --voice*, equal literals) ---- */
   --astra-blue:            #0077ec; /* oklch(0.58 0.2 255) */
   --astra-blue-hover:      #0066c9;
   --astra-blue-soft:       #e7f5ff; /* oklch(0.965 0.025 250) */
@@ -20,8 +17,8 @@
   --voice-soft:            #e7f5ff; /* = --astra-blue-soft */
   --voice-foreground:      #FFFFFF; /* = --astra-blue-foreground */
 
-  /* Chat family greens (= website --chat*). Document / parity only.
-     Do NOT theme Voice UI with these. Success status stays --success. */
+  /* Reserved greens (Chat-product hues). Do NOT theme Voice UI with these.
+     Status green is --success only. */
   --chat:      #00b180; /* oklch(0.67 0.15 166) */
   --chat-dark: #005f40; /* oklch(0.42 0.11 167) */
   --chat-soft: #e2faef; /* oklch(0.965 0.03 166) */
@@ -290,8 +287,8 @@ p { margin: 0; }
   transition: border-color 0.25s, box-shadow 0.25s, background 0.25s;
 }
 .input:focus, .textarea:focus, .select:focus {
-  border-color: rgba(0,119,236,0.7);
-  box-shadow: 0 0 0 4px rgba(0,119,236,0.12);
+  border-color: var(--border-focus);
+  box-shadow: var(--shadow-focus);
   background: var(--panel);
 }
 .textarea { resize: vertical; min-height: 96px; line-height: 1.5; }
