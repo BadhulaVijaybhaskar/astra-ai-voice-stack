@@ -228,6 +228,10 @@ p { margin: 0; }
   position: relative; isolation: isolate;
 }
 .btn:active { transform: translateY(1px) scale(0.99); }
+.btn:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus), 0 0 0 1px var(--border-focus);
+}
 .btn-primary {
   background: var(--voice); color: var(--voice-foreground);
   box-shadow: var(--glow-accent);

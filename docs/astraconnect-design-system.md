@@ -1,13 +1,13 @@
 # AstraConnect Design System (Voice-owned spec)
 
-**Status:** Phase 2 complete for Voice. Full shared design-system direction, owned and implemented in **this Voice repo only**.  
+**Status:** Phase 2 foundation complete. Phase 3 owns Home / shell polish against this contract.  
 **Implements in:** `dashboard/public/assets/brand.css` + `app.css` (vanilla CSS)  
-**Related:** `docs/astra-voice-rebrand-phase1-audit.md`, Phase 2 PR #27  
+**Related:** `docs/astra-voice-rebrand-phase1-audit.md`, Phase 2 PR #27, Phase 3 Home / shell  
 
 **Execution lock (USER OVERRIDE):**
 - Voice-only work. Do **not** contact, coordinate with, open PRs against, or wait on any AstraConnect website repo or agent.
 - Voice app stays **LIGHT operational**. No cinematic / Guide / hero-orb patterns in the console.
-- No Home KPI redesign. No backend changes. No deploy from this phase alone.
+- Phase 3 may refine Home KPIs, activation journey, and empty states using **real data only**. No fabricated metrics. No backend renames for branding. No deploy from polish alone.
 
 No em dashes in this codebase. Use commas or periods.
 
@@ -151,9 +151,9 @@ Prefer honest empty states. Never invent connect rates or KPIs. Do not use Chat 
 | Phone Number | Assign to Employee | Provider portals hidden |
 | Billing | Wallet / packs | Status colors for events only |
 
-**Do not** redesign Home KPIs, nav structure, cards, or workflows in Phase 2 / this spec.
+**Do not** redesign nav structure, Employee Studio IA, or CallJob workflows in the design-system contract alone. Phase 3 Home polish follows the preferred KPI hierarchy with honest empty states.
 
-Shell: sidebar lockup, crumb **Astra Voice**, health chips as product layers.
+Shell: sidebar lockup, crumb **Astra Voice**. Provider / runtime health chips are Super Admin diagnostics only.
 
 ---
 
@@ -281,10 +281,10 @@ USER OVERRIDE: use only these two PNGs. No Design graphite-C pack. No redraw. Ar
 ## 12. Explicit non-goals
 
 - No React rewrite  
-- No Home KPI / nav / workflow redesign  
 - No Chat green or Guide graphite as Voice primary  
 - No backend / API identifier renames for branding  
-- No deploy from Phase 2 alone  
+- No deploy from design-system / polish PRs alone  
 - **No website repo PRs, agents, or external alias waits**  
+- No fabricated Home KPIs or fake conversation rows  
 
 **Phase 3+ Voice UI polish should treat this file as the Voice-owned design-system contract.**
