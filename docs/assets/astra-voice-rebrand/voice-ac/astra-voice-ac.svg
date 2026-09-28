@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-label="Astra Voice">
+  <title>Astra Voice AC mark</title>
+  <defs>
+    <linearGradient id="a" x1="24" y1="110" x2="74" y2="16" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1870F0"/>
+      <stop offset=".55" stop-color="#2B7FFF"/>
+      <stop offset="1" stop-color="#5AA8FF"/>
+    </linearGradient>
+  </defs>
+  <!-- Muted cool graphite C -->
+  <path fill="#3B4758" d="M102.5 64c0 21.539-17.461 39-39 39-11.55 0-21.95-5.05-29.05-13.05 5.05 3.05 10.95 4.8 17.25 4.8 17.397 0 31.5-14.103 31.5-31.5S69.097 32.75 51.7 32.75c-6.3 0-12.2 1.75-17.25 4.8C41.55 29.55 51.95 24.5 63.5 24.5c21.539 0 39 17.461 39 39.5z"/>
+  <!-- Restrained cool edge (not Chat emerald) -->
+  <path fill="#526274" opacity=".4" d="M98 64c0 19.054-15.446 34.5-34.5 34.5-9.55 0-18.2-3.65-24.55-9.65 4.45 2.4 9.55 3.75 14.95 3.75 15.326 0 27.75-12.424 27.75-27.75S69.226 37.1 53.9 37.1c-5.4 0-10.5 1.35-14.95 3.75C45.3 34.85 53.95 31.2 63.5 31.2 82.554 31.2 98 46.646 98 64z"/>
+  <!-- Electric blue A -->
+  <path fill="url(#a)" d="M20 108 L53.5 16 H66.5 L100 108 H83.5 L71.2 74 H48.8 L36.5 108 Z"/>
+  <path fill="#fff" opacity=".12" d="M53.5 16 H66.5 L71.2 74 H48.8 Z"/>
+</svg>
