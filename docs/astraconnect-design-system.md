@@ -1,10 +1,13 @@
-# Astra Voice Design System (Voice app)
+# AstraConnect Design System (Voice-owned spec)
 
-**Status:** Phase 2 brand foundation. Voice-side token and pattern spec for **this repo only**.  
+**Status:** Phase 2 complete for Voice. Full shared design-system direction, owned and implemented in **this Voice repo only**.  
 **Implements in:** `dashboard/public/assets/brand.css` + `app.css` (vanilla CSS)  
 **Related:** `docs/astra-voice-rebrand-phase1-audit.md`, Phase 2 PR #27  
 
-**Scope lock:** Voice-only. Do not connect to, coordinate with, or depend on any AstraConnect website repo or agent. No website PRs, no waiting on external aliases.
+**Execution lock (USER OVERRIDE):**
+- Voice-only work. Do **not** contact, coordinate with, open PRs against, or wait on any AstraConnect website repo or agent.
+- Voice app stays **LIGHT operational**. No cinematic / Guide / hero-orb patterns in the console.
+- No Home KPI redesign. No backend changes. No deploy from this phase alone.
 
 No em dashes in this codebase. Use commas or periods.
 
@@ -14,25 +17,25 @@ No em dashes in this codebase. Use commas or periods.
 
 | Rule | Detail |
 | --- | --- |
-| Product name | Customer chrome says **Astra Voice** (not Astra AI). |
-| Voice app | **Light, operational, calm/dense.** Not cinematic. |
-| Marketing pages in this repo | Optional **dark presentation** (§9) for demos only. Never default `/app.html` to dark. |
-| Stack | **Vanilla HTML/CSS/JS.** No React rewrite. |
-| Logos | USER OVERRIDE sole SoT (§10). No Design graphite-C pack. No redraw. |
-| Green | Chat-product greens (`--astra-green*` / `--chat*`) must **not** theme Voice UI. Status uses `--success` only. |
+| Product name | Customer chrome: **Astra Voice** (not Astra AI). |
+| Console feel | Light, operational, calm/dense. White / off-white canvas + electric blue. |
+| Stack | Vanilla HTML / CSS / JS. No React rewrite. |
+| Logos | USER OVERRIDE sole SoT (§11). No Design graphite-C pack. No redraw. |
+| Green | `--astra-green*` documents Chat identity only. **Never** theme Voice green. Status uses `--success`. |
+| Motion | Soft, purposeful, reduced-motion safe. Not cinematic. |
 
 ---
 
-## 2. Brand blues (`--astra-blue*` ↔ `--voice*`)
-
-Voice electric blue is the primary accent. Both name families are first-class in this app (equal literals, no circular `var()`).
+## 2. Brand blues (`--astra-blue*` = Voice electric blue)
 
 | Token | OKLCH | Hex | Role |
 | --- | --- | --- | --- |
 | `--astra-blue` / `--voice` | `oklch(0.58 0.2 255)` | `#0077ec` | Primary CTA, links, selected rail |
-| `--astra-blue-hover` | (derived) | `#0066c9` | Hover / pressed primary |
-| `--astra-blue-soft` / `--voice-soft` | `oklch(0.965 0.025 250)` | `#e7f5ff` | Soft wash, selected nav, chip fill |
-| `--astra-blue-foreground` / `--voice-foreground` | `oklch(1 0 0)` | `#FFFFFF` | Text/icon on solid blue |
+| `--astra-blue-hover` | (derived) | `#0066c9` | Hover / pressed |
+| `--astra-blue-soft` / `--voice-soft` | `oklch(0.965 0.025 250)` | `#e7f5ff` | Soft wash, selected nav |
+| `--astra-blue-foreground` / `--voice-foreground` | `oklch(1 0 0)` | `#FFFFFF` | On solid blue |
+
+Equal literals in `brand.css` (no circular `var()`):
 
 ```css
 --astra-blue:            #0077ec;
@@ -44,58 +47,54 @@ Voice electric blue is the primary accent. Both name families are first-class in
 --voice-foreground:      #FFFFFF; /* = --astra-blue-foreground */
 ```
 
-New Voice CSS may use either `--astra-blue` or `--voice`. Prefer `--astra-blue*` in new work; keep `--voice*` for existing console classes.
+Prefer `--astra-blue*` in new CSS; keep `--voice*` for existing console classes. Legacy `--accent` → `--astra-blue`.
 
 ---
 
-## 3. Reserved greens (do not theme Voice)
+## 3. `--astra-green*` (Chat identity; do not theme Voice)
 
-Named for clarity and to avoid accidental reuse. **Not** Voice primary, selected nav, or CTA fill.
-
-| Token | Also named | OKLCH | Hex ≈ | Note |
+| Token | Also named | OKLCH | Hex ≈ | Use |
 | --- | --- | --- | --- | --- |
-| `--astra-green` | `--chat` | `oklch(0.67 0.15 166)` | `#00b180` | Reserved Chat-product hue |
-| `--astra-green-dark` | `--chat-dark` | `oklch(0.42 0.11 167)` | `#005f40` | Reserved |
-| `--astra-green-soft` | `--chat-soft` | `oklch(0.965 0.03 166)` | `#e2faef` | Reserved |
+| `--astra-green` | `--chat` | `oklch(0.67 0.15 166)` | `#00b180` | Document Chat identity only |
+| `--astra-green-dark` | `--chat-dark` | `oklch(0.42 0.11 167)` | `#005f40` | Document only |
+| `--astra-green-soft` | `--chat-soft` | `oklch(0.965 0.03 166)` | `#e2faef` | Document only |
 
-**Also not Chat-product green:**
-- AC-mark teal (`--mark-teal` `#09b5a5`) — logo chrome only  
-- `--success` `#24a656` / `oklch(0.64 0.16 151)` — **status** green only  
+Not Chat green: AC-mark teal `--mark-teal` `#09b5a5` (logo only); `--success` `#24a656` (status only).
 
 ---
 
-## 4. Surfaces, text, borders, status base, radii, shadows
+## 4. Surfaces, text, borders, base status, radii, shadows
 
 ### Surfaces
 
-| Token | OKLCH | Hex | Legacy alias |
+| Token | OKLCH | Hex | Legacy |
 | --- | --- | --- | --- |
 | `--background` | `oklch(0.995 0.002 245)` | `#fcfeff` | `--bg`, `--canvas` |
 | `--surface` | `oklch(0.975 0.008 250)` | `#f3f7fc` | `--bg-2`, `--raised` |
 | `--surface-elevated` | `oklch(1 0 0)` | `#FFFFFF` | `--panel` |
 | `--surface-muted` | — | `#f8fafc` | `--panel-2` |
 
-### Text
+### Neutrals / text
 
-| Token | Hex | Legacy alias |
+| Token | Hex | Legacy |
 | --- | --- | --- |
-| `--text-primary` | `#051223` (`oklch(0.18 0.04 255)`) | `--ink`, `--astra-navy` |
-| `--text-secondary` | `#1e2a3a` | `--ink-soft`, `--astra-graphite` |
-| `--text-muted` | `#556272` (`oklch(0.49 0.03 255)`) | `--ink-dim`, `--muted` |
-| `--text-faint` | `#8492a6` | `--ink-faint` |
+| `--astra-navy` / `--text-primary` | `#051223` | `--ink` |
+| `--astra-graphite` / `--text-secondary` | `#1e2a3a` | `--ink-soft` |
+| `--astra-gray` / `--text-muted` | `#556272` | `--ink-dim`, `--muted` |
+| `--astra-gray-soft` / `--text-faint` | `#8492a6` | `--ink-faint` |
 | `--text-on-brand` | `#FFFFFF` | `--voice-foreground` |
 
 ### Borders
 
-| Token | Hex / value | Legacy alias |
+| Token | Value | Legacy |
 | --- | --- | --- |
-| `--border` | `#dae2eb` (`oklch(0.91 0.015 250)`) | `--line` |
+| `--border` | `#dae2eb` | `--line` |
 | `--border-strong` | `#c8d3e0` | `--line-2` |
-| `--border-focus` | `rgba(0,119,236,0.7)` | input focus border |
+| `--border-focus` | `rgba(0,119,236,0.7)` | input focus |
 
 ### Base status
 
-| Token | OKLCH | Hex | Legacy alias |
+| Token | OKLCH / note | Hex | Legacy |
 | --- | --- | --- | --- |
 | `--success` | `oklch(0.64 0.16 151)` | `#24a656` | `--ok` |
 | `--warning` | `oklch(0.75 0.15 78)` | `#e1a01d` | `--warn` |
@@ -103,148 +102,189 @@ Named for clarity and to avoid accidental reuse. **Not** Voice primary, selected
 
 ### Radii
 
-| Token | Value | Legacy alias |
+| Token | Value | Legacy |
 | --- | --- | --- |
-| `--radius-sm` | `8px` | `--r-sm` |
-| `--radius-md` | `12px` | `--r` |
-| `--radius-lg` | `16px` | `--r-lg` |
-| `--radius-xl` | `22px` | `--r-xl` |
-| `--radius-pill` | `999px` | `--r-pill` |
+| `--radius-sm` … `--radius-pill` | `8` / `12` / `16` / `22` / `999px` | `--r-sm` … `--r-pill` |
 
 ### Shadows
 
-| Token | Value | Legacy alias |
+| Token | Role | Legacy |
 | --- | --- | --- |
-| `--shadow-sm` | `0 1px 2px rgba(5,18,35,0.04), 0 8px 24px -14px rgba(5,18,35,0.10)` | `--shadow-card` |
-| `--shadow-md` | `0 20px 48px -24px rgba(5,18,35,0.18)` | `--shadow-pop` |
-| `--shadow-focus` | `0 0 0 4px rgba(0,119,236,0.12)` | input focus ring |
-| `--shadow-brand` | `0 0 0 1px rgba(0,119,236,0.22), 0 10px 28px -12px rgba(0,119,236,0.28)` | `--glow-accent` |
+| `--shadow-sm` | Cards | `--shadow-card` |
+| `--shadow-md` | Auth / pop | `--shadow-pop` |
+| `--shadow-focus` | Input ring | — |
+| `--shadow-brand` | Primary CTA | `--glow-accent` |
+
+Keep shadows soft. No multi-layer glow spectacle in the console.
 
 ---
 
-## 5. Status badge tokens (call / lead / conversation)
+## 5. Status language (badges)
 
-Operational Voice badges. Tokens are **fg + soft bg + border**. Do not invent fake telephony connect rates; “Connected” means a real connected/assigned state when the product exposes it.
+Call / lead / conversation badges. Tokens: `--status-{name}-fg|bg|border`.
 
-| Status | Token prefix | FG | Soft BG | Border |
-| --- | --- | --- | --- | --- |
-| **Ready** | `--status-ready-*` | `#0077ec` | `#e7f5ff` | `rgba(0,119,236,0.28)` |
-| **Calling** | `--status-calling-*` | `#b45309` | `#fff7ed` | `rgba(225,160,29,0.40)` |
-| **Connected** | `--status-connected-*` | `#24a656` | `#ecfdf3` | `rgba(36,166,86,0.28)` |
-| **Completed** | `--status-completed-*` | `#15803d` | `#ecfdf3` | `rgba(36,166,86,0.28)` |
-| **Qualified** | `--status-qualified-*` | `#047857` | `#ecfdf3` | `rgba(36,166,86,0.35)` |
-| **Callback** | `--status-callback-*` | `#e1a01d` | `#fffbeb` | `rgba(225,160,29,0.40)` |
-| **Not interested** | `--status-not-interested-*` | `#556272` | `#f3f7fc` | `rgba(85,98,114,0.28)` |
-| **No answer** | `--status-no-answer-*` | `#8492a6` | `#f8fafc` | `rgba(132,146,166,0.35)` |
-| **Failed** | `--status-failed-*` | `#DC2626` | `#fef2f2` | `rgba(220,38,38,0.32)` |
+| Status | FG | Soft BG | Border |
+| --- | --- | --- | --- |
+| Ready | `#0077ec` | `#e7f5ff` | `rgba(0,119,236,0.28)` |
+| Calling | `#b45309` | `#fff7ed` | `rgba(225,160,29,0.40)` |
+| Connected | `#24a656` | `#ecfdf3` | `rgba(36,166,86,0.28)` |
+| Completed | `#15803d` | `#ecfdf3` | `rgba(36,166,86,0.28)` |
+| Qualified | `#047857` | `#ecfdf3` | `rgba(36,166,86,0.35)` |
+| Callback | `#e1a01d` | `#fffbeb` | `rgba(225,160,29,0.40)` |
+| Not interested | `#556272` | `#f3f7fc` | `rgba(85,98,114,0.28)` |
+| No answer | `#8492a6` | `#f8fafc` | `rgba(132,146,166,0.35)` |
+| Failed | `#DC2626` | `#fef2f2` | `rgba(220,38,38,0.32)` |
 
-Suffixes: `-fg`, `-bg`, `-border` (e.g. `--status-ready-fg`).
-
-| Prefer | Avoid |
-| --- | --- |
-| Ready, Calling, Connected, Completed, Qualified, Callback, Not interested, No answer, Failed | Purple for errors; Chat green for Voice badges |
-| Honest empty (“No … yet”) | Invented KPIs |
-
-Existing console classes (later polish may map onto tokens; not a Home redesign now):
-
-| Class | Approx mapping |
-| --- | --- |
-| `.badge-ready` | Ready |
-| `.badge-live` | Connected / live success |
-| `.emp-status-ready` / `-live` / `-paused` / `-draft` | Employee lifecycle |
-| `.conversation-status.*` | Live talk phases (idle≈Ready, listening≈Connected, error≈Failed) |
-| `.pill` + outcome labels | Qualified / Callback / etc. when outcomes render |
+Prefer honest empty states. Never invent connect rates or KPIs. Do not use Chat green for Voice badges.
 
 ---
 
-## 6. Vanilla console class names (`brand.css` / `app.css`)
+## 6. Components (product patterns; preserve IA)
 
-### Buttons
+| Domain | Pattern | Brand note |
+| --- | --- | --- |
+| Employee | List → Employee Studio tabs | Customer “Employee”; Agents stay Diagnostics |
+| Call / Conversation | List + detail | Honest empty; calm sync copy |
+| Lead | Instant Leads → CallJob confirm | No provider brands on chrome |
+| Campaign | Upload → map → validate → dial | Same CallJob path |
+| Performance | Aggregates; `—` when null | No invented rates |
+| Phone Number | Assign to Employee | Provider portals hidden |
+| Billing | Wallet / packs | Status colors for events only |
 
-| Class | Role |
+**Do not** redesign Home KPIs, nav structure, cards, or workflows in Phase 2 / this spec.
+
+Shell: sidebar lockup, crumb **Astra Voice**, health chips as product layers.
+
+---
+
+## 7. Buttons / forms / badges (vanilla classes)
+
+### Buttons (`brand.css` / `app.css`)
+
+| Class | Treatment |
 | --- | --- |
-| `.btn` | Base control |
-| `.btn-primary` | Solid `--astra-blue` / `--voice` |
-| `.btn-ghost` | Outlined / surface |
-| `.btn-quiet` | Text button |
-| `.btn-lg` / `.btn-sm` | Size variants |
-| `.btn-danger-soft` | Soft destructive (`app.css`) |
-| `.btn-dark` | Dark utility (e.g. impersonation exit) |
+| `.btn` | Base |
+| `.btn-primary` | Solid `--astra-blue`, white label, `--shadow-brand` |
+| `.btn-ghost` | Surface + `--border-strong` |
+| `.btn-quiet` | Text; hover `--astra-blue-soft` |
+| `.btn-lg` / `.btn-sm` | Sizes |
+| `.btn-danger-soft` | Soft error |
+| `.btn-dark` | Utility (e.g. impersonation exit) |
 
 ### Forms
 
-| Class | Role |
+| Class | Treatment |
 | --- | --- |
-| `.field` | Label + control stack |
-| `.field > label` | Field label (`--text-muted`) |
-| `.input` | Text input |
-| `.textarea` | Multiline |
-| `.select` | Native select (`.is-empty` muted) |
-| `.auth-form` | Auth gate form layout (`app.css`) |
+| `.field` / `.field > label` | Stack; label `--text-muted` |
+| `.input` / `.textarea` / `.select` | Elevated surface; focus `--border-focus` + `--shadow-focus` |
+| `.auth-form` | Auth gate |
 
-Focus: `--border-focus`, `--shadow-focus`.
-
-### Badges / pills / chips
+### Badges / pills
 
 | Class | Role |
 | --- | --- |
-| `.pill` | Generic pill |
-| `.pill .dot` / `.warn` / `.bad` | Status dots |
+| `.pill` + `.dot` / `.warn` / `.bad` | Generic + status dots |
 | `.badge-gold` | Soft brand chip |
-| `.badge-live` / `.badge-ready` | Live vs ready badges |
-| `.emp-status` / `.emp-status-*` | Employee status pills |
-| `.hchip` / `.hchip.ok` | Topbar health chips |
-| `.conversation-status` | Live call phase pill |
+| `.badge-live` / `.badge-ready` | Live vs ready |
+| `.emp-status` / `.emp-status-*` | Employee lifecycle |
+| `.hchip` | Topbar health |
+| `.conversation-status` | Live call phase |
 
-### Shell primitives
+### Shell
 
-| Class | Role |
-| --- | --- |
-| `.side` / `.side-brand` / `.lockup` | Sidebar + lockup image |
-| `.nav` / `.nav a.active` | Nav; active uses `--voice-soft` |
-| `.top` / `.crumb` / `.ttl` | Topbar crumb + title |
-| `.card` / `.card-pad` | Panels |
-| `.auth-card` / `.auth-lockup` | Auth gate |
+`.side` / `.side-brand` / `.lockup`, `.nav` / `.nav a.active`, `.top` / `.crumb` / `.ttl`, `.card` / `.card-pad`, `.auth-card` / `.auth-lockup`
 
 ---
 
-## 7. Product patterns (preserve IA)
+## 8. Typography scales
 
-Employee, Call/Conversation, Lead, Campaign, Performance, Phone Number, Billing: keep shipped nav and workflows. Brand/token work only. **No Home KPI redesign** from this doc.
+### App (Voice console) — operational
+
+| Step | Size | Use |
+| --- | --- | --- |
+| Auth / rare H1 | ~1.55rem | Auth card title |
+| Section / view title | ~0.98–1.15rem | Topbar `.ttl`, section heads |
+| Body | `16px` / line-height `1.55` | Default |
+| UI / nav | ~0.875rem | Sidebar links, controls |
+| Meta / crumb | ~0.68–0.74rem uppercase | `.crumb`, `.nav-group`, eyebrows |
+| Mono | `--mono` ~0.82rem | Codes, IDs |
+
+Font stack: `--font` (Avenir Next / SF / Segoe). Letter-spacing slightly tight on headings.
+
+### Marketing pages in this repo — display (landing only)
+
+| Class | Scale | Use |
+| --- | --- | --- |
+| `.t-display` | `clamp(2.6rem, 6.2vw, 5.2rem)` | Hero display |
+| `.t-h1` | `clamp(2rem, 4.2vw, 3.3rem)` | Marketing H1 |
+| `.t-h2` | `clamp(1.55rem, 3vw, 2.4rem)` | Sections |
+| `.t-h3` | `clamp(1.15rem, 1.8vw, 1.5rem)` | Subheads |
+| `.t-lead` | `clamp(1.05rem, 1.5vw, 1.3rem)` | Lead copy |
+| `.t-eyebrow` | `0.74rem` uppercase | Eyebrows |
+
+Do **not** force marketing display ramp into the SPA.
 
 ---
 
-## 8. Typography
+## 9. Dark presentation variants (demos / marketing hosts in this repo)
 
-**App:** operational scale in `brand.css` / `app.css` (body 16px, nav ~0.875rem, crumbs ~0.68–0.74rem uppercase). Font stack `--font`.  
-**Marketing pages in this repo:** fluid `.t-display` / `.t-h1` on landing only. Do not force marketing display ramp into the SPA.
+Opt-in only (e.g. `.theme-dark` on a demo host). **Never** flip `:root` for `/app.html`.
+
+| Role | Light (console default) | Dark presentation |
+| --- | --- | --- |
+| Background | `#fcfeff` | Near-navy `#0b1220` / `--astra-navy` |
+| Surface elevated | `#FFFFFF` | Lifted navy panel |
+| Text primary | `#051223` | Off-white |
+| Text muted | `#556272` | ~70% off-white |
+| Primary | `--astra-blue` `#0077ec` | Same blue (readable on dark) |
+| Border | `#dae2eb` | White ~10–15% opacity |
+| Status | `--success` / `--warning` / `--error` | Same hues; bump lightness for contrast |
+
+Forbidden in Voice console: Guide orb, hero-canvas, cinematic glow stacks, Chat green theme.
 
 ---
 
-## 9. Dark presentation (demos in this repo only)
+## 10. Motion
 
-Opt-in (e.g. `.theme-dark` on a demo host). Keep `--astra-blue` readable on dark navy canvases. Do **not** flip `:root` for `/app.html`. No Guide orb / hero-canvas imports into the Voice console.
+Tokens in `brand.css`:
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `--ease` | `cubic-bezier(0.22, 1, 0.36, 1)` | Standard transitions |
+| `--ease-out` | `cubic-bezier(0.16, 1, 0.3, 1)` | Reveals / exits |
+| `--dur` | `0.55s` | Default duration |
+
+Patterns:
+- Buttons: short transform / shadow / color (~0.2–0.25s)
+- Nav active: soft wash, no bounce spectacle
+- `.reveal`: progressive enhancement only (`html.js`); content visible by default without JS
+- `@media (prefers-reduced-motion: reduce)`: disable non-essential motion; force `.reveal` visible
+
+Keep motion calm. No cinematic hero animations inside the console.
 
 ---
 
-## 10. Logos (source of truth)
+## 11. Logos (source of truth)
 
 | File | Role |
 | --- | --- |
-| `astravoice-lockup.png` | Sidebar / auth |
-| `astra-voice-ac-mark.png` | Favicon / compact / boot |
+| `astravoice-lockup.png` | Sidebar / auth ([AC] + “Astra voice”) |
+| `astra-voice-ac-mark.png` | Favicon / compact / boot (electric blue A + teal C) |
 
-Paths: `dashboard/public/assets/brand/` (product), `docs/assets/astra-voice-rebrand/user-logos/` (archive).
+Product: `dashboard/public/assets/brand/`  
+Archive: `docs/assets/astra-voice-rebrand/user-logos/`  
+
+USER OVERRIDE: use only these two PNGs. No Design graphite-C pack. No redraw. Art may read “Astra voice”; UI strings say **Astra Voice**.
 
 ---
 
-## 11. Explicit non-goals
+## 12. Explicit non-goals
 
 - No React rewrite  
-- No Home / nav / workflow redesign from this doc  
-- No Chat green as Voice primary  
-- No deploy from docs/token commits alone  
-- No backend identifier renames  
-- **No website repo coordination, PRs, or waiting on external aliases**  
+- No Home KPI / nav / workflow redesign  
+- No Chat green or Guide graphite as Voice primary  
+- No backend / API identifier renames for branding  
+- No deploy from Phase 2 alone  
+- **No website repo PRs, agents, or external alias waits**  
 
-**Phase 3+ Voice UI work should treat this file as the Voice-side token and pattern contract.**
+**Phase 3+ Voice UI polish should treat this file as the Voice-owned design-system contract.**
