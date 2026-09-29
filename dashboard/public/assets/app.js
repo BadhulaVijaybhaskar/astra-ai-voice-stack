@@ -372,7 +372,7 @@ function renderShell() {
 
   const side = el('aside', { class: 'side' }, [
     el('div', { class: 'side-brand' }, [
-      brandLockup(32)
+      brandLockup(30)
     ]),
     nav,
     el('div', { class: 'side-foot' }, [
@@ -387,15 +387,23 @@ function renderShell() {
     ])
   ]);
 
+  const isSuperAdmin = u.role === 'super_admin';
+  const topRight = isSuperAdmin
+    ? el('div', { class: 'health-row', id: 'healthRow', title: 'Internal runtime diagnostics' }, healthChips())
+    : el('div', { class: 'top-actions', id: 'topActions' }, [
+      el('button', { class: 'btn btn-ghost btn-sm', onclick: () => goto('leads') }, 'Call a lead'),
+      el('button', { class: 'btn btn-primary btn-sm', onclick: () => { location.hash = '#/employees?create=1'; } }, 'New employee')
+    ]);
+
   const top = el('header', { class: 'top' }, [
     el('div', { class: 'flex items-center gap-2', style: 'min-width:0' }, [
-      el('button', { class: 'menu-btn', 'aria-label': 'Menu', onclick: () => $('.shell').classList.toggle('nav-open'), html: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>' }),
+      el('button', { class: 'menu-btn', 'aria-label': 'Open navigation menu', onclick: () => $('.shell').classList.toggle('nav-open'), html: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>' }),
       el('div', { class: 'top-route' }, [
         el('span', { class: 'crumb' }, 'Astra Voice'),
-        el('span', { class: 'ttl', id: 'routeTitle' }, 'Overview')
+        el('span', { class: 'ttl', id: 'routeTitle' }, 'Home')
       ])
     ]),
-    el('div', { class: 'health-row', id: 'healthRow' }, healthChips())
+    topRight
   ]);
 
   const impersonationBanner = State.me.impersonation ? el('div', { class: 'impersonation-banner' }, [
@@ -414,7 +422,7 @@ function renderShell() {
 
   window.removeEventListener('hashchange', onRoute);
   window.addEventListener('hashchange', onRoute);
-  loadHealth();
+  if (isSuperAdmin) loadHealth();
   onRoute();
 }
 
@@ -432,12 +440,13 @@ async function doLogout() {
   renderAuth();
 }
 
-/* ---- health chips ---- */
+/* ---- health chips (Super Admin / internal diagnostics only) ---- */
 function healthChips() {
+  // Product-layer labels. Never surface provider brands on chrome.
   const layers = [
-    { key: 'tts', label: 'TTS' },
+    { key: 'tts', label: 'Voice' },
     { key: 'llm', label: 'Brain' },
-    { key: 'telephony', label: 'Telephony' }
+    { key: 'telephony', label: 'Phone' }
   ];
   return layers.map((L) => {
     const chip = el('span', { class: 'hchip loading', 'data-layer': L.key }, [
@@ -448,6 +457,7 @@ function healthChips() {
   });
 }
 async function loadHealth() {
+  if (!State.me || !State.me.user || State.me.user.role !== 'super_admin') return;
   try {
     const h = await api('/api/health', { allow401: true });
     State.health = h;
@@ -508,87 +518,319 @@ function viewHead(title, sub, extraClass) {
 }
 
 /* ===========================================================================
-   1. OVERVIEW
+   1. OVERVIEW (customer Home)
    =========================================================================== */
+function isSuperAdminUser() {
+  return !!(State.me && State.me.user && State.me.user.role === 'super_admin');
+}
+
+function activeEmployees(list) {
+  return (list || []).filter((e) => String(e.status || '').toUpperCase() !== 'ARCHIVED');
+}
+
+function countOutcomeMap(map, re) {
+  let n = 0;
+  Object.keys(map || {}).forEach((k) => {
+    if (re.test(String(k))) n += Number(map[k] || 0) || 0;
+  });
+  return n;
+}
+
+function countStatusMap(map, re) {
+  return countOutcomeMap(map, re);
+}
+
+function conversationCustomer(c) {
+  if (!c) return '—';
+  if (c.direction === 'outbound') return c.toE164 || c.fromE164 || '—';
+  return c.fromE164 || c.toE164 || '—';
+}
+
+function employeeNameForCall(c, employees) {
+  if (!c) return '—';
+  const list = employees || State.employees || [];
+  if (c.employeeId) {
+    const byId = list.find((e) => e.id === c.employeeId);
+    if (byId) return byId.name || 'Employee';
+  }
+  if (c.agentId) {
+    const byAgent = list.find((e) => e.agentId === c.agentId);
+    if (byAgent) return byAgent.name || 'Employee';
+  }
+  return c.agentName || '—';
+}
+
+function buildActivationSteps(emps, conversations, performance) {
+  const employees = activeEmployees(emps);
+  const hasEmployee = employees.length > 0;
+  const hasInstructions = employees.some((e) => !!(e.agentId || e.workflowId || ['READY', 'LIVE', 'PAUSED'].includes(String(e.status || '').toUpperCase())));
+  const hasTraining = employees.some((e) => Array.isArray(e.knowledgeIds) && e.knowledgeIds.length > 0);
+  const hasNumber = employees.some((e) => !!(e.phoneNumberId || (e.assignedNumber && e.assignedNumber.id)));
+  const callTotal = (performance && performance.calls && performance.calls.totals && performance.calls.totals.calls) || 0;
+  const hasCall = callTotal > 0 || (conversations || []).length > 0 || employees.some((e) => (e.callsToday || 0) > 0);
+  const hasReview = (conversations || []).some((c) => !!(c.outcome || c.summary))
+    || countOutcomeMap((performance && performance.calls && performance.calls.byOutcome) || {}, /./) > 0;
+
+  return [
+    { id: 'create', label: 'Create Employee', done: hasEmployee, href: '#/employees?create=1', cta: 'Create' },
+    { id: 'instructions', label: 'Add Instructions', done: hasInstructions, href: hasEmployee ? ('#/employees?id=' + encodeURIComponent(employees[0].id) + '&tab=instructions') : '#/employees?create=1', cta: 'Instruct' },
+    { id: 'train', label: 'Train', done: hasTraining, href: hasEmployee ? ('#/employees?id=' + encodeURIComponent(employees[0].id) + '&tab=training') : '#/employees?create=1', cta: 'Train' },
+    { id: 'number', label: 'Assign Phone Number', done: hasNumber, href: '#/numbers', cta: 'Assign' },
+    { id: 'call', label: 'Call a Lead', done: hasCall, href: '#/leads', cta: 'Call' },
+    { id: 'review', label: 'Review Result', done: hasReview, href: '#/calls', cta: 'Review' }
+  ];
+}
+
+function paintActivation(host, steps) {
+  host.innerHTML = '';
+  const doneCount = steps.filter((s) => s.done).length;
+  const allDone = doneCount === steps.length;
+  const next = steps.find((s) => !s.done) || null;
+
+  if (allDone) {
+    host.appendChild(el('div', { class: 'activation is-complete' }, [
+      el('div', { class: 'activation-head' }, [
+        el('div', {}, [
+          el('h3', {}, 'You are set up'),
+          el('p', { class: 'muted' }, 'Employee, instructions, training, number, and first conversation are in place.')
+        ]),
+        el('button', {
+          class: 'btn btn-ghost btn-sm',
+         onclick: () => {
+            host.classList.add('is-collapsed');
+            paintActivationCollapsed(host, steps);
+          }
+        }, 'Collapse')
+      ]),
+      el('ol', { class: 'activation-steps' }, steps.map((s) =>
+        el('li', { class: 'activation-step is-done' }, [
+          el('span', { class: 'activation-check', 'aria-hidden': 'true' }, '✓'),
+          el('span', { class: 'activation-label' }, s.label)
+        ])
+      ))
+    ]));
+    return;
+  }
+
+  host.appendChild(el('div', { class: 'activation' }, [
+    el('div', { class: 'activation-head' }, [
+      el('div', {}, [
+        el('h3', {}, 'Get started'),
+        el('p', { class: 'muted' }, doneCount + ' of ' + steps.length + ' complete. Next: ' + (next ? next.label : '—') + '.')
+      ])
+    ]),
+    el('ol', { class: 'activation-steps' }, steps.map((s) => {
+      const isNext = next && next.id === s.id;
+      return el('li', { class: 'activation-step' + (s.done ? ' is-done' : '') + (isNext ? ' is-next' : '') }, [
+        el('span', { class: 'activation-check', 'aria-hidden': 'true' }, s.done ? '✓' : (isNext ? '→' : '·')),
+        el('span', { class: 'activation-label' }, s.label),
+        isNext
+          ? el('a', { class: 'btn btn-primary btn-sm', href: s.href }, s.cta)
+          : (s.done ? null : el('a', { class: 'btn btn-quiet btn-sm', href: s.href }, 'Open'))
+      ]);
+    }))
+  ]));
+}
+
+function paintActivationCollapsed(host, steps) {
+  host.innerHTML = '';
+  host.appendChild(el('div', { class: 'activation is-collapsed-bar' }, [
+    el('div', {}, [
+      el('h3', {}, 'Setup complete'),
+      el('p', { class: 'muted' }, 'All activation steps are done.')
+    ]),
+    el('button', {
+      class: 'btn btn-ghost btn-sm',
+      onclick: () => paintActivation(host, steps)
+    }, 'Show steps')
+  ]));
+}
+
+function paintHomeQuickActions(host, steps) {
+  host.innerHTML = '';
+  const next = (steps || []).find((s) => !s.done) || null;
+  const primaryHref = next ? next.href : '#/leads';
+  const primaryLabel = next ? ('Next: ' + next.label) : 'Call a Lead';
+
+  host.appendChild(el('h3', {}, 'Quick actions'));
+  host.appendChild(el('p', { class: 'qa-sub muted' }, next
+    ? ('Primary next step: ' + next.label + '.')
+    : 'Your workspace is ready. Pick an operational action.'));
+  host.appendChild(el('div', { class: 'qa-row' }, [
+    el('a', { class: 'btn btn-primary', href: primaryHref }, primaryLabel),
+    el('a', { class: 'btn btn-ghost', href: '#/employees?create=1' }, 'Create Employee'),
+    el('a', { class: 'btn btn-ghost', href: '#/numbers' }, 'Assign Phone Number'),
+    el('a', { class: 'btn btn-ghost', href: '#/leads' }, 'Call a Lead'),
+    el('a', { class: 'btn btn-ghost', href: '#/campaigns' }, 'Upload Campaign')
+  ]));
+}
+
+function paintHomeActivity(host, conversations, employees) {
+  host.innerHTML = '';
+  host.appendChild(el('div', { class: 'home-activity-head' }, [
+    el('div', {}, [
+      el('h3', {}, 'Recent activity'),
+      el('p', { class: 'muted' }, 'Latest conversations from this workspace.')
+    ]),
+    el('a', { class: 'btn btn-ghost btn-sm', href: '#/calls' }, 'All conversations')
+  ]));
+
+  const rows = (conversations || []).slice(0, 8);
+  if (!rows.length) {
+    host.appendChild(emptyState({
+      title: 'No conversations yet',
+      body: 'Completed calls will appear here with customer, AI Employee, duration, and outcome.',
+      ctaLabel: 'Call your first lead',
+      ctaHref: '#/leads'
+    }));
+    return;
+  }
+
+  const table = el('table', { class: 'home-activity-table' });
+  table.appendChild(el('thead', {}, el('tr', {}, [
+    el('th', {}, 'Customer'),
+    el('th', {}, 'AI Employee'),
+    el('th', {}, 'Duration'),
+    el('th', {}, 'Outcome'),
+    el('th', {}, 'Time')
+  ])));
+  const tbody = el('tbody');
+  rows.forEach((c) => {
+    const tr = el('tr', {
+      class: 'home-activity-row',
+      tabindex: '0',
+      role: 'link',
+      onclick: () => { location.hash = '#/calls'; },
+      onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); location.hash = '#/calls'; } }
+    }, [
+      el('td', { class: 'mono' }, conversationCustomer(c)),
+      el('td', {}, employeeNameForCall(c, employees)),
+      el('td', {}, fmtDuration(c.durationSec)),
+      el('td', {}, c.outcome || c.status || '—'),
+      el('td', {}, fmtCallTime(c.startedAt || c.createdAt))
+    ]);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  host.appendChild(el('div', { class: 'home-activity-wrap' }, table));
+}
+
+function emptyState(opts) {
+  const o = opts || {};
+  const kids = [
+    el('div', { class: 'ttl' }, o.title || 'Nothing here yet'),
+    el('p', {}, o.body || '')
+  ];
+  if (o.ctaLabel && o.ctaHref) {
+    kids.push(el('a', { class: 'btn btn-primary', href: o.ctaHref }, o.ctaLabel));
+  } else if (o.ctaLabel && o.ctaOnClick) {
+    kids.push(el('button', { class: 'btn btn-primary', onclick: o.ctaOnClick }, o.ctaLabel));
+  }
+  return el('div', { class: 'empty empty-rich' }, kids);
+}
+
+function paintHomeKpis(host, employees, performance) {
+  host.innerHTML = '';
+  const emps = activeEmployees(employees);
+  const calls = (performance && performance.calls) || {};
+  const totals = calls.totals || {};
+  const byOutcome = calls.byOutcome || {};
+  const byStatus = calls.byStatus || {};
+
+  const callsToday = emps.reduce((s, e) => s + (Number(e.callsToday) || 0), 0);
+  const connected = countStatusMap(byStatus, /^(completed|connected|answered)$/i);
+  const qualified = Number(totals.converted) || countOutcomeMap(byOutcome, /qualif|booked|won|converted/i);
+  const followUps = countOutcomeMap(byOutcome, /callback|follow.?up|reschedul/i);
+
+  // Preferred hierarchy. Only real backend-backed figures. Zero is valid.
+  const cards = [
+    { label: 'AI Employees', value: String(emps.length), delta: 'Active in this workspace' },
+    { label: 'Calls today', value: String(callsToday), delta: 'Started since midnight UTC' },
+    { label: 'Connected', value: String(connected), delta: 'Completed conversations' },
+    { label: 'Qualified', value: String(qualified), delta: totals.conversionRatePct == null ? 'From call outcomes' : (totals.conversionRatePct + '% of calls') },
+    { label: 'Follow-ups', value: String(followUps), delta: 'Callback outcomes' }
+  ];
+  cards.forEach((c) => host.appendChild(statCard(c.label, c.value, c.delta)));
+}
+
 async function viewOverview(root) {
   const name = State.me.user.name || State.me.user.email;
   root.appendChild(viewHead(
     'Welcome back, ' + name + '.',
-    'Create an AI Employee, teach, assign a Phone Number, connect Instant Leads, and go live.',
+    'Create an AI Employee, add instructions, train, assign a Phone Number, then call a lead and review the result.',
     'overview-hero'
   ));
 
-  const statsRow = el('div', { class: 'grid grid-3' }, skeleton('sk-stat', 3));
+  const statsRow = el('div', { class: 'grid grid-kpi', id: 'homeKpis' }, skeleton('sk-stat', 5));
   root.appendChild(statsRow);
 
-  const body = el('div', { class: 'grid grid-12', style: 'margin-top:14px' }, [
-    el('div', { class: 'card spark-card', id: 'sparkHost' }, skeleton('sk-card', 1)),
-    el('div', { class: 'card qa-card', id: 'qaHost' }, [
-      el('h3', {}, 'Demo path'),
-      el('div', { class: 'qa-row' }, [
-        el('button', { class: 'btn btn-primary', onclick: () => goto('employees') }, 'My Employees'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('leads') }, 'Instant Leads'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('numbers') }, 'Phone Numbers'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('calls') }, 'Conversations'),
-        el('button', { class: 'btn btn-ghost', onclick: () => goto('analytics') }, 'Performance')
-      ]),
-      el('div', { class: 'qa-foot', id: 'provMini' }, 'Checking runtime...')
-    ])
+  const mid = el('div', { class: 'grid grid-12 home-mid' }, [
+    el('div', { class: 'card card-pad', id: 'activationHost' }, skeleton('sk-card', 1)),
+    el('div', { class: 'card qa-card', id: 'qaHost' }, skeleton('sk-card', 1))
   ]);
-  root.appendChild(body);
+  root.appendChild(mid);
 
-  // load usage + employees in parallel
-  try {
-    const [usage, empRes] = await Promise.all([
-      api('/api/usage'),
-      State.loaded.employees ? Promise.resolve({ employees: State.employees }) : api('/api/employees')
-    ]);
-    State.usage = usage;
-    State.employees = empRes.employees || [];
-    State.loaded.employees = true;
+  const activity = el('div', { class: 'card card-pad home-activity', id: 'activityHost', style: 'margin-top:14px' }, skeleton('sk-card', 1));
+  root.appendChild(activity);
 
-    const totals = usage.totals || {};
-    statsRow.innerHTML = '';
-    statsRow.appendChild(statCard('Employees', String(State.employees.length), 'In this workspace'));
-    statsRow.appendChild(statCard('Characters synthesized', fmtInr(totals.chars || 0), 'Across all days'));
-    statsRow.appendChild(statCard('Estimated spend', '₹' + fmtInr(totals.costInr || estimateCost(usage)), 'At promo rates', true));
-
-    const sh = $('#sparkHost'); sh.innerHTML = '';
-    sh.appendChild(sparkPanel(usage.days || []));
-  } catch (e) {
-    statsRow.innerHTML = '';
-    statsRow.appendChild(el('div', { class: 'card card-pad muted' }, 'Could not load usage. ' + esc(e.message)));
+  if (isSuperAdminUser()) {
+    const diag = el('div', { class: 'card card-pad home-diag', id: 'homeDiag', style: 'margin-top:14px' }, skeleton('sk-line', 1));
+    root.appendChild(diag);
   }
 
-  // Product-ready runtime summary. No provider brand names for customers.
-  ensureProviders().then(() => {
-    const pm = $('#provMini'); if (!pm) return;
-    const reg = State.providers || {};
-    if (reg.layers) {
-      const parts = [];
-      if (reg.layers.voice) parts.push('Voice');
-      if (reg.layers.brain) parts.push('Brain');
-      if (reg.layers.listening) parts.push('Listening');
-      if (reg.layers.telephony) parts.push('Telephony');
-      pm.textContent = parts.length
-        ? ('Runtime ready: ' + parts.join(', ') + '.')
-        : 'Runtime not fully connected yet.';
-      return;
+  try {
+    const [empRes, perfRes, convRes] = await Promise.all([
+      State.loaded.employees ? Promise.resolve({ employees: State.employees }) : api('/api/employees'),
+      api('/api/performance'),
+      api('/api/conversations?limit=8')
+    ]);
+    State.employees = empRes.employees || [];
+    State.loaded.employees = true;
+    const performance = perfRes.performance || perfRes.analytics || {};
+    const conversations = convRes.conversations || convRes.calls || [];
+    State.calls = conversations;
+    State.loaded.calls = true;
+
+    paintHomeKpis(statsRow, State.employees, performance);
+    const steps = buildActivationSteps(State.employees, conversations, performance);
+    const actHost = $('#activationHost');
+    const qaHost = $('#qaHost');
+    const actyHost = $('#activityHost');
+    if (actHost) paintActivation(actHost, steps);
+    if (qaHost) paintHomeQuickActions(qaHost, steps);
+    if (actyHost) paintHomeActivity(actyHost, conversations, State.employees);
+
+    if (isSuperAdminUser()) {
+      const diag = $('#homeDiag');
+      if (diag) {
+        try {
+          const usage = await api('/api/usage');
+          State.usage = usage;
+          const totals = usage.totals || {};
+          diag.innerHTML = '';
+          diag.appendChild(el('div', { class: 'home-diag-head' }, [
+            el('h3', {}, 'Internal usage (Super Admin)'),
+            el('p', { class: 'muted' }, 'Studio TTS preview economics only. Not customer billing.')
+          ]));
+          diag.appendChild(el('div', { class: 'home-diag-row' }, [
+            el('span', {}, 'Characters synthesized: ' + fmtInr(totals.chars || 0)),
+            el('span', {}, 'Estimated spend: ₹' + fmtInr(totals.costInr || estimateCost(usage)))
+          ]));
+        } catch (err) {
+          diag.innerHTML = '';
+          diag.appendChild(el('div', { class: 'muted' }, 'Internal usage unavailable.'));
+        }
+      }
     }
-    // Super Admin may still receive the full registry.
-    const live = [];
-    ['tts', 'llm', 'telephony'].forEach((layer) => {
-      (reg[layer] || []).forEach((p) => {
-        if (!p.live) return;
-        if (layer === 'tts') live.push('Voice');
-        else if (layer === 'llm') live.push('Brain');
-        else if (layer === 'telephony') live.push('Telephony');
-      });
-    });
-    pm.textContent = live.length ? ('Runtime ready: ' + [...new Set(live)].join(', ') + '.') : 'Runtime not fully connected yet.';
-  }).catch(() => {
-    const pm = $('#provMini'); if (pm) pm.textContent = 'Runtime status unavailable.';
-  });
+  } catch (e) {
+    statsRow.innerHTML = '';
+    statsRow.appendChild(el('div', { class: 'card card-pad muted' }, 'Could not load Home. ' + esc(e.message)));
+    const actHost = $('#activationHost');
+    if (actHost) {
+      actHost.innerHTML = '';
+      actHost.appendChild(el('div', { class: 'muted' }, 'Setup checklist unavailable right now.'));
+    }
+  }
 }
 
 function statCard(lbl, val, delta, up) {
@@ -599,13 +841,13 @@ function statCard(lbl, val, delta, up) {
   ]);
 }
 function estimateCost(usage) {
-  // fallback if backend does not return costInr in totals
+  // fallback if backend does not return costInr in totals (Super Admin diagnostics only)
   let c = 0;
   (usage.days || []).forEach((d) => { c += (d.costInr || (d.chars || 0) / 1000 * RATE.mulberry); });
   return Math.round(c * 100) / 100;
 }
 
-/* ---- sparkline (inline SVG, no libs) ---- */
+/* ---- sparkline helpers retained for diagnostics / legacy reuse ---- */
 function sparkPanel(days) {
   const data = (days || []).map((d) => ({ day: d.day, v: d.chars || 0 }));
   const total = data.reduce((s, d) => s + d.v, 0);
@@ -619,7 +861,7 @@ function sparkPanel(days) {
       head,
       el('div', { class: 'spark-empty' }, [
         el('div', { class: 'se-title' }, 'No usage yet'),
-        el('div', { class: 'se-sub' }, 'Use Instant Leads or Conversations after go-live to see characters per day here.')
+        el('div', { class: 'se-sub' }, 'Studio preview synthesis will appear here for Super Admin diagnostics.')
       ])
     ]);
   }
@@ -844,13 +1086,13 @@ async function viewEmployees(root) {
       State.loaded.employees = true;
       host.innerHTML = '';
       if (!State.employees.length) {
-        host.appendChild(el('div', { class: 'card card-pad empty emp-empty' }, [
-          el('div', { class: 'ttl' }, 'No employees yet'),
-          el('p', { class: 'muted' }, 'Create an AI employee from a job template. Astra composes an agent and workflow for you.'),
+        host.appendChild(el('div', { class: 'card card-pad empty empty-rich emp-empty' }, [
+          el('div', { class: 'ttl' }, 'No AI Employees yet'),
+          el('p', {}, 'AI Employees are the voices that call and answer for your business. Create one from a job template, then add instructions and a Phone Number.'),
           el('button', {
             class: 'btn btn-primary',
             onclick: () => { location.hash = '#/employees?create=1'; },
-          }, '+ New Employee'),
+          }, 'Create your first Employee'),
         ]));
         return;
       }
@@ -4172,10 +4414,12 @@ function paintCallsList(host, callRows, selectedId, onSelect) {
   ]));
 
   if (!callRows || !callRows.length) {
-    host.appendChild(el('div', { class: 'empty', style: 'padding:32px 12px' }, [
-      el('div', { class: 'ttl' }, 'No conversations yet'),
-      el('p', {}, 'When numbers are assigned and conversations happen, they appear here. Count: 0. —')
-    ]));
+    host.appendChild(emptyState({
+      title: 'No conversations yet',
+      body: 'Completed calls will appear here with transcript, outcome, and recording when available.',
+      ctaLabel: 'Call your first lead',
+      ctaHref: '#/leads'
+    }));
     return;
   }
 
@@ -4943,7 +5187,12 @@ async function viewTrainingHub(root) {
     host.innerHTML = '';
     const rows = (State.employees || []).filter((e) => e.status !== 'ARCHIVED');
     if (!rows.length) {
-      host.appendChild(el('div', { class: 'card card-pad muted' }, 'No employees yet. Create one, then add training.'));
+      host.appendChild(emptyState({
+        title: 'No training yet',
+        body: 'Training teaches each AI Employee your FAQs and knowledge. Create an Employee first, then open their Training tab.',
+        ctaLabel: 'Create Employee',
+        ctaHref: '#/employees?create=1'
+      }));
       return;
     }
     rows.forEach((emp) => {
