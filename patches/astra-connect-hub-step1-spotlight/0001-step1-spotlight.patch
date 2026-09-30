@@ -1,7 +1,8 @@
 From dda9f8bf33f488050a807068f09bcbe9f27606bd Mon Sep 17 00:00:00 2001
 From: BadhulaVijaybhaskar <BadhulaVijaybhaskar@users.noreply.github.com>
 Date: Wed, 30 Sep 2026 05:24:49 +0000
-Subject: [PATCH] Add Step 1 spotlight callouts to VoiceWorkspace walkthrough
+Subject: [PATCH 1/2] Add Step 1 spotlight callouts to VoiceWorkspace
+ walkthrough
 
 Wire shared spotlight helpers into Create AI Employee (Maya profile,
 job brief, readiness strip, Continue) with ~2.5s auto-advance,
@@ -490,6 +491,46 @@ index 2bfad71..caaf536 100644
  
  @utility guide-safe {
    padding-bottom: 6.5rem;
+-- 
+2.43.0
+
+
+From 5d3b6664dc8d77d5a15d7ac5385c251e34fd9cfb Mon Sep 17 00:00:00 2001
+From: BadhulaVijaybhaskar <BadhulaVijaybhaskar@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 05:28:14 +0000
+Subject: [PATCH 2/2] Disable workspace side-nav during Step 1 spotlight tour
+
+Prevents accidental step jumps when tapping the right panel near the
+icon rail while advancing tip callouts.
+---
+ src/components/astra-workspaces.tsx | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/components/astra-workspaces.tsx b/src/components/astra-workspaces.tsx
+index 5ef7b1e..99662be 100644
+--- a/src/components/astra-workspaces.tsx
++++ b/src/components/astra-workspaces.tsx
+@@ -408,7 +408,7 @@ export function VoiceWorkspace() {
+       role={step1Tour.active ? "group" : undefined}
+       aria-label={step1Tour.active ? "Step 1 highlight tips. Activate to show the next tip." : undefined}
+     >
+-      <aside className={cn("relative z-[1] hidden border-r border-border bg-surface p-2 md:block", step1Tour.active && "opacity-50")}><div className="grid gap-2 text-center text-[10px]">{side.map(({ Icon, label, idx }) => <button key={label} type="button" onClick={() => setStep(idx)} className={cn("grid gap-1 rounded-md py-2", step === idx ? "bg-voice-soft text-voice" : "text-muted-foreground")}><Icon className="mx-auto size-5"/>{label}</button>)}</div></aside>
++      <aside className={cn("relative z-[1] hidden border-r border-border bg-surface p-2 md:block", step1Tour.active && "pointer-events-none opacity-50")} aria-hidden={step1Tour.active || undefined}><div className="grid gap-2 text-center text-[10px]">{side.map(({ Icon, label, idx }) => <button key={label} type="button" onClick={() => setStep(idx)} className={cn("grid gap-1 rounded-md py-2", step === idx ? "bg-voice-soft text-voice" : "text-muted-foreground")}><Icon className="mx-auto size-5"/>{label}</button>)}</div></aside>
+       <div className="relative z-[1] p-5 sm:p-7"><div className={cn("flex items-center justify-between gap-3", step1Tour.active && "opacity-55")}><h3 className="text-2xl font-bold">{titles[step]}</h3><span className="shrink-0 text-xs tabular-nums text-muted-foreground">Step {step + 1} of {stepCount}</span></div>
+         <AnimatePresence mode="wait"><motion.div key={step} initial={reduced ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }} transition={{ duration: .2 }} className="mt-6">{screens[step]}</motion.div></AnimatePresence>
+         <div className="mt-6 flex gap-2">
+@@ -425,7 +425,10 @@ export function VoiceWorkspace() {
+           >
+             <Button
+               className="w-full bg-voice hover:bg-voice/90"
+-              onClick={() => setStep(step === stepCount - 1 ? 0 : step + 1)}
++              onClick={() => {
++                if (step1Tour.active) return;
++                setStep(step === stepCount - 1 ? 0 : step + 1);
++              }}
+             >
+               {step === stepCount - 1 ? <><Play/> Start over</> : "Continue"}
+             </Button>
 -- 
 2.43.0
 

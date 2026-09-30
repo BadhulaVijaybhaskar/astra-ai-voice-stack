@@ -408,7 +408,7 @@ export function VoiceWorkspace() {
       role={step1Tour.active ? "group" : undefined}
       aria-label={step1Tour.active ? "Step 1 highlight tips. Activate to show the next tip." : undefined}
     >
-      <aside className={cn("relative z-[1] hidden border-r border-border bg-surface p-2 md:block", step1Tour.active && "opacity-50")}><div className="grid gap-2 text-center text-[10px]">{side.map(({ Icon, label, idx }) => <button key={label} type="button" onClick={() => setStep(idx)} className={cn("grid gap-1 rounded-md py-2", step === idx ? "bg-voice-soft text-voice" : "text-muted-foreground")}><Icon className="mx-auto size-5"/>{label}</button>)}</div></aside>
+      <aside className={cn("relative z-[1] hidden border-r border-border bg-surface p-2 md:block", step1Tour.active && "pointer-events-none opacity-50")} aria-hidden={step1Tour.active || undefined}><div className="grid gap-2 text-center text-[10px]">{side.map(({ Icon, label, idx }) => <button key={label} type="button" onClick={() => setStep(idx)} className={cn("grid gap-1 rounded-md py-2", step === idx ? "bg-voice-soft text-voice" : "text-muted-foreground")}><Icon className="mx-auto size-5"/>{label}</button>)}</div></aside>
       <div className="relative z-[1] p-5 sm:p-7"><div className={cn("flex items-center justify-between gap-3", step1Tour.active && "opacity-55")}><h3 className="text-2xl font-bold">{titles[step]}</h3><span className="shrink-0 text-xs tabular-nums text-muted-foreground">Step {step + 1} of {stepCount}</span></div>
         <AnimatePresence mode="wait"><motion.div key={step} initial={reduced ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }} transition={{ duration: .2 }} className="mt-6">{screens[step]}</motion.div></AnimatePresence>
         <div className="mt-6 flex gap-2">
@@ -425,7 +425,10 @@ export function VoiceWorkspace() {
           >
             <Button
               className="w-full bg-voice hover:bg-voice/90"
-              onClick={() => setStep(step === stepCount - 1 ? 0 : step + 1)}
+              onClick={() => {
+                if (step1Tour.active) return;
+                setStep(step === stepCount - 1 ? 0 : step + 1);
+              }}
             >
               {step === stepCount - 1 ? <><Play/> Start over</> : "Continue"}
             </Button>
