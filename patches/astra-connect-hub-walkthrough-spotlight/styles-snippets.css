@@ -1,0 +1,6 @@
+  --astra-blue: #0077ec; /* equal literal to product brand blue */
+  --astra-blue-soft: #e7f5ff;
+  --astra-blue-foreground: #ffffff;
+/* Spotlight callouts for Voice walkthrough (step panels) */
+[data-spotlight-root][data-spotlight-on="true"] {
+[data-spotlight-active="true"] {

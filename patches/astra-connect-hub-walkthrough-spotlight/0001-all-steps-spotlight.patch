@@ -1,0 +1,1451 @@
+From dda9f8bf33f488050a807068f09bcbe9f27606bd Mon Sep 17 00:00:00 2001
+From: BadhulaVijaybhaskar <BadhulaVijaybhaskar@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 05:24:49 +0000
+Subject: [PATCH 1/3] Add Step 1 spotlight callouts to VoiceWorkspace
+ walkthrough
+
+Wire shared spotlight helpers into Create AI Employee (Maya profile,
+job brief, readiness strip, Continue) with ~2.5s auto-advance,
+tap-to-skip, electric-blue rings, and reduced-motion support.
+---
+ src/components/astra-site.tsx       |   8 +-
+ src/components/astra-spotlight.tsx  | 240 ++++++++++++++++++++++++++++
+ src/components/astra-workspaces.tsx | 116 ++++++++++++--
+ src/styles.css                      |  11 ++
+ 4 files changed, 355 insertions(+), 20 deletions(-)
+ create mode 100644 src/components/astra-spotlight.tsx
+
+diff --git a/src/components/astra-site.tsx b/src/components/astra-site.tsx
+index 329f1be..b7078d5 100644
+--- a/src/components/astra-site.tsx
++++ b/src/components/astra-site.tsx
+@@ -115,7 +115,7 @@ export function Footer() {
+     ["Company",[["/integrations","Integrations"],["/pricing","Pricing"],["/book-demo","Book demo"]]],
+     ["Legal",[["/security","Security"],["/privacy","Privacy"],["/terms","Terms"]]],
+   ] as const;
+-  return <footer className="border-t border-guide-border bg-guide text-guide-foreground"><div className="site-container grid gap-10 py-14 lg:grid-cols-[1.3fr_repeat(4,1fr)]"><div><img src={brandAssets.mark} alt="AstraConnect" className="h-10 w-auto object-contain" /><p className="mt-5 max-w-xs text-sm leading-relaxed text-guide-muted">AI-powered customer communication products for businesses.</p><p className="mt-3 text-xs text-guide-muted">A product of Astranova Digital Services.</p></div>{staticGroups.slice(0,1).map(([heading,links])=><FooterGroup key={heading} heading={heading} links={links}/>)}<nav aria-label="Solutions links"><p className="eyebrow text-guide-muted">SOLUTIONS</p><div className="mt-4 grid gap-3">{solutionLinks.map(([slug,label])=><Link key={slug} to="/solutions/$slug" params={{slug}} className="text-sm text-guide-muted transition-colors hover:text-guide-foreground">{label}</Link>)}</div></nav>{staticGroups.slice(1).map(([heading,links])=><FooterGroup key={heading} heading={heading} links={links}/>)}</div><div className="border-t border-guide-border"><div className="site-container flex flex-col gap-2 py-5 text-xs text-guide-muted sm:flex-row sm:justify-between"><span>� 2026 AstraConnect.</span><span>A product of Astranova Digital Services.</span></div></div></footer>;
++  return <footer className="border-t border-guide-border bg-guide text-guide-foreground"><div className="site-container grid gap-10 py-14 lg:grid-cols-[1.3fr_repeat(4,1fr)]"><div><img src={brandAssets.mark} alt="AstraConnect" className="h-10 w-auto object-contain" /><p className="mt-5 max-w-xs text-sm leading-relaxed text-guide-muted">AI-powered customer communication products for businesses.</p><p className="mt-3 text-xs text-guide-muted">A product of Astranova Digital Services.</p></div>{staticGroups.slice(0,1).map(([heading,links])=><FooterGroup key={heading} heading={heading} links={links}/>)}<nav aria-label="Solutions links"><p className="eyebrow text-guide-muted">SOLUTIONS</p><div className="mt-4 grid gap-3">{solutionLinks.map(([slug,label])=><Link key={slug} to="/solutions/$slug" params={{slug}} className="text-sm text-guide-muted transition-colors hover:text-guide-foreground">{label}</Link>)}</div></nav>{staticGroups.slice(1).map(([heading,links])=><FooterGroup key={heading} heading={heading} links={links}/>)}</div><div className="border-t border-guide-border"><div className="site-container flex flex-col gap-2 py-5 text-xs text-guide-muted sm:flex-row sm:justify-between"><span>© 2026 AstraConnect.</span><span>A product of Astranova Digital Services.</span></div></div></footer>;
+ }
+ 
+ function FooterGroup({heading,links}:{heading:string;links:readonly (readonly ["/astra-voice"|"/astra-chat"|"/integrations"|"/pricing"|"/book-demo"|"/security"|"/privacy"|"/terms",string])[]}) {
+@@ -136,7 +136,7 @@ export function VoicePreview({ compact = false }: { compact?: boolean }) {
+     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3"><ProductLogo product="voice" /><span className="rounded-full bg-voice/10 px-3 py-1 text-xs font-medium text-voice">AI employee</span></div>
+     <p className="mt-3 font-semibold">Turn calls into customers with AI employees.</p>
+     <div className="mt-3 grid gap-3 sm:grid-cols-[.8fr_1.2fr]">
+-      <div className="rounded-md border border-border bg-card p-3"><div className="flex items-center gap-2 text-xs text-voice"><Phone className="size-4"/> Incoming call <span className="ml-auto tabular-nums">00:08</span></div><div className="mt-4 flex items-center gap-3"><span className="grid size-10 place-items-center rounded-full bg-voice/10 font-semibold">AM</span><div><b className="text-sm">Arjun Mehta</b><p className="text-xs text-muted-foreground">Acme Retail · Bengaluru</p></div></div><Button size="sm" className="mt-4 w-full bg-voice hover:bg-voice/90" onClick={() => setActive((v) => !v)}>{active ? <><X /> End call</> : <><Phone /> Answer call</>}</Button></div>
++      <div className="rounded-md border border-border bg-card p-3"><div className="flex items-center gap-2 text-xs text-voice"><Phone className="size-4"/> Incoming call <span className="ml-auto tabular-nums">00:08</span></div><div className="mt-4 flex items-center gap-3"><span className="grid size-10 place-items-center rounded-full bg-voice/10 font-semibold">AM</span><div><b className="text-sm">Arjun Mehta</b><p className="text-xs text-muted-foreground">Acme Retail Â· Bengaluru</p></div></div><Button size="sm" className="mt-4 w-full bg-voice hover:bg-voice/90" onClick={() => setActive((v) => !v)}>{active ? <><X /> End call</> : <><Phone /> Answer call</>}</Button></div>
+       <motion.div layout className="rounded-md border border-border bg-card p-3"><div className="flex items-center gap-2"><span className="grid size-8 place-items-center rounded-full bg-voice/10 text-voice"><Sparkles className="size-4"/></span><div><b className="text-sm">Maya</b><p className="text-xs text-muted-foreground">Lead qualification</p></div></div><p className="mt-3 rounded-md bg-voice-soft p-3 text-xs leading-relaxed">{active ? "Hi Arjun, Maya from Astra here. What would make a new sales system valuable for your team?" : "Ready to qualify new enquiries and book meetings, 24/7."}</p><div className="mt-4 flex h-8 items-center gap-1" aria-label="Call audio waveform">{[9,17,25,13,29,20,10,18,26,12,19,8].map((height,index)=><motion.i key={index} animate={{ height: active ? [height, Math.max(8, 34-height), height] : 6 }} transition={{ repeat: active ? Infinity : 0, duration: .8, delay: index*.04 }} className="w-1 rounded-full bg-voice" />)}</div></motion.div>
+     </div>
+   </div>;
+@@ -158,7 +158,7 @@ export function ChatPreview({ compact = false }: { compact?: boolean }) {
+     <p className="mt-3 font-semibold">Turn WhatsApp conversations into customers.</p>
+     <div className="mt-3 grid gap-3 sm:grid-cols-[.85fr_1.15fr]">
+       <div className="rounded-md border border-border bg-card p-2"><div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold"><MessageCircle className="size-4 text-chat"/> WhatsApp Inbox <Search className="ml-auto size-4 text-muted-foreground"/></div>{contacts.slice(0, compact ? 3 : undefined).map((contact,index)=><button type="button" key={contact.name} onClick={()=>setSelected(index)} className={cn("mt-1 grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md p-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",selected===index&&"bg-chat-soft")}><span className="grid size-8 place-items-center rounded-full bg-chat/15 text-xs font-medium">{contact.initials}</span><span className="min-w-0"><b className="block truncate text-xs">{contact.name}</b><span className="block truncate text-[11px] text-muted-foreground">{contact.note}</span></span><span className="text-[9px] text-muted-foreground">{contact.time}</span></button>)}</div>
+-      <div className="flex min-h-56 flex-col rounded-md border border-border bg-card"><div className="flex items-center gap-2 border-b border-border p-3"><span className="grid size-8 place-items-center rounded-full bg-chat/15 text-xs">{activeContact.initials}</span><b className="text-sm">{activeContact.name}</b><Video className="ml-auto size-4"/><Phone className="size-4"/><MoreHorizontal className="size-4"/></div><div className="flex flex-1 flex-col gap-2 p-3 text-xs"><span className="max-w-[78%] rounded-md bg-secondary p-2">Hi! I’d like to see how AstraConnect works.</span><span className="ml-auto max-w-[78%] rounded-md bg-chat-soft p-2">Absolutely — what works best for your team?</span>{sent.map((text)=><motion.span initial={{opacity:0,y:5}} animate={{opacity:1,y:0}} key={text} className="ml-auto max-w-[78%] rounded-md bg-chat-soft p-2">{text}</motion.span>)}</div><form className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-t border-border p-2" onSubmit={(event)=>{event.preventDefault(); if(message.trim()){setSent((values)=>[...values,message]);setMessage("");}}}><Paperclip className="size-4 text-muted-foreground"/><Input value={message} onChange={(event)=>setMessage(event.target.value)} className="h-8 border-0 shadow-none" placeholder="Type a message…" aria-label="Message"/><Button size="icon" className="size-8 bg-chat hover:bg-chat/90" aria-label="Send message"><Send/></Button></form></div>
++      <div className="flex min-h-56 flex-col rounded-md border border-border bg-card"><div className="flex items-center gap-2 border-b border-border p-3"><span className="grid size-8 place-items-center rounded-full bg-chat/15 text-xs">{activeContact.initials}</span><b className="text-sm">{activeContact.name}</b><Video className="ml-auto size-4"/><Phone className="size-4"/><MoreHorizontal className="size-4"/></div><div className="flex flex-1 flex-col gap-2 p-3 text-xs"><span className="max-w-[78%] rounded-md bg-secondary p-2">Hi! Iâ€™d like to see how AstraConnect works.</span><span className="ml-auto max-w-[78%] rounded-md bg-chat-soft p-2">Absolutely â€” what works best for your team?</span>{sent.map((text)=><motion.span initial={{opacity:0,y:5}} animate={{opacity:1,y:0}} key={text} className="ml-auto max-w-[78%] rounded-md bg-chat-soft p-2">{text}</motion.span>)}</div><form className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-t border-border p-2" onSubmit={(event)=>{event.preventDefault(); if(message.trim()){setSent((values)=>[...values,message]);setMessage("");}}}><Paperclip className="size-4 text-muted-foreground"/><Input value={message} onChange={(event)=>setMessage(event.target.value)} className="h-8 border-0 shadow-none" placeholder="Type a messageâ€¦" aria-label="Message"/><Button size="icon" className="size-8 bg-chat hover:bg-chat/90" aria-label="Send message"><Send/></Button></form></div>
+     </div>
+   </div>;
+ }
+@@ -175,7 +175,7 @@ export const callData = [{name:"Qualified",value:46,color:"var(--voice)"},{name:
+ export const funnelData = [{name:"Conversations",value:128,fill:"var(--voice)"},{name:"Qualified",value:74,fill:"var(--chat)"},{name:"Meetings",value:38,fill:"var(--success)"}];
+ 
+ export function OutcomeCharts({ accent = "voice" }: { accent?: "voice" | "chat" }) {
+-  return <section id="analytics" className="border-y border-border bg-surface py-20"><div className="mx-auto max-w-[1200px] px-5 lg:px-8"><p className="mb-4 text-xs font-semibold text-muted-foreground">ILLUSTRATIVE DEMO · SAMPLE DATA</p><div className="grid gap-5 lg:grid-cols-2"><div className="rounded-lg border border-border bg-card p-5"><div className="flex items-start justify-between"><div><p className="eyebrow">CALL OUTCOMES</p><h3 className="mt-2 text-2xl font-bold">Every conversation, measured.</h3></div><BarChart3 className={accent==="voice"?"text-voice":"text-chat"}/></div><div className="mt-5 h-64" role="img" aria-label="Call outcomes: 46 percent qualified, 31 percent follow-up, 23 percent not now"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={callData} dataKey="value" innerRadius={58} outerRadius={88} paddingAngle={3}>{callData.map((item)=><Cell key={item.name} fill={item.color}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer></div><div className="flex justify-center gap-4 text-xs">{callData.map((item)=><span key={item.name} className="flex items-center gap-1.5"><i className="size-2 rounded-full" style={{background:item.color}}/>{item.name} {item.value}%</span>)}</div></div><div className="rounded-lg border border-border bg-card p-5"><p className="eyebrow">SALES FUNNEL</p><h3 className="mt-2 text-2xl font-bold">From contact to meeting.</h3><div className="mt-5 h-64" role="img" aria-label="Sales funnel: 128 conversations, 74 qualified leads, 38 meetings"><ResponsiveContainer width="100%" height="100%"><FunnelChart><Tooltip/><Funnel dataKey="value" data={funnelData}/></FunnelChart></ResponsiveContainer></div><div className="grid grid-cols-3 gap-2 text-center">{funnelData.map((item)=><div key={item.name}><b className="block text-xl tabular-nums">{item.value}</b><span className="text-xs text-muted-foreground">{item.name}</span></div>)}</div></div></div></div></section>;
++  return <section id="analytics" className="border-y border-border bg-surface py-20"><div className="mx-auto max-w-[1200px] px-5 lg:px-8"><p className="mb-4 text-xs font-semibold text-muted-foreground">ILLUSTRATIVE DEMO Â· SAMPLE DATA</p><div className="grid gap-5 lg:grid-cols-2"><div className="rounded-lg border border-border bg-card p-5"><div className="flex items-start justify-between"><div><p className="eyebrow">CALL OUTCOMES</p><h3 className="mt-2 text-2xl font-bold">Every conversation, measured.</h3></div><BarChart3 className={accent==="voice"?"text-voice":"text-chat"}/></div><div className="mt-5 h-64" role="img" aria-label="Call outcomes: 46 percent qualified, 31 percent follow-up, 23 percent not now"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={callData} dataKey="value" innerRadius={58} outerRadius={88} paddingAngle={3}>{callData.map((item)=><Cell key={item.name} fill={item.color}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer></div><div className="flex justify-center gap-4 text-xs">{callData.map((item)=><span key={item.name} className="flex items-center gap-1.5"><i className="size-2 rounded-full" style={{background:item.color}}/>{item.name} {item.value}%</span>)}</div></div><div className="rounded-lg border border-border bg-card p-5"><p className="eyebrow">SALES FUNNEL</p><h3 className="mt-2 text-2xl font-bold">From contact to meeting.</h3><div className="mt-5 h-64" role="img" aria-label="Sales funnel: 128 conversations, 74 qualified leads, 38 meetings"><ResponsiveContainer width="100%" height="100%"><FunnelChart><Tooltip/><Funnel dataKey="value" data={funnelData}/></FunnelChart></ResponsiveContainer></div><div className="grid grid-cols-3 gap-2 text-center">{funnelData.map((item)=><div key={item.name}><b className="block text-xl tabular-nums">{item.value}</b><span className="text-xs text-muted-foreground">{item.name}</span></div>)}</div></div></div></div></section>;
+ }
+ 
+ export { ChatWorkspace, VoiceWorkspace } from "@/components/astra-workspaces";
+\ No newline at end of file
+diff --git a/src/components/astra-spotlight.tsx b/src/components/astra-spotlight.tsx
+new file mode 100644
+index 0000000..18d0cd7
+--- /dev/null
++++ b/src/components/astra-spotlight.tsx
+@@ -0,0 +1,240 @@
++import { AnimatePresence, motion, useReducedMotion } from "motion/react";
++import {
++  useCallback,
++  useEffect,
++  useId,
++  useRef,
++  useState,
++  type ReactNode,
++} from "react";
++import { cn } from "@/lib/utils";
++
++/** Soft electric-blue ring shared with --astra-blue / brand #0077ec. */
++export const ASTRA_SPOTLIGHT_BLUE = "#0077ec";
++
++export type SpotlightStep = {
++  /** Matches data-spotlight on the target inside the tour root. */
++  id: string;
++  tip: string;
++};
++
++export const VOICE_STEP1_SPOTLIGHTS: SpotlightStep[] = [
++  {
++    id: "maya-profile",
++    tip: "This is Maya — your AI employee. Name, team, and Ready all live here.",
++  },
++  {
++    id: "job-box",
++    tip: "One-line brief. If she only remembered one thing, it’s this.",
++  },
++  {
++    id: "readiness",
++    tip: "Her readiness strip. When these light up, she’s cleared for the floor.",
++  },
++  {
++    id: "continue",
++    tip: "Next we’ll teach her how to talk — script, knowledge, rules.",
++  },
++];
++
++const DEFAULT_DWELL_MS = 2500;
++
++type TourState = {
++  index: number;
++  active: boolean;
++};
++
++/**
++ * Shared spotlight tour for marketing walkthrough panels.
++ * One tip + ring at a time; auto-advances; click/tap skips to next.
++ */
++export function useSpotlightTour({
++  enabled,
++  steps,
++  dwellMs = DEFAULT_DWELL_MS,
++}: {
++  enabled: boolean;
++  steps: SpotlightStep[];
++  dwellMs?: number;
++}) {
++  const reduced = useReducedMotion();
++  const [state, setState] = useState<TourState>({ index: 0, active: false });
++  const timerRef = useRef<number | null>(null);
++
++  const clearTimer = useCallback(() => {
++    if (timerRef.current != null) {
++      window.clearTimeout(timerRef.current);
++      timerRef.current = null;
++    }
++  }, []);
++
++  const advance = useCallback(() => {
++    setState((prev) => {
++      if (!prev.active) return prev;
++      const next = prev.index + 1;
++      if (next >= steps.length) return { index: 0, active: false };
++      return { index: next, active: true };
++    });
++  }, [steps.length]);
++
++  useEffect(() => {
++    clearTimer();
++    if (!enabled || steps.length === 0) {
++      setState({ index: 0, active: false });
++      return;
++    }
++    setState({ index: 0, active: true });
++  }, [enabled, steps.length, clearTimer]);
++
++  useEffect(() => {
++    clearTimer();
++    if (!state.active || !enabled) return;
++    // Reduced motion: keep the first tip until the user taps; no auto-advance.
++    if (reduced) return clearTimer;
++    timerRef.current = window.setTimeout(advance, dwellMs);
++    return clearTimer;
++  }, [state.active, state.index, enabled, reduced, dwellMs, advance, clearTimer]);
++
++  const skip = useCallback(() => {
++    if (!state.active) return;
++    clearTimer();
++    advance();
++  }, [state.active, clearTimer, advance]);
++
++  const current = state.active ? steps[state.index] ?? null : null;
++
++  return {
++    active: state.active,
++    index: state.index,
++    current,
++    skip,
++    reducedMotion: !!reduced,
++    stepCount: steps.length,
++  };
++}
++
++export function SpotlightTipBubble({
++  tip,
++  stepLabel,
++  reducedMotion,
++  placement = "below",
++}: {
++  tip: string;
++  stepLabel?: string | undefined;
++  reducedMotion?: boolean | undefined;
++  placement?: "below" | "above";
++}) {
++  const tipId = useId();
++  const below = placement === "below";
++  return (
++    <motion.div
++      key={tip}
++      role="status"
++      aria-live="polite"
++      aria-labelledby={tipId}
++      initial={reducedMotion ? false : { opacity: 0, y: below ? 6 : -6, scale: 0.98 }}
++      animate={{ opacity: 1, y: 0, scale: 1 }}
++      exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: below ? 4 : -4, scale: 0.98 }}
++      transition={{ duration: reducedMotion ? 0.01 : 0.22, ease: "easeOut" }}
++      className={cn(
++        "pointer-events-none absolute left-3 right-3 z-20 max-w-[280px] rounded-lg border bg-card px-3 py-2.5 text-left shadow-[0_10px_28px_rgba(15,23,41,0.12)] sm:left-auto sm:right-0",
++        below ? "top-[calc(100%+10px)]" : "bottom-[calc(100%+10px)]",
++      )}
++      style={{ borderColor: "color-mix(in oklab, var(--astra-blue, #0077ec) 35%, transparent)" }}
++    >
++      <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.14em] text-[color:var(--astra-blue,#0077ec)]">
++        {stepLabel ?? "Tip"}
++      </span>
++      <p id={tipId} className="text-pretty text-xs leading-relaxed text-foreground/90 sm:text-[13px]">
++        {tip}
++      </p>
++      <span
++        aria-hidden="true"
++        className={cn(
++          "absolute right-6 size-3 rotate-45 border bg-card",
++          below ? "-top-1.5 border-l border-t" : "-bottom-1.5 border-r border-b",
++        )}
++        style={{ borderColor: "color-mix(in oklab, var(--astra-blue, #0077ec) 35%, transparent)" }}
++      />
++    </motion.div>
++  );
++}
++
++export function SpotlightTarget({
++  id,
++  active,
++  tourActive,
++  className,
++  children,
++  tip,
++  tipLabel,
++  reducedMotion,
++  tipPlacement = "below",
++}: {
++  id: string;
++  active: boolean;
++  tourActive: boolean;
++  className?: string | undefined;
++  children: ReactNode;
++  tip?: string | undefined;
++  tipLabel?: string | undefined;
++  reducedMotion?: boolean | undefined;
++  tipPlacement?: "below" | "above";
++}) {
++  return (
++    <div
++      data-spotlight={id}
++      data-spotlight-active={active ? "true" : undefined}
++      className={cn(
++        "relative rounded-lg transition-[opacity,box-shadow,filter] duration-300",
++        tourActive && !active && "opacity-40 saturate-[0.85]",
++        active && "z-10",
++        className,
++      )}
++      style={
++        active
++          ? {
++              boxShadow: `0 0 0 2px ${ASTRA_SPOTLIGHT_BLUE}, 0 0 0 7px color-mix(in oklab, ${ASTRA_SPOTLIGHT_BLUE} 22%, transparent)`,
++            }
++          : undefined
++      }
++    >
++      {children}
++      <AnimatePresence>
++        {active && tip ? (
++          <SpotlightTipBubble
++            tip={tip}
++            stepLabel={tipLabel}
++            reducedMotion={reducedMotion}
++            placement={tipPlacement}
++          />
++        ) : null}
++      </AnimatePresence>
++    </div>
++  );
++}
++
++/** Optional full-panel skip control for tours that need an explicit overlay hit-target. */
++export function SpotlightSkipLayer({
++  active,
++  onSkip,
++  label = "Show next tip",
++}: {
++  active: boolean;
++  onSkip: () => void;
++  label?: string;
++}) {
++  if (!active) return null;
++  return (
++    <button
++      type="button"
++      aria-label={label}
++      onClick={(e) => {
++        e.preventDefault();
++        e.stopPropagation();
++        onSkip();
++      }}
++      className="absolute inset-0 z-30 cursor-pointer rounded-[inherit] bg-transparent"
++    />
++  );
++}
+diff --git a/src/components/astra-workspaces.tsx b/src/components/astra-workspaces.tsx
+index 4421eeb..5ef7b1e 100644
+--- a/src/components/astra-workspaces.tsx
++++ b/src/components/astra-workspaces.tsx
+@@ -11,9 +11,14 @@ import { Input } from "@/components/ui/input";
+ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+ import { cn } from "@/lib/utils";
+ import { ProductLogo } from "@/components/astra-site";
++import {
++  SpotlightTarget,
++  VOICE_STEP1_SPOTLIGHTS,
++  useSpotlightTour,
++} from "@/components/astra-spotlight";
+ 
+-function Frame({ children, label }: { children: ReactNode; label: string }) {
+-  return <div className="overflow-hidden rounded-lg border border-border bg-card shadow-panel"><div className="grid grid-cols-[minmax(0,1fr)_auto] items-center border-b border-border px-4 py-2 text-xs text-muted-foreground"><span className="truncate">{label}</span><span className="flex gap-1.5" aria-hidden="true"><i className="size-2 rounded-full bg-destructive"/><i className="size-2 rounded-full bg-warning"/><i className="size-2 rounded-full bg-success"/></span></div>{children}</div>;
++function Frame({ children, label, allowOverflow = false }: { children: ReactNode; label: string; allowOverflow?: boolean }) {
++  return <div className={cn("rounded-lg border border-border bg-card shadow-panel", allowOverflow ? "overflow-visible" : "overflow-hidden")}><div className="grid grid-cols-[minmax(0,1fr)_auto] items-center border-b border-border px-4 py-2 text-xs text-muted-foreground"><span className="truncate">{label}</span><span className="flex gap-1.5" aria-hidden="true"><i className="size-2 rounded-full bg-destructive"/><i className="size-2 rounded-full bg-warning"/><i className="size-2 rounded-full bg-success"/></span></div>{children}</div>;
+ }
+ 
+ /* ---------------- Astra Chat ---------------- */
+@@ -163,11 +168,31 @@ function Toggle({ label, defaultOn = true }: { label: string; defaultOn?: boolea
+   return <button type="button" role="switch" aria-checked={on} onClick={() => setOn(!on)} className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><span>{label}</span><span className={cn("relative h-5 w-9 rounded-full transition-colors", on ? "bg-voice" : "bg-border")}><i className={cn("absolute top-0.5 size-4 rounded-full bg-background transition-all", on ? "left-[18px]" : "left-0.5")}/></span></button>;
+ }
+ 
+-function StepCreate() {
+-  return <div className="space-y-5">
+-    <div className="flex items-center gap-4 rounded-lg border border-border p-4"><span className="grid size-14 place-items-center rounded-full bg-voice/10 text-2xl font-bold text-voice">M</span><div className="min-w-0"><h4 className="text-xl font-bold">Maya</h4><p className="text-sm text-muted-foreground">Lead qualification · Sales team</p></div><span className="ml-auto flex items-center gap-1 text-sm text-success"><i className="size-2 rounded-full bg-success"/> Ready</span></div>
+-    <div className="rounded-lg border border-border p-4"><p className="text-sm font-semibold">Job</p><p className="mt-1 text-sm text-muted-foreground">Qualify new enquiries and identify the next step.</p></div>
+-    <div className="grid gap-2 sm:grid-cols-3">{["Instructions ready","Knowledge added","Outcome fields set"].map((x)=><div key={x} className="rounded-md border border-border bg-voice-soft/40 p-3 text-sm font-semibold">{x}</div>)}</div>
++function StepCreate({
++  spotlightId,
++  tourActive,
++  tip,
++  tipLabel,
++  reducedMotion,
++}: {
++  spotlightId?: string | null | undefined;
++  tourActive?: boolean | undefined;
++  tip?: string | undefined;
++  tipLabel?: string | undefined;
++  reducedMotion?: boolean | undefined;
++}) {
++  const active = (id: string) => tourActive && spotlightId === id;
++  const tipFor = (id: string) => (active(id) ? tip : undefined);
++  return <div className={cn("space-y-5", tourActive && "space-y-14 pb-4")}>
++    <SpotlightTarget id="maya-profile" active={!!active("maya-profile")} tourActive={!!tourActive} tip={tipFor("maya-profile")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="flex items-center gap-4 rounded-lg border border-border p-4"><span className="grid size-14 place-items-center rounded-full bg-voice/10 text-2xl font-bold text-voice">M</span><div className="min-w-0"><h4 className="text-xl font-bold">Maya</h4><p className="text-sm text-muted-foreground">Lead qualification · Sales team</p></div><span className="ml-auto flex items-center gap-1 text-sm text-success"><i className="size-2 rounded-full bg-success"/> Ready</span></div>
++    </SpotlightTarget>
++    <SpotlightTarget id="job-box" active={!!active("job-box")} tourActive={!!tourActive} tip={tipFor("job-box")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="rounded-lg border border-border p-4"><p className="text-sm font-semibold">Job</p><p className="mt-1 text-sm text-muted-foreground">Qualify new enquiries and identify the next step.</p></div>
++    </SpotlightTarget>
++    <SpotlightTarget id="readiness" active={!!active("readiness")} tourActive={!!tourActive} tip={tipFor("readiness")} tipLabel={tipLabel} reducedMotion={reducedMotion} tipPlacement="above">
++      <div className="grid gap-2 sm:grid-cols-3">{["Instructions ready","Knowledge added","Outcome fields set"].map((x)=><div key={x} className="rounded-md border border-border bg-voice-soft/40 p-3 text-sm font-semibold">{x}</div>)}</div>
++    </SpotlightTarget>
+   </div>;
+ }
+ 
+@@ -323,8 +348,26 @@ export function VoiceWorkspace() {
+     "Structured result",
+     "Next action",
+   ];
++  const [step, setStep] = useState(0);
++  const barRef = useRef<HTMLDivElement>(null);
++  const reduced = useReducedMotion();
++  const stepCount = steps.length;
++  const step1Tour = useSpotlightTour({
++    enabled: step === 0,
++    steps: VOICE_STEP1_SPOTLIGHTS,
++  });
++  const tipLabel = step1Tour.active
++    ? `Tip ${step1Tour.index + 1} of ${step1Tour.stepCount}`
++    : undefined;
+   const screens = [
+-    <StepCreate key="c"/>,
++    <StepCreate
++      key="c"
++      spotlightId={step1Tour.current?.id}
++      tourActive={step1Tour.active}
++      tip={step1Tour.current?.tip}
++      tipLabel={tipLabel}
++      reducedMotion={step1Tour.reducedMotion}
++    />,
+     <StepTeach key="t"/>,
+     <StepVoiceLanguage key="vl"/>,
+     <StepConnect key="n"/>,
+@@ -332,10 +375,6 @@ export function VoiceWorkspace() {
+     <StepStructuredResult key="sr"/>,
+     <StepNextAction key="na"/>,
+   ];
+-  const [step, setStep] = useState(0);
+-  const barRef = useRef<HTMLDivElement>(null);
+-  const reduced = useReducedMotion();
+-  const stepCount = steps.length;
+   useEffect(() => { if (!barRef.current) return; if (reduced) { barRef.current.style.transform = `scaleY(${(step + 1) / stepCount})`; return; } gsap.to(barRef.current, { scaleY: (step + 1) / stepCount, duration: 0.5, ease: "power3.out" }); }, [step, reduced, stepCount]);
+   const side = [
+     { Icon: UserRound, label: "Employee", idx: 0 },
+@@ -346,13 +385,58 @@ export function VoiceWorkspace() {
+     { Icon: FileText, label: "Outcome", idx: 5 },
+     { Icon: BarChart3, label: "Next", idx: 6 },
+   ];
++  const continueSpotlight = step === 0 && step1Tour.active && step1Tour.current?.id === "continue";
+   return <div className="grid items-start gap-8 lg:grid-cols-[.72fr_1.28fr]">
+     <div className="relative pl-7"><div className="absolute bottom-3 left-[7px] top-3 w-px bg-border"><div ref={barRef} className="h-full origin-top bg-voice" style={{ transform: `scaleY(${1 / stepCount})` }}/></div>{steps.map((label, index) => <button key={label} type="button" aria-current={step === index ? "step" : undefined} onClick={() => setStep(index)} className={cn("relative mb-2 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", step === index ? "bg-voice-soft font-semibold" : "text-muted-foreground hover:bg-secondary")}><span className={cn("absolute -left-[27px] grid size-4 place-items-center rounded-full border bg-background", step >= index && "border-voice bg-voice text-voice-foreground")}>{step > index && <Check className="size-3"/>}</span><span className="text-sm tabular-nums">0{index + 1}</span><span className="text-sm leading-snug">{label}</span></button>)}</div>
+-    <Frame label="Astra Voice · workspace (sample data)"><div className="grid min-h-[520px] md:grid-cols-[84px_1fr]">
+-      <aside className="hidden border-r border-border bg-surface p-2 md:block"><div className="grid gap-2 text-center text-[10px]">{side.map(({ Icon, label, idx }) => <button key={label} type="button" onClick={() => setStep(idx)} className={cn("grid gap-1 rounded-md py-2", step === idx ? "bg-voice-soft text-voice" : "text-muted-foreground")}><Icon className="mx-auto size-5"/>{label}</button>)}</div></aside>
+-      <div className="p-5 sm:p-7"><div className="flex items-center justify-between gap-3"><h3 className="text-2xl font-bold">{titles[step]}</h3><span className="shrink-0 text-xs tabular-nums text-muted-foreground">Step {step + 1} of {stepCount}</span></div>
++    <Frame label="Astra Voice · workspace (sample data)" allowOverflow={step1Tour.active}><div
++      className={cn("relative grid min-h-[520px] md:grid-cols-[84px_1fr]", step1Tour.active && "pb-8")}
++      data-spotlight-root="voice-step-1"
++      data-spotlight-on={step1Tour.active ? "true" : undefined}
++      onClickCapture={(e) => {
++        if (!step1Tour.active) return;
++        e.preventDefault();
++        e.stopPropagation();
++        step1Tour.skip();
++      }}
++      onKeyDown={(e) => {
++        if (!step1Tour.active) return;
++        if (e.key === "Enter" || e.key === " ") {
++          e.preventDefault();
++          step1Tour.skip();
++        }
++      }}
++      role={step1Tour.active ? "group" : undefined}
++      aria-label={step1Tour.active ? "Step 1 highlight tips. Activate to show the next tip." : undefined}
++    >
++      <aside className={cn("relative z-[1] hidden border-r border-border bg-surface p-2 md:block", step1Tour.active && "opacity-50")}><div className="grid gap-2 text-center text-[10px]">{side.map(({ Icon, label, idx }) => <button key={label} type="button" onClick={() => setStep(idx)} className={cn("grid gap-1 rounded-md py-2", step === idx ? "bg-voice-soft text-voice" : "text-muted-foreground")}><Icon className="mx-auto size-5"/>{label}</button>)}</div></aside>
++      <div className="relative z-[1] p-5 sm:p-7"><div className={cn("flex items-center justify-between gap-3", step1Tour.active && "opacity-55")}><h3 className="text-2xl font-bold">{titles[step]}</h3><span className="shrink-0 text-xs tabular-nums text-muted-foreground">Step {step + 1} of {stepCount}</span></div>
+         <AnimatePresence mode="wait"><motion.div key={step} initial={reduced ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }} transition={{ duration: .2 }} className="mt-6">{screens[step]}</motion.div></AnimatePresence>
+-        <div className="mt-6 flex gap-2">{step > 0 && <Button variant="outline" onClick={() => setStep(step - 1)}>Back</Button>}<Button className="flex-1 bg-voice hover:bg-voice/90" onClick={() => setStep(step === stepCount - 1 ? 0 : step + 1)}>{step === stepCount - 1 ? <><Play/> Start over</> : "Continue"}</Button></div>
++        <div className="mt-6 flex gap-2">
++          {step > 0 && <Button variant="outline" onClick={() => setStep(step - 1)}>Back</Button>}
++          <SpotlightTarget
++            id="continue"
++            active={!!continueSpotlight}
++            tourActive={step === 0 && step1Tour.active}
++            tip={continueSpotlight ? step1Tour.current?.tip : undefined}
++            tipLabel={tipLabel}
++            reducedMotion={step1Tour.reducedMotion}
++            tipPlacement="above"
++            className="min-w-0 flex-1"
++          >
++            <Button
++              className="w-full bg-voice hover:bg-voice/90"
++              onClick={() => setStep(step === stepCount - 1 ? 0 : step + 1)}
++            >
++              {step === stepCount - 1 ? <><Play/> Start over</> : "Continue"}
++            </Button>
++          </SpotlightTarget>
++        </div>
++        {step1Tour.active && (
++          <p className="mt-3 text-[11px] text-muted-foreground">
++            Highlight tips · tap anywhere in this panel to advance
++            {step1Tour.reducedMotion ? " · reduced motion: tips stay until you tap" : ""}
++          </p>
++        )}
+       </div>
+     </div></Frame>
+   </div>;
+diff --git a/src/styles.css b/src/styles.css
+index 2bfad71..caaf536 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -112,6 +112,9 @@
+   --voice: oklch(0.58 0.2 255);
+   --voice-foreground: oklch(1 0 0);
+   --voice-soft: oklch(0.965 0.025 250);
++  --astra-blue: #0077ec; /* equal literal to product brand blue */
++  --astra-blue-soft: #e7f5ff;
++  --astra-blue-foreground: #ffffff;
+   --chat: oklch(0.67 0.15 166);
+   --chat-dark: oklch(0.42 0.11 167);
+   --chat-soft: oklch(0.965 0.03 166);
+@@ -276,6 +279,14 @@
+   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+ }
+ 
++/* Spotlight callouts for Voice walkthrough (step panels) */
++[data-spotlight-root][data-spotlight-on="true"] {
++  isolation: isolate;
++}
++[data-spotlight-active="true"] {
++  outline: none;
++}
++
+ 
+ @utility guide-safe {
+   padding-bottom: 6.5rem;
+-- 
+2.43.0
+
+
+From 5d3b6664dc8d77d5a15d7ac5385c251e34fd9cfb Mon Sep 17 00:00:00 2001
+From: BadhulaVijaybhaskar <BadhulaVijaybhaskar@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 05:28:14 +0000
+Subject: [PATCH 2/3] Disable workspace side-nav during Step 1 spotlight tour
+
+Prevents accidental step jumps when tapping the right panel near the
+icon rail while advancing tip callouts.
+---
+ src/components/astra-workspaces.tsx | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/components/astra-workspaces.tsx b/src/components/astra-workspaces.tsx
+index 5ef7b1e..99662be 100644
+--- a/src/components/astra-workspaces.tsx
++++ b/src/components/astra-workspaces.tsx
+@@ -408,7 +408,7 @@ export function VoiceWorkspace() {
+       role={step1Tour.active ? "group" : undefined}
+       aria-label={step1Tour.active ? "Step 1 highlight tips. Activate to show the next tip." : undefined}
+     >
+-      <aside className={cn("relative z-[1] hidden border-r border-border bg-surface p-2 md:block", step1Tour.active && "opacity-50")}><div className="grid gap-2 text-center text-[10px]">{side.map(({ Icon, label, idx }) => <button key={label} type="button" onClick={() => setStep(idx)} className={cn("grid gap-1 rounded-md py-2", step === idx ? "bg-voice-soft text-voice" : "text-muted-foreground")}><Icon className="mx-auto size-5"/>{label}</button>)}</div></aside>
++      <aside className={cn("relative z-[1] hidden border-r border-border bg-surface p-2 md:block", step1Tour.active && "pointer-events-none opacity-50")} aria-hidden={step1Tour.active || undefined}><div className="grid gap-2 text-center text-[10px]">{side.map(({ Icon, label, idx }) => <button key={label} type="button" onClick={() => setStep(idx)} className={cn("grid gap-1 rounded-md py-2", step === idx ? "bg-voice-soft text-voice" : "text-muted-foreground")}><Icon className="mx-auto size-5"/>{label}</button>)}</div></aside>
+       <div className="relative z-[1] p-5 sm:p-7"><div className={cn("flex items-center justify-between gap-3", step1Tour.active && "opacity-55")}><h3 className="text-2xl font-bold">{titles[step]}</h3><span className="shrink-0 text-xs tabular-nums text-muted-foreground">Step {step + 1} of {stepCount}</span></div>
+         <AnimatePresence mode="wait"><motion.div key={step} initial={reduced ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }} transition={{ duration: .2 }} className="mt-6">{screens[step]}</motion.div></AnimatePresence>
+         <div className="mt-6 flex gap-2">
+@@ -425,7 +425,10 @@ export function VoiceWorkspace() {
+           >
+             <Button
+               className="w-full bg-voice hover:bg-voice/90"
+-              onClick={() => setStep(step === stepCount - 1 ? 0 : step + 1)}
++              onClick={() => {
++                if (step1Tour.active) return;
++                setStep(step === stepCount - 1 ? 0 : step + 1);
++              }}
+             >
+               {step === stepCount - 1 ? <><Play/> Start over</> : "Continue"}
+             </Button>
+-- 
+2.43.0
+
+
+From f82cafc76dd216d49866a936de44f16baf6e010f Mon Sep 17 00:00:00 2001
+From: BadhulaVijaybhaskar <BadhulaVijaybhaskar@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 05:52:23 +0000
+Subject: [PATCH 3/3] =?UTF-8?q?Add=20spotlight=20callouts=20for=20all=20Vo?=
+ =?UTF-8?q?iceWorkspace=20steps=20(01=E2=80=9307)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Data-driven tip configs per step, shared spotlight helpers, auto-demo
+advance after each tip tour, and Auto demo footer. Step 01 behavior
+preserved; steps 02–07 teach Teach/Voice/Connect/Call/Outcome/Next.
+---
+ src/components/astra-spotlight.tsx  | 207 +++++++++--
+ src/components/astra-workspaces.tsx | 534 ++++++++++++++++++----------
+ 2 files changed, 521 insertions(+), 220 deletions(-)
+
+diff --git a/src/components/astra-spotlight.tsx b/src/components/astra-spotlight.tsx
+index 18d0cd7..f4ea9b7 100644
+--- a/src/components/astra-spotlight.tsx
++++ b/src/components/astra-spotlight.tsx
+@@ -9,34 +9,159 @@ import {
+ } from "react";
+ import { cn } from "@/lib/utils";
+ 
+-/** Soft electric-blue ring shared with --astra-blue / brand #0077ec. */
++/** Soft electric-blue ring shared with --astra-blue / --voice / brand #0077ec. */
+ export const ASTRA_SPOTLIGHT_BLUE = "#0077ec";
+ 
+-export type SpotlightStep = {
++export type SpotlightTip = {
+   /** Matches data-spotlight on the target inside the tour root. */
+   id: string;
+   tip: string;
+ };
+ 
+-export const VOICE_STEP1_SPOTLIGHTS: SpotlightStep[] = [
+-  {
+-    id: "maya-profile",
+-    tip: "This is Maya — your AI employee. Name, team, and Ready all live here.",
+-  },
+-  {
+-    id: "job-box",
+-    tip: "One-line brief. If she only remembered one thing, it’s this.",
+-  },
+-  {
+-    id: "readiness",
+-    tip: "Her readiness strip. When these light up, she’s cleared for the floor.",
+-  },
+-  {
+-    id: "continue",
+-    tip: "Next we’ll teach her how to talk — script, knowledge, rules.",
+-  },
++/** Tip copy is data-driven so later edits stay copy-only. */
++export const VOICE_WALKTHROUGH_TIPS: SpotlightTip[][] = [
++  // 01 Create AI Employee
++  [
++    {
++      id: "maya-profile",
++      tip: "This is Maya — your AI employee. Name, team, and Ready all live here.",
++    },
++    {
++      id: "job-box",
++      tip: "One-line brief. If she only remembered one thing, it’s this.",
++    },
++    {
++      id: "readiness",
++      tip: "Her readiness strip. When these light up, she’s cleared for the floor.",
++    },
++    {
++      id: "continue",
++      tip: "Next we’ll teach her how to talk — script, knowledge, rules.",
++    },
++  ],
++  // 02 Teach the job
++  [
++    {
++      id: "system-prompt",
++      tip: "Her job script. What she says and how she qualifies — edit here.",
++    },
++    {
++      id: "knowledge",
++      tip: "Business knowledge. Drop PDFs, FAQs, or a site so she answers from your facts.",
++    },
++    {
++      id: "rules",
++      tip: "Rules that decide who is a lead. Toggle what she must check.",
++    },
++    {
++      id: "continue",
++      tip: "Next: pick how she sounds — voice and language.",
++    },
++  ],
++  // 03 Choose Voice & Language
++  [
++    {
++      id: "voice-profile",
++      tip: "How Maya sounds. Warm, natural, and ready for a sample listen.",
++    },
++    {
++      id: "voice-picker",
++      tip: "Pick a demo voice. Each profile is tuned for a different kind of call.",
++    },
++    {
++      id: "language",
++      tip: "Language she can speak. English plus regional options for your callers.",
++    },
++    {
++      id: "continue",
++      tip: "Next: connect a number, hours, and calendar so she can go live.",
++    },
++  ],
++  // 04 Connect
++  [
++    {
++      id: "number-routing",
++      tip: "Her business number and routing. Who gets qualified leads after the call.",
++    },
++    {
++      id: "hours",
++      tip: "Working hours. She only dials when your team is ready to follow up.",
++    },
++    {
++      id: "calendar",
++      tip: "Calendar link. Booked demos land on the right owner’s schedule.",
++    },
++    {
++      id: "continue",
++      tip: "Next: hear a sample conversation in her voice and language.",
++    },
++  ],
++  // 05 Conversation
++  [
++    {
++      id: "call-header",
++      tip: "Live call context. Who she’s talking to, status, and language in use.",
++    },
++    {
++      id: "waveform",
++      tip: "The call in motion. Audio presence while the conversation unfolds.",
++    },
++    {
++      id: "transcript",
++      tip: "The transcript. Maya and the caller, including regional language turns.",
++    },
++    {
++      id: "continue",
++      tip: "Next: see what she understood — structured fields from the talk.",
++    },
++  ],
++  // 06 Structured result
++  [
++    {
++      id: "outcome-header",
++      tip: "Structured outcome. The call becomes clean customer context.",
++    },
++    {
++      id: "pipeline",
++      tip: "Conversation → understanding → outcome → next action. The path in one glance.",
++    },
++    {
++      id: "fields",
++      tip: "Extracted fields. Interest, team, timing — ready for your CRM shape.",
++    },
++    {
++      id: "status",
++      tip: "Qualification status. Green means she’s marked this lead as ready.",
++    },
++    {
++      id: "continue",
++      tip: "Next: the follow-up she recommends after the call.",
++    },
++  ],
++  // 07 Next action
++  [
++    {
++      id: "next-action",
++      tip: "Recommended next step. Owner, timing, and what to do after the call.",
++    },
++    {
++      id: "metrics",
++      tip: "Demo metrics for this journey — calls, qualified rate, meetings booked.",
++    },
++    {
++      id: "summary",
++      tip: "Outcome summary. Regional talk, captured as English context for follow-up.",
++    },
++    {
++      id: "continue",
++      tip: "That’s the full path. Start over anytime to walk it again.",
++    },
++  ],
+ ];
+ 
++/** @deprecated Use VOICE_WALKTHROUGH_TIPS[0] */
++export const VOICE_STEP1_SPOTLIGHTS = VOICE_WALKTHROUGH_TIPS[0]!;
++
+ const DEFAULT_DWELL_MS = 2500;
+ 
+ type TourState = {
+@@ -47,19 +172,25 @@ type TourState = {
+ /**
+  * Shared spotlight tour for marketing walkthrough panels.
+  * One tip + ring at a time; auto-advances; click/tap skips to next.
++ * Calls onComplete once after the final tip finishes (auto or skip).
+  */
+ export function useSpotlightTour({
+   enabled,
+   steps,
+   dwellMs = DEFAULT_DWELL_MS,
++  onComplete,
+ }: {
+   enabled: boolean;
+-  steps: SpotlightStep[];
++  steps: SpotlightTip[];
+   dwellMs?: number;
++  onComplete?: () => void;
+ }) {
+   const reduced = useReducedMotion();
+   const [state, setState] = useState<TourState>({ index: 0, active: false });
+   const timerRef = useRef<number | null>(null);
++  const completedRef = useRef(false);
++  const onCompleteRef = useRef(onComplete);
++  onCompleteRef.current = onComplete;
+ 
+   const clearTimer = useCallback(() => {
+     if (timerRef.current != null) {
+@@ -68,23 +199,35 @@ export function useSpotlightTour({
+     }
+   }, []);
+ 
++  const finish = useCallback(() => {
++    setState({ index: 0, active: false });
++    if (!completedRef.current) {
++      completedRef.current = true;
++      onCompleteRef.current?.();
++    }
++  }, []);
++
+   const advance = useCallback(() => {
+     setState((prev) => {
+       if (!prev.active) return prev;
+       const next = prev.index + 1;
+-      if (next >= steps.length) return { index: 0, active: false };
++      if (next >= steps.length) {
++        queueMicrotask(finish);
++        return { index: 0, active: false };
++      }
+       return { index: next, active: true };
+     });
+-  }, [steps.length]);
++  }, [steps.length, finish]);
+ 
+   useEffect(() => {
+     clearTimer();
++    completedRef.current = false;
+     if (!enabled || steps.length === 0) {
+       setState({ index: 0, active: false });
+       return;
+     }
+     setState({ index: 0, active: true });
+-  }, [enabled, steps.length, clearTimer]);
++  }, [enabled, steps, clearTimer]);
+ 
+   useEffect(() => {
+     clearTimer();
+@@ -113,6 +256,24 @@ export function useSpotlightTour({
+   };
+ }
+ 
++export type SpotlightProps = {
++  spotlightId?: string | null | undefined;
++  tourActive?: boolean | undefined;
++  tip?: string | undefined;
++  tipLabel?: string | undefined;
++  reducedMotion?: boolean | undefined;
++};
++
++export function useSpotlightActive(
++  props: SpotlightProps,
++): (id: string) => boolean {
++  return (id: string) => !!props.tourActive && props.spotlightId === id;
++}
++
++export function tipForId(props: SpotlightProps, id: string): string | undefined {
++  return props.tourActive && props.spotlightId === id ? props.tip : undefined;
++}
++
+ export function SpotlightTipBubble({
+   tip,
+   stepLabel,
+diff --git a/src/components/astra-workspaces.tsx b/src/components/astra-workspaces.tsx
+index 99662be..d55f602 100644
+--- a/src/components/astra-workspaces.tsx
++++ b/src/components/astra-workspaces.tsx
+@@ -5,7 +5,7 @@ import {
+   IndianRupee, Languages, ListChecks, MessageCircle, Mic2, MoreHorizontal, Paperclip, Pause, Phone, PhoneForwarded, Play,
+   Send, Settings, Sparkles, Tag, UserRound, UsersRound, Video, X,
+ } from "lucide-react";
+-import { useEffect, useRef, useState, type ReactNode } from "react";
++import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+ import { Button } from "@/components/ui/button";
+ import { Input } from "@/components/ui/input";
+ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+@@ -13,8 +13,10 @@ import { cn } from "@/lib/utils";
+ import { ProductLogo } from "@/components/astra-site";
+ import {
+   SpotlightTarget,
+-  VOICE_STEP1_SPOTLIGHTS,
++  VOICE_WALKTHROUGH_TIPS,
++  tipForId,
+   useSpotlightTour,
++  type SpotlightProps,
+ } from "@/components/astra-spotlight";
+ 
+ function Frame({ children, label, allowOverflow = false }: { children: ReactNode; label: string; allowOverflow?: boolean }) {
+@@ -168,164 +170,202 @@ function Toggle({ label, defaultOn = true }: { label: string; defaultOn?: boolea
+   return <button type="button" role="switch" aria-checked={on} onClick={() => setOn(!on)} className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><span>{label}</span><span className={cn("relative h-5 w-9 rounded-full transition-colors", on ? "bg-voice" : "bg-border")}><i className={cn("absolute top-0.5 size-4 rounded-full bg-background transition-all", on ? "left-[18px]" : "left-0.5")}/></span></button>;
+ }
+ 
+-function StepCreate({
+-  spotlightId,
+-  tourActive,
+-  tip,
+-  tipLabel,
+-  reducedMotion,
+-}: {
+-  spotlightId?: string | null | undefined;
+-  tourActive?: boolean | undefined;
+-  tip?: string | undefined;
+-  tipLabel?: string | undefined;
+-  reducedMotion?: boolean | undefined;
+-}) {
+-  const active = (id: string) => tourActive && spotlightId === id;
+-  const tipFor = (id: string) => (active(id) ? tip : undefined);
++function StepCreate(props: SpotlightProps) {
++  const { tourActive, tipLabel, reducedMotion } = props;
++  const active = (id: string) => !!tourActive && props.spotlightId === id;
+   return <div className={cn("space-y-5", tourActive && "space-y-14 pb-4")}>
+-    <SpotlightTarget id="maya-profile" active={!!active("maya-profile")} tourActive={!!tourActive} tip={tipFor("maya-profile")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++    <SpotlightTarget id="maya-profile" active={active("maya-profile")} tourActive={!!tourActive} tip={tipForId(props, "maya-profile")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
+       <div className="flex items-center gap-4 rounded-lg border border-border p-4"><span className="grid size-14 place-items-center rounded-full bg-voice/10 text-2xl font-bold text-voice">M</span><div className="min-w-0"><h4 className="text-xl font-bold">Maya</h4><p className="text-sm text-muted-foreground">Lead qualification · Sales team</p></div><span className="ml-auto flex items-center gap-1 text-sm text-success"><i className="size-2 rounded-full bg-success"/> Ready</span></div>
+     </SpotlightTarget>
+-    <SpotlightTarget id="job-box" active={!!active("job-box")} tourActive={!!tourActive} tip={tipFor("job-box")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++    <SpotlightTarget id="job-box" active={active("job-box")} tourActive={!!tourActive} tip={tipForId(props, "job-box")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
+       <div className="rounded-lg border border-border p-4"><p className="text-sm font-semibold">Job</p><p className="mt-1 text-sm text-muted-foreground">Qualify new enquiries and identify the next step.</p></div>
+     </SpotlightTarget>
+-    <SpotlightTarget id="readiness" active={!!active("readiness")} tourActive={!!tourActive} tip={tipFor("readiness")} tipLabel={tipLabel} reducedMotion={reducedMotion} tipPlacement="above">
++    <SpotlightTarget id="readiness" active={active("readiness")} tourActive={!!tourActive} tip={tipForId(props, "readiness")} tipLabel={tipLabel} reducedMotion={reducedMotion} tipPlacement="above">
+       <div className="grid gap-2 sm:grid-cols-3">{["Instructions ready","Knowledge added","Outcome fields set"].map((x)=><div key={x} className="rounded-md border border-border bg-voice-soft/40 p-3 text-sm font-semibold">{x}</div>)}</div>
+     </SpotlightTarget>
+   </div>;
+ }
+ 
+-function StepTeach() {
+-  return <div className="space-y-5">
+-    <label className="grid gap-1.5 text-sm font-semibold">System prompt<textarea defaultValue={"You are Maya, a friendly sales assistant for Astra. Understand the caller’s team size, current tools and timeline. Be concise, never pushy, and always offer a demo when the lead qualifies."} rows={4} className="rounded-md border border-input bg-background p-3 text-sm font-normal leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"/></label>
+-    <div><p className="flex items-center gap-1.5 text-sm font-semibold"><BookOpen className="size-4 text-voice"/> Business knowledge</p><div className="mt-2 grid gap-2 sm:grid-cols-3">{[["Pricing guide.pdf", "12 pages"], ["Product FAQ", "48 answers"], ["astra.com", "Synced daily"]].map(([n, m]) => <div key={n} className="rounded-md border border-border p-3 text-sm"><FileText className="size-4 text-muted-foreground"/><b className="mt-2 block truncate">{n}</b><span className="text-xs text-muted-foreground">{m}</span></div>)}</div></div>
+-    <div><p className="flex items-center gap-1.5 text-sm font-semibold"><ListChecks className="size-4 text-voice"/> Qualification rules</p><div className="mt-2 grid gap-2"><Toggle label="Team size is 5 or more"/><Toggle label="Budget confirmed this quarter"/><Toggle label="Decision maker on the call" defaultOn={false}/></div></div>
++function StepTeach(props: SpotlightProps) {
++  const { tourActive, tipLabel, reducedMotion } = props;
++  const active = (id: string) => !!tourActive && props.spotlightId === id;
++  return <div className={cn("space-y-5", tourActive && "space-y-14 pb-4")}>
++    <SpotlightTarget id="system-prompt" active={active("system-prompt")} tourActive={!!tourActive} tip={tipForId(props, "system-prompt")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <label className="grid gap-1.5 text-sm font-semibold">System prompt<textarea defaultValue={"You are Maya, a friendly sales assistant for Astra. Understand the caller’s team size, current tools and timeline. Be concise, never pushy, and always offer a demo when the lead qualifies."} rows={4} className="rounded-md border border-input bg-background p-3 text-sm font-normal leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"/></label>
++    </SpotlightTarget>
++    <SpotlightTarget id="knowledge" active={active("knowledge")} tourActive={!!tourActive} tip={tipForId(props, "knowledge")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div><p className="flex items-center gap-1.5 text-sm font-semibold"><BookOpen className="size-4 text-voice"/> Business knowledge</p><div className="mt-2 grid gap-2 sm:grid-cols-3">{[["Pricing guide.pdf", "12 pages"], ["Product FAQ", "48 answers"], ["astra.com", "Synced daily"]].map(([n, m]) => <div key={n} className="rounded-md border border-border p-3 text-sm"><FileText className="size-4 text-muted-foreground"/><b className="mt-2 block truncate">{n}</b><span className="text-xs text-muted-foreground">{m}</span></div>)}</div></div>
++    </SpotlightTarget>
++    <SpotlightTarget id="rules" active={active("rules")} tourActive={!!tourActive} tip={tipForId(props, "rules")} tipLabel={tipLabel} reducedMotion={reducedMotion} tipPlacement="above">
++      <div><p className="flex items-center gap-1.5 text-sm font-semibold"><ListChecks className="size-4 text-voice"/> Qualification rules</p><div className="mt-2 grid gap-2"><Toggle label="Team size is 5 or more"/><Toggle label="Budget confirmed this quarter"/><Toggle label="Decision maker on the call" defaultOn={false}/></div></div>
++    </SpotlightTarget>
+   </div>;
+ }
+ 
+-function StepVoiceLanguage() {
++function StepVoiceLanguage(props: SpotlightProps) {
+   const [lang, setLang] = useState("te");
+   const [voiceId, setVoiceId] = useState("maya");
+   const [playing, setPlaying] = useState(false);
+   const [progress, setProgress] = useState(0);
+   useEffect(() => { if (!playing) return; const t = window.setInterval(() => setProgress((p) => { if (p >= 100) { setPlaying(false); return 0; } return p + 4; }), 120); return () => clearInterval(t); }, [playing]);
+   const v = voices.find((x) => x.id === voiceId)!;
+-  return <div className="space-y-5">
+-    <div className="rounded-lg border border-voice/30 bg-voice-soft p-4">
+-      <p className="flex items-center gap-1.5 text-[11px] font-bold tracking-[0.12em] text-voice"><Mic2 className="size-3.5"/> VOICE</p>
+-      <b className="mt-2 block text-lg">Warm · Natural · Indian English</b>
+-      <p className="mt-1 text-sm text-muted-foreground">Demo voice profile for Maya — illustrative sample.</p>
+-      <div className="mt-3 grid gap-2 sm:grid-cols-3">{voices.map((x) => <button key={x.id} type="button" aria-pressed={voiceId === x.id} onClick={() => { setVoiceId(x.id); setProgress(0); setPlaying(false); }} className={cn("rounded-md border p-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", voiceId === x.id ? "border-voice bg-card" : "border-border bg-card/70 hover:bg-card")}><b className="flex items-center gap-1.5">{voiceId === x.id && <Check className="size-3.5 text-voice"/>}{x.name}</b><span className="text-xs text-muted-foreground">{x.tone}</span></button>)}</div>
+-      <div className="mt-3 flex items-center gap-3 rounded-md border border-border bg-card p-3"><Button size="icon" className="size-10 shrink-0 rounded-full bg-voice hover:bg-voice/90" aria-label={playing ? "Pause sample" : "Play voice sample"} onClick={() => setPlaying(!playing)}>{playing ? <Pause/> : <Play/>}</Button><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">“Hi, this is {v.name} from Astra. Is now a good time?”</p><div className="mt-2 flex h-5 items-end gap-[3px]" aria-hidden="true">{Array.from({ length: 28 }, (_, i) => <i key={i} className={cn("w-1 rounded-full", i / 28 * 100 < progress ? "bg-voice" : "bg-voice/25")} style={{ height: `${6 + ((i * 7) % 16)}px` }}/>)}</div></div></div>
+-    </div>
+-    <div className="rounded-lg border border-border p-4">
+-      <p className="flex items-center gap-1.5 text-[11px] font-bold tracking-[0.12em] text-muted-foreground"><Languages className="size-3.5 text-voice"/> LANGUAGE</p>
+-      <b className="mt-2 block text-lg">Regional language ready</b>
+-      <p className="mt-1 text-sm text-muted-foreground">Speak to customers in English and selected regional languages.</p>
+-      <div className="mt-3 flex flex-wrap gap-2">
+-        {languageChips.map((chip) => (
+-          <button
+-            key={chip.id}
+-            type="button"
+-            aria-pressed={lang === chip.id}
+-            onClick={() => setLang(chip.id)}
+-            className={cn(
+-              "rounded-full border px-3 py-1.5 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+-              lang === chip.id ? "border-voice bg-voice text-voice-foreground shadow-[0_8px_18px_color-mix(in_oklab,var(--voice)_25%,transparent)]" : "border-border bg-card text-muted-foreground hover:bg-secondary",
+-            )}
+-          >
+-            {chip.label}
+-            {chip.status === "preview" && lang !== chip.id && <span className="ml-1.5 text-[10px] font-medium opacity-70">Demo preview</span>}
+-            {chip.status === "preview" && lang === chip.id && <span className="ml-1.5 text-[10px] font-medium opacity-90">Demo preview</span>}
+-          </button>
+-        ))}
++  const { tourActive, tipLabel, reducedMotion } = props;
++  const active = (id: string) => !!tourActive && props.spotlightId === id;
++  return <div className={cn("space-y-5", tourActive && "space-y-14 pb-4")}>
++    <SpotlightTarget id="voice-profile" active={active("voice-profile")} tourActive={!!tourActive} tip={tipForId(props, "voice-profile")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="rounded-lg border border-voice/30 bg-voice-soft p-4">
++        <p className="flex items-center gap-1.5 text-[11px] font-bold tracking-[0.12em] text-voice"><Mic2 className="size-3.5"/> VOICE</p>
++        <b className="mt-2 block text-lg">Warm · Natural · Indian English</b>
++        <p className="mt-1 text-sm text-muted-foreground">Demo voice profile for Maya — illustrative sample.</p>
++        <div className="mt-3 flex items-center gap-3 rounded-md border border-border bg-card p-3"><Button size="icon" className="size-10 shrink-0 rounded-full bg-voice hover:bg-voice/90" aria-label={playing ? "Pause sample" : "Play voice sample"} onClick={() => setPlaying(!playing)}>{playing ? <Pause/> : <Play/>}</Button><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">“Hi, this is {v.name} from Astra. Is now a good time?”</p><div className="mt-2 flex h-5 items-end gap-[3px]" aria-hidden="true">{Array.from({ length: 28 }, (_, i) => <i key={i} className={cn("w-1 rounded-full", i / 28 * 100 < progress ? "bg-voice" : "bg-voice/25")} style={{ height: `${6 + ((i * 7) % 16)}px` }}/>)}</div></div></div>
+       </div>
+-      {lang === "te" && (
+-        <p className="mt-3 rounded-md bg-voice-soft px-3 py-2 text-xs font-medium text-voice">Telugu selected for this illustrative demo · outcome fields stay in English.</p>
+-      )}
+-    </div>
++    </SpotlightTarget>
++    <SpotlightTarget id="voice-picker" active={active("voice-picker")} tourActive={!!tourActive} tip={tipForId(props, "voice-picker")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="grid gap-2 sm:grid-cols-3">{voices.map((x) => <button key={x.id} type="button" aria-pressed={voiceId === x.id} onClick={() => { setVoiceId(x.id); setProgress(0); setPlaying(false); }} className={cn("rounded-md border p-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", voiceId === x.id ? "border-voice bg-card" : "border-border bg-card/70 hover:bg-card")}><b className="flex items-center gap-1.5">{voiceId === x.id && <Check className="size-3.5 text-voice"/>}{x.name}</b><span className="text-xs text-muted-foreground">{x.tone}</span></button>)}</div>
++    </SpotlightTarget>
++    <SpotlightTarget id="language" active={active("language")} tourActive={!!tourActive} tip={tipForId(props, "language")} tipLabel={tipLabel} reducedMotion={reducedMotion} tipPlacement="above">
++      <div className="rounded-lg border border-border p-4">
++        <p className="flex items-center gap-1.5 text-[11px] font-bold tracking-[0.12em] text-muted-foreground"><Languages className="size-3.5 text-voice"/> LANGUAGE</p>
++        <b className="mt-2 block text-lg">Regional language ready</b>
++        <p className="mt-1 text-sm text-muted-foreground">Speak to customers in English and selected regional languages.</p>
++        <div className="mt-3 flex flex-wrap gap-2">
++          {languageChips.map((chip) => (
++            <button
++              key={chip.id}
++              type="button"
++              aria-pressed={lang === chip.id}
++              onClick={() => setLang(chip.id)}
++              className={cn(
++                "rounded-full border px-3 py-1.5 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
++                lang === chip.id ? "border-voice bg-voice text-voice-foreground shadow-[0_8px_18px_color-mix(in_oklab,var(--voice)_25%,transparent)]" : "border-border bg-card text-muted-foreground hover:bg-secondary",
++              )}
++            >
++              {chip.label}
++              {chip.status === "preview" && lang !== chip.id && <span className="ml-1.5 text-[10px] font-medium opacity-70">Demo preview</span>}
++              {chip.status === "preview" && lang === chip.id && <span className="ml-1.5 text-[10px] font-medium opacity-90">Demo preview</span>}
++            </button>
++          ))}
++        </div>
++        {lang === "te" && (
++          <p className="mt-3 rounded-md bg-voice-soft px-3 py-2 text-xs font-medium text-voice">Telugu selected for this illustrative demo · outcome fields stay in English.</p>
++        )}
++      </div>
++    </SpotlightTarget>
+   </div>;
+ }
+ 
+-function StepConnect() {
++function StepConnect(props: SpotlightProps) {
+   const days = ["M", "T", "W", "T", "F", "S", "S"];
+-  const [active, setActive] = useState([true, true, true, true, true, false, false]);
+-  const [outlook,setOutlook]=useState(false);
+-  return <div className="space-y-5">
+-    <div className="divide-y divide-border rounded-lg border border-border px-4">
+-      <Row Icon={Phone} title="Business number"><span className="tabular-nums">+91 80 4718 2200</span> · Inbound & outbound</Row>
+-      <Row Icon={PhoneForwarded} title="Routing">Qualified → Ananya (Sales) · Support questions → Help desk · After hours → Voicemail + WhatsApp follow-up</Row>
+-    </div>
+-    <div><p className="flex items-center gap-1.5 text-sm font-semibold"><Clock className="size-4 text-voice"/> Working hours · 09:00 – 19:00 IST</p><div className="mt-2 flex gap-1.5">{days.map((d, i) => <button key={i} type="button" aria-pressed={active[i]} aria-label={`Toggle ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][i]}`} onClick={() => setActive((a) => a.map((v, j) => j === i ? !v : v))} className={cn("grid size-9 place-items-center rounded-md border text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active[i] ? "border-voice bg-voice text-voice-foreground" : "border-border text-muted-foreground")}>{d}</button>)}</div></div>
+-    <div><p className="flex items-center gap-1.5 text-sm font-semibold"><CalendarDays className="size-4 text-voice"/> Calendar</p><div className="mt-2 grid gap-2 sm:grid-cols-2"><div className="flex items-center justify-between rounded-md border border-voice/40 bg-voice-soft p-3 text-sm"><span>Configured calendar</span><span className="flex items-center gap-1 text-xs text-success"><Check className="size-3.5"/> Connected</span></div><div className="flex items-center justify-between rounded-md border border-border p-3 text-sm"><span>Second calendar</span><Button size="sm" variant="outline" className="h-7" onClick={()=>setOutlook((v)=>!v)}>{outlook?<><Check/> Connected</>:"Connect"}</Button></div></div><p className="mt-2 text-[11px] text-muted-foreground">Illustrative setup · no external account is connected.</p></div>
++  const [activeDays, setActiveDays] = useState([true, true, true, true, true, false, false]);
++  const [outlook, setOutlook] = useState(false);
++  const { tourActive, tipLabel, reducedMotion } = props;
++  const active = (id: string) => !!tourActive && props.spotlightId === id;
++  return <div className={cn("space-y-5", tourActive && "space-y-14 pb-4")}>
++    <SpotlightTarget id="number-routing" active={active("number-routing")} tourActive={!!tourActive} tip={tipForId(props, "number-routing")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="divide-y divide-border rounded-lg border border-border px-4">
++        <Row Icon={Phone} title="Business number"><span className="tabular-nums">+91 80 4718 2200</span> · Inbound & outbound</Row>
++        <Row Icon={PhoneForwarded} title="Routing">Qualified → Ananya (Sales) · Support questions → Help desk · After hours → Voicemail + WhatsApp follow-up</Row>
++      </div>
++    </SpotlightTarget>
++    <SpotlightTarget id="hours" active={active("hours")} tourActive={!!tourActive} tip={tipForId(props, "hours")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div><p className="flex items-center gap-1.5 text-sm font-semibold"><Clock className="size-4 text-voice"/> Working hours · 09:00 – 19:00 IST</p><div className="mt-2 flex gap-1.5">{days.map((d, i) => <button key={i} type="button" aria-pressed={activeDays[i]} aria-label={`Toggle ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][i]}`} onClick={() => setActiveDays((a) => a.map((v, j) => j === i ? !v : v))} className={cn("grid size-9 place-items-center rounded-md border text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", activeDays[i] ? "border-voice bg-voice text-voice-foreground" : "border-border text-muted-foreground")}>{d}</button>)}</div></div>
++    </SpotlightTarget>
++    <SpotlightTarget id="calendar" active={active("calendar")} tourActive={!!tourActive} tip={tipForId(props, "calendar")} tipLabel={tipLabel} reducedMotion={reducedMotion} tipPlacement="above">
++      <div><p className="flex items-center gap-1.5 text-sm font-semibold"><CalendarDays className="size-4 text-voice"/> Calendar</p><div className="mt-2 grid gap-2 sm:grid-cols-2"><div className="flex items-center justify-between rounded-md border border-voice/40 bg-voice-soft p-3 text-sm"><span>Configured calendar</span><span className="flex items-center gap-1 text-xs text-success"><Check className="size-3.5"/> Connected</span></div><div className="flex items-center justify-between rounded-md border border-border p-3 text-sm"><span>Second calendar</span><Button size="sm" variant="outline" className="h-7" onClick={() => setOutlook((v) => !v)}>{outlook ? <><Check/> Connected</> : "Connect"}</Button></div></div><p className="mt-2 text-[11px] text-muted-foreground">Illustrative setup · no external account is connected.</p></div>
++    </SpotlightTarget>
+   </div>;
+ }
+ 
+-function StepConversation() {
+-  return <div className="space-y-4">
+-    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
+-      <div>
+-        <p className="eyebrow text-voice">LIVE CALL</p>
+-        <h4 className="mt-1 text-xl font-bold">Arjun Mehta</h4>
+-        <p className="text-sm text-muted-foreground">New enquiry · Product demo</p>
++function StepConversation(props: SpotlightProps) {
++  const { tourActive, tipLabel, reducedMotion } = props;
++  const active = (id: string) => !!tourActive && props.spotlightId === id;
++  return <div className={cn("space-y-4", tourActive && "space-y-12 pb-4")}>
++    <SpotlightTarget id="call-header" active={active("call-header")} tourActive={!!tourActive} tip={tipForId(props, "call-header")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
++        <div>
++          <p className="eyebrow text-voice">LIVE CALL</p>
++          <h4 className="mt-1 text-xl font-bold">Arjun Mehta</h4>
++          <p className="text-sm text-muted-foreground">New enquiry · Product demo</p>
++        </div>
++        <div className="flex flex-wrap gap-2">
++          <span className="rounded-full bg-voice-soft px-2.5 py-1 text-xs font-bold text-voice">Connected</span>
++          <span className="rounded-full bg-foreground px-2.5 py-1 text-xs font-bold text-background">02:18</span>
++          <span className="rounded-full border border-voice/30 bg-voice-soft px-2.5 py-1 text-xs font-semibold text-voice">Telugu · Demo preview</span>
++        </div>
+       </div>
+-      <div className="flex flex-wrap gap-2">
+-        <span className="rounded-full bg-voice-soft px-2.5 py-1 text-xs font-bold text-voice">Connected</span>
+-        <span className="rounded-full bg-foreground px-2.5 py-1 text-xs font-bold text-background">02:18</span>
+-        <span className="rounded-full border border-voice/30 bg-voice-soft px-2.5 py-1 text-xs font-semibold text-voice">Telugu · Demo preview</span>
++    </SpotlightTarget>
++    <SpotlightTarget id="waveform" active={active("waveform")} tourActive={!!tourActive} tip={tipForId(props, "waveform")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="flex h-10 items-center gap-1 rounded-md border border-voice/15 bg-voice-soft px-3" aria-hidden="true">
++        {[28,54,78,42,90,62,36,70,48,84,58,34,76,50,66,40,88,52,30,72].map((h,i)=><i key={i} className="w-[3px] rounded-full bg-voice" style={{height:`${h}%`}}/>)}
+       </div>
+-    </div>
+-    <div className="flex h-10 items-center gap-1 rounded-md border border-voice/15 bg-voice-soft px-3" aria-hidden="true">
+-      {[28,54,78,42,90,62,36,70,48,84,58,34,76,50,66,40,88,52,30,72].map((h,i)=><i key={i} className="w-[3px] rounded-full bg-voice" style={{height:`${h}%`}}/>)}
+-    </div>
+-    <div className="space-y-2.5 text-sm leading-relaxed">
+-      <div className="rounded-xl border border-voice/20 bg-voice-soft p-3"><p className="text-[11px] font-bold tracking-wide text-voice">MAYA</p><p className="mt-1">Hello Arjun, I’m calling regarding your enquiry.</p></div>
+-      <div className="rounded-xl border border-voice/20 bg-voice-soft p-3"><p className="text-[11px] font-bold tracking-wide text-voice">MAYA · TELUGU</p><p className="mt-1">మీకు తెలుగు లో మాట్లాడటం సౌకర్యంగా ఉంటుందా?</p></div>
+-      <div className="ml-auto max-w-[92%] rounded-xl border border-border bg-card p-3"><p className="text-[11px] font-bold tracking-wide text-muted-foreground">ARJUN</p><p className="mt-1">Yes, <mark className="rounded bg-voice/15 px-1 font-semibold text-voice">Telugu</mark> is fine.</p></div>
+-      <div className="rounded-xl border border-voice/20 bg-voice-soft p-3"><p className="text-[11px] font-bold tracking-wide text-voice">MAYA · TELUGU</p><p className="mt-1">సరే. మీకు ఏ విషయం గురించి సమాచారం కావాలి?</p></div>
+-      <div className="ml-auto max-w-[92%] rounded-xl border border-border bg-card p-3"><p className="text-[11px] font-bold tracking-wide text-muted-foreground">ARJUN</p><p className="mt-1">We need a <mark className="rounded bg-voice/15 px-1 font-semibold text-voice">product demo</mark> for our <mark className="rounded bg-voice/15 px-1 font-semibold text-voice">sales team</mark> — <mark className="rounded bg-voice/15 px-1 font-semibold text-voice">this week</mark> works.</p></div>
+-    </div>
+-    <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="rounded-full bg-voice-soft px-2 py-0.5 font-semibold text-voice">Regional language</span> Conversation continues in Telugu + English · illustrative demo</p>
++    </SpotlightTarget>
++    <SpotlightTarget id="transcript" active={active("transcript")} tourActive={!!tourActive} tip={tipForId(props, "transcript")} tipLabel={tipLabel} reducedMotion={reducedMotion} tipPlacement="above">
++      <div className="space-y-2.5 text-sm leading-relaxed">
++        <div className="rounded-xl border border-voice/20 bg-voice-soft p-3"><p className="text-[11px] font-bold tracking-wide text-voice">MAYA</p><p className="mt-1">Hello Arjun, I’m calling regarding your enquiry.</p></div>
++        <div className="rounded-xl border border-voice/20 bg-voice-soft p-3"><p className="text-[11px] font-bold tracking-wide text-voice">MAYA · TELUGU</p><p className="mt-1">మీకు తెలుగు లో మాట్లాడటం సౌకర్యంగా ఉంటుందా?</p></div>
++        <div className="ml-auto max-w-[92%] rounded-xl border border-border bg-card p-3"><p className="text-[11px] font-bold tracking-wide text-muted-foreground">ARJUN</p><p className="mt-1">Yes, <mark className="rounded bg-voice/15 px-1 font-semibold text-voice">Telugu</mark> is fine.</p></div>
++        <div className="rounded-xl border border-voice/20 bg-voice-soft p-3"><p className="text-[11px] font-bold tracking-wide text-voice">MAYA · TELUGU</p><p className="mt-1">సరే. మీకు ఏ విషయం గురించి సమాచారం కావాలి?</p></div>
++        <div className="ml-auto max-w-[92%] rounded-xl border border-border bg-card p-3"><p className="text-[11px] font-bold tracking-wide text-muted-foreground">ARJUN</p><p className="mt-1">We need a <mark className="rounded bg-voice/15 px-1 font-semibold text-voice">product demo</mark> for our <mark className="rounded bg-voice/15 px-1 font-semibold text-voice">sales team</mark> — <mark className="rounded bg-voice/15 px-1 font-semibold text-voice">this week</mark> works.</p></div>
++        <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="rounded-full bg-voice-soft px-2 py-0.5 font-semibold text-voice">Regional language</span> Conversation continues in Telugu + English · illustrative demo</p>
++      </div>
++    </SpotlightTarget>
+   </div>;
+ }
+ 
+-function StepStructuredResult() {
+-  return <div className="space-y-4">
+-    <div>
+-      <p className="eyebrow text-voice">STRUCTURED OUTCOME</p>
+-      <h4 className="mt-1 text-xl font-bold">Customer context</h4>
+-      <p className="mt-1 text-sm text-muted-foreground">Normalized English fields from the multilingual call.</p>
+-    </div>
+-    <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+-      <span className="text-voice">Conversation</span><span className="h-px w-4 bg-voice/40"/><span>Understanding</span><span className="h-px w-4 bg-voice/40"/><span>Outcome</span><span className="h-px w-4 bg-voice/40"/><span>Next action</span>
+-    </div>
+-    <div className="grid gap-2">
+-      {[["INTEREST","Product demo","from “product demo”"],["TEAM","Sales","from “sales team”"],["TIMING","This week","from “this week”"]].map(([k,v,f])=>(
+-        <div key={k} className="rounded-xl border border-voice/30 bg-voice-soft px-4 py-3">
+-          <p className="text-[10px] font-bold tracking-[0.12em] text-muted-foreground">{k}</p>
+-          <b className="mt-1 block text-base">{v}</b>
+-          <p className="mt-1 text-xs font-medium text-voice">{f}</p>
+-        </div>
+-      ))}
+-    </div>
+-    <div className="rounded-xl border border-success/30 bg-success/10 px-4 py-3">
+-      <p className="text-[10px] font-bold tracking-[0.12em] text-success">STATUS</p>
+-      <b className="mt-1 block text-lg text-success">Qualified</b>
+-    </div>
++function StepStructuredResult(props: SpotlightProps) {
++  const { tourActive, tipLabel, reducedMotion } = props;
++  const active = (id: string) => !!tourActive && props.spotlightId === id;
++  return <div className={cn("space-y-4", tourActive && "space-y-12 pb-4")}>
++    <SpotlightTarget id="outcome-header" active={active("outcome-header")} tourActive={!!tourActive} tip={tipForId(props, "outcome-header")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div>
++        <p className="eyebrow text-voice">STRUCTURED OUTCOME</p>
++        <h4 className="mt-1 text-xl font-bold">Customer context</h4>
++        <p className="mt-1 text-sm text-muted-foreground">Normalized English fields from the multilingual call.</p>
++      </div>
++    </SpotlightTarget>
++    <SpotlightTarget id="pipeline" active={active("pipeline")} tourActive={!!tourActive} tip={tipForId(props, "pipeline")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
++        <span className="text-voice">Conversation</span><span className="h-px w-4 bg-voice/40"/><span>Understanding</span><span className="h-px w-4 bg-voice/40"/><span>Outcome</span><span className="h-px w-4 bg-voice/40"/><span>Next action</span>
++      </div>
++    </SpotlightTarget>
++    <SpotlightTarget id="fields" active={active("fields")} tourActive={!!tourActive} tip={tipForId(props, "fields")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="grid gap-2">
++        {[["INTEREST","Product demo","from “product demo”"],["TEAM","Sales","from “sales team”"],["TIMING","This week","from “this week”"]].map(([k,v,f])=>(
++          <div key={k} className="rounded-xl border border-voice/30 bg-voice-soft px-4 py-3">
++            <p className="text-[10px] font-bold tracking-[0.12em] text-muted-foreground">{k}</p>
++            <b className="mt-1 block text-base">{v}</b>
++            <p className="mt-1 text-xs font-medium text-voice">{f}</p>
++          </div>
++        ))}
++      </div>
++    </SpotlightTarget>
++    <SpotlightTarget id="status" active={active("status")} tourActive={!!tourActive} tip={tipForId(props, "status")} tipLabel={tipLabel} reducedMotion={reducedMotion} tipPlacement="above">
++      <div className="rounded-xl border border-success/30 bg-success/10 px-4 py-3">
++        <p className="text-[10px] font-bold tracking-[0.12em] text-success">STATUS</p>
++        <b className="mt-1 block text-lg text-success">Qualified</b>
++      </div>
++    </SpotlightTarget>
+   </div>;
+ }
+ 
+-function StepNextAction() {
+-  return <div className="space-y-5">
+-    <div className="rounded-xl border border-voice/30 bg-voice-soft p-4">
+-      <p className="text-[10px] font-bold tracking-[0.12em] text-voice">NEXT ACTION</p>
+-      <b className="mt-2 block text-xl">Schedule sales follow-up</b>
+-      <p className="mt-1 text-sm text-muted-foreground">Owner Ananya · Demo this week</p>
+-    </div>
+-    <div className="grid gap-2 sm:grid-cols-3">{[["128", "Calls"], ["46%", "Qualified"], ["38", "Meetings"]].map(([v, l]) => <div key={l} className="rounded-md border border-border p-3"><b className="block text-2xl tabular-nums">{v}</b><span className="text-xs text-muted-foreground">{l}</span></div>)}</div>
+-    <div className="rounded-lg border border-voice/30 bg-voice-soft p-4 text-sm"><p className="flex items-center gap-1.5 font-semibold"><Sparkles className="size-4 text-voice"/> Outcome summary</p><p className="mt-1.5 text-pretty text-muted-foreground">Regional-language call captured as structured English context — ready for Chat follow-up or CRM.</p></div>
+-    <p className="text-[11px] text-muted-foreground">Illustrative demo · language support shown as Demo preview.</p>
++function StepNextAction(props: SpotlightProps) {
++  const { tourActive, tipLabel, reducedMotion } = props;
++  const active = (id: string) => !!tourActive && props.spotlightId === id;
++  return <div className={cn("space-y-5", tourActive && "space-y-14 pb-4")}>
++    <SpotlightTarget id="next-action" active={active("next-action")} tourActive={!!tourActive} tip={tipForId(props, "next-action")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="rounded-xl border border-voice/30 bg-voice-soft p-4">
++        <p className="text-[10px] font-bold tracking-[0.12em] text-voice">NEXT ACTION</p>
++        <b className="mt-2 block text-xl">Schedule sales follow-up</b>
++        <p className="mt-1 text-sm text-muted-foreground">Owner Ananya · Demo this week</p>
++      </div>
++    </SpotlightTarget>
++    <SpotlightTarget id="metrics" active={active("metrics")} tourActive={!!tourActive} tip={tipForId(props, "metrics")} tipLabel={tipLabel} reducedMotion={reducedMotion}>
++      <div className="grid gap-2 sm:grid-cols-3">{[["128", "Calls"], ["46%", "Qualified"], ["38", "Meetings"]].map(([v, l]) => <div key={l} className="rounded-md border border-border p-3"><b className="block text-2xl tabular-nums">{v}</b><span className="text-xs text-muted-foreground">{l}</span></div>)}</div>
++    </SpotlightTarget>
++    <SpotlightTarget id="summary" active={active("summary")} tourActive={!!tourActive} tip={tipForId(props, "summary")} tipLabel={tipLabel} reducedMotion={reducedMotion} tipPlacement="above">
++      <div className="rounded-lg border border-voice/30 bg-voice-soft p-4 text-sm"><p className="flex items-center gap-1.5 font-semibold"><Sparkles className="size-4 text-voice"/> Outcome summary</p><p className="mt-1.5 text-pretty text-muted-foreground">Regional-language call captured as structured English context — ready for Chat follow-up or CRM.</p></div>
++      <p className="mt-2 text-[11px] text-muted-foreground">Illustrative demo · language support shown as Demo preview.</p>
++    </SpotlightTarget>
+   </div>;
+ }
+ 
+@@ -349,33 +389,57 @@ export function VoiceWorkspace() {
+     "Next action",
+   ];
+   const [step, setStep] = useState(0);
++  const [autoDemo, setAutoDemo] = useState(true);
+   const barRef = useRef<HTMLDivElement>(null);
+   const reduced = useReducedMotion();
+   const stepCount = steps.length;
+-  const step1Tour = useSpotlightTour({
+-    enabled: step === 0,
+-    steps: VOICE_STEP1_SPOTLIGHTS,
++  const tipSteps = VOICE_WALKTHROUGH_TIPS[step] ?? VOICE_WALKTHROUGH_TIPS[0]!;
++
++  const goNextStep = useCallback(() => {
++    setStep((s) => (s === stepCount - 1 ? 0 : s + 1));
++  }, [stepCount]);
++
++  const tour = useSpotlightTour({
++    enabled: true,
++    steps: tipSteps,
++    onComplete: () => {
++      if (!autoDemo || reduced) return;
++      // Brief beat between step tip tours so the transition reads cleanly.
++      window.setTimeout(goNextStep, 450);
++    },
+   });
+-  const tipLabel = step1Tour.active
+-    ? `Tip ${step1Tour.index + 1} of ${step1Tour.stepCount}`
++
++  const tipLabel = tour.active
++    ? `Tip ${tour.index + 1} of ${tour.stepCount}`
+     : undefined;
++
++  const spotlightProps: SpotlightProps = {
++    spotlightId: tour.current?.id,
++    tourActive: tour.active,
++    tip: tour.current?.tip,
++    tipLabel,
++    reducedMotion: tour.reducedMotion,
++  };
++
+   const screens = [
+-    <StepCreate
+-      key="c"
+-      spotlightId={step1Tour.current?.id}
+-      tourActive={step1Tour.active}
+-      tip={step1Tour.current?.tip}
+-      tipLabel={tipLabel}
+-      reducedMotion={step1Tour.reducedMotion}
+-    />,
+-    <StepTeach key="t"/>,
+-    <StepVoiceLanguage key="vl"/>,
+-    <StepConnect key="n"/>,
+-    <StepConversation key="conv"/>,
+-    <StepStructuredResult key="sr"/>,
+-    <StepNextAction key="na"/>,
++    <StepCreate key="c" {...spotlightProps} />,
++    <StepTeach key="t" {...spotlightProps} />,
++    <StepVoiceLanguage key="vl" {...spotlightProps} />,
++    <StepConnect key="n" {...spotlightProps} />,
++    <StepConversation key="conv" {...spotlightProps} />,
++    <StepStructuredResult key="sr" {...spotlightProps} />,
++    <StepNextAction key="na" {...spotlightProps} />,
+   ];
+-  useEffect(() => { if (!barRef.current) return; if (reduced) { barRef.current.style.transform = `scaleY(${(step + 1) / stepCount})`; return; } gsap.to(barRef.current, { scaleY: (step + 1) / stepCount, duration: 0.5, ease: "power3.out" }); }, [step, reduced, stepCount]);
++
++  useEffect(() => {
++    if (!barRef.current) return;
++    if (reduced) {
++      barRef.current.style.transform = `scaleY(${(step + 1) / stepCount})`;
++      return;
++    }
++    gsap.to(barRef.current, { scaleY: (step + 1) / stepCount, duration: 0.5, ease: "power3.out" });
++  }, [step, reduced, stepCount]);
++
+   const side = [
+     { Icon: UserRound, label: "Employee", idx: 0 },
+     { Icon: BookOpen, label: "Knowledge", idx: 1 },
+@@ -385,62 +449,138 @@ export function VoiceWorkspace() {
+     { Icon: FileText, label: "Outcome", idx: 5 },
+     { Icon: BarChart3, label: "Next", idx: 6 },
+   ];
+-  const continueSpotlight = step === 0 && step1Tour.active && step1Tour.current?.id === "continue";
++
++  const continueSpotlight = tour.active && tour.current?.id === "continue";
++
++  const selectStep = (index: number) => {
++    setAutoDemo(false);
++    setStep(index);
++  };
++
+   return <div className="grid items-start gap-8 lg:grid-cols-[.72fr_1.28fr]">
+-    <div className="relative pl-7"><div className="absolute bottom-3 left-[7px] top-3 w-px bg-border"><div ref={barRef} className="h-full origin-top bg-voice" style={{ transform: `scaleY(${1 / stepCount})` }}/></div>{steps.map((label, index) => <button key={label} type="button" aria-current={step === index ? "step" : undefined} onClick={() => setStep(index)} className={cn("relative mb-2 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", step === index ? "bg-voice-soft font-semibold" : "text-muted-foreground hover:bg-secondary")}><span className={cn("absolute -left-[27px] grid size-4 place-items-center rounded-full border bg-background", step >= index && "border-voice bg-voice text-voice-foreground")}>{step > index && <Check className="size-3"/>}</span><span className="text-sm tabular-nums">0{index + 1}</span><span className="text-sm leading-snug">{label}</span></button>)}</div>
+-    <Frame label="Astra Voice · workspace (sample data)" allowOverflow={step1Tour.active}><div
+-      className={cn("relative grid min-h-[520px] md:grid-cols-[84px_1fr]", step1Tour.active && "pb-8")}
+-      data-spotlight-root="voice-step-1"
+-      data-spotlight-on={step1Tour.active ? "true" : undefined}
+-      onClickCapture={(e) => {
+-        if (!step1Tour.active) return;
+-        e.preventDefault();
+-        e.stopPropagation();
+-        step1Tour.skip();
+-      }}
+-      onKeyDown={(e) => {
+-        if (!step1Tour.active) return;
+-        if (e.key === "Enter" || e.key === " ") {
++    <div className="relative pl-7">
++      <div className="absolute bottom-10 left-[7px] top-3 w-px bg-border">
++        <div ref={barRef} className="h-full origin-top bg-voice" style={{ transform: `scaleY(${1 / stepCount})` }}/>
++      </div>
++      {steps.map((label, index) => (
++        <button
++          key={label}
++          type="button"
++          aria-current={step === index ? "step" : undefined}
++          onClick={() => selectStep(index)}
++          className={cn(
++            "relative mb-2 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
++            step === index ? "bg-voice-soft font-semibold" : "text-muted-foreground hover:bg-secondary",
++          )}
++        >
++          <span className={cn("absolute -left-[27px] grid size-4 place-items-center rounded-full border bg-background", step >= index && "border-voice bg-voice text-voice-foreground")}>
++            {step > index && <Check className="size-3"/>}
++          </span>
++          <span className="text-sm tabular-nums">0{index + 1}</span>
++          <span className="text-sm leading-snug">{label}</span>
++        </button>
++      ))}
++      <p className="mt-4 pl-3 text-[11px] text-muted-foreground">Auto demo · advances on its own</p>
++    </div>
++    <Frame label="Astra Voice · workspace (sample data)" allowOverflow={tour.active}>
++      <div
++        className={cn("relative grid min-h-[520px] md:grid-cols-[84px_1fr]", tour.active && "pb-8")}
++        data-spotlight-root={`voice-step-${step + 1}`}
++        data-spotlight-on={tour.active ? "true" : undefined}
++        onClickCapture={(e) => {
++          if (!tour.active) return;
+           e.preventDefault();
+-          step1Tour.skip();
+-        }
+-      }}
+-      role={step1Tour.active ? "group" : undefined}
+-      aria-label={step1Tour.active ? "Step 1 highlight tips. Activate to show the next tip." : undefined}
+-    >
+-      <aside className={cn("relative z-[1] hidden border-r border-border bg-surface p-2 md:block", step1Tour.active && "pointer-events-none opacity-50")} aria-hidden={step1Tour.active || undefined}><div className="grid gap-2 text-center text-[10px]">{side.map(({ Icon, label, idx }) => <button key={label} type="button" onClick={() => setStep(idx)} className={cn("grid gap-1 rounded-md py-2", step === idx ? "bg-voice-soft text-voice" : "text-muted-foreground")}><Icon className="mx-auto size-5"/>{label}</button>)}</div></aside>
+-      <div className="relative z-[1] p-5 sm:p-7"><div className={cn("flex items-center justify-between gap-3", step1Tour.active && "opacity-55")}><h3 className="text-2xl font-bold">{titles[step]}</h3><span className="shrink-0 text-xs tabular-nums text-muted-foreground">Step {step + 1} of {stepCount}</span></div>
+-        <AnimatePresence mode="wait"><motion.div key={step} initial={reduced ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }} transition={{ duration: .2 }} className="mt-6">{screens[step]}</motion.div></AnimatePresence>
+-        <div className="mt-6 flex gap-2">
+-          {step > 0 && <Button variant="outline" onClick={() => setStep(step - 1)}>Back</Button>}
+-          <SpotlightTarget
+-            id="continue"
+-            active={!!continueSpotlight}
+-            tourActive={step === 0 && step1Tour.active}
+-            tip={continueSpotlight ? step1Tour.current?.tip : undefined}
+-            tipLabel={tipLabel}
+-            reducedMotion={step1Tour.reducedMotion}
+-            tipPlacement="above"
+-            className="min-w-0 flex-1"
+-          >
+-            <Button
+-              className="w-full bg-voice hover:bg-voice/90"
+-              onClick={() => {
+-                if (step1Tour.active) return;
+-                setStep(step === stepCount - 1 ? 0 : step + 1);
+-              }}
++          e.stopPropagation();
++          setAutoDemo(true);
++          tour.skip();
++        }}
++        onKeyDown={(e) => {
++          if (!tour.active) return;
++          if (e.key === "Enter" || e.key === " ") {
++            e.preventDefault();
++            setAutoDemo(true);
++            tour.skip();
++          }
++        }}
++        role={tour.active ? "group" : undefined}
++        aria-label={tour.active ? `Step ${step + 1} highlight tips. Activate to show the next tip.` : undefined}
++      >
++        <aside
++          className={cn("relative z-[1] hidden border-r border-border bg-surface p-2 md:block", tour.active && "pointer-events-none opacity-50")}
++          aria-hidden={tour.active || undefined}
++        >
++          <div className="grid gap-2 text-center text-[10px]">
++            {side.map(({ Icon, label, idx }) => (
++              <button
++                key={label}
++                type="button"
++                onClick={() => selectStep(idx)}
++                className={cn("grid gap-1 rounded-md py-2", step === idx ? "bg-voice-soft text-voice" : "text-muted-foreground")}
++              >
++                <Icon className="mx-auto size-5"/>{label}
++              </button>
++            ))}
++          </div>
++        </aside>
++        <div className="relative z-[1] p-5 sm:p-7">
++          <div className={cn("flex items-center justify-between gap-3", tour.active && "opacity-55")}>
++            <h3 className="text-2xl font-bold">{titles[step]}</h3>
++            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">Step {step + 1} of {stepCount}</span>
++          </div>
++          <AnimatePresence mode="wait">
++            <motion.div
++              key={step}
++              initial={reduced ? false : { opacity: 0, y: 8 }}
++              animate={{ opacity: 1, y: 0 }}
++              exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }}
++              transition={{ duration: .2 }}
++              className="mt-6"
+             >
+-              {step === stepCount - 1 ? <><Play/> Start over</> : "Continue"}
+-            </Button>
+-          </SpotlightTarget>
++              {screens[step]}
++            </motion.div>
++          </AnimatePresence>
++          <div className="mt-6 flex gap-2">
++            {step > 0 && (
++              <Button
++                variant="outline"
++                onClick={() => {
++                  setAutoDemo(false);
++                  setStep(step - 1);
++                }}
++              >
++                Back
++              </Button>
++            )}
++            <SpotlightTarget
++              id="continue"
++              active={!!continueSpotlight}
++              tourActive={tour.active}
++              tip={continueSpotlight ? tour.current?.tip : undefined}
++              tipLabel={tipLabel}
++              reducedMotion={tour.reducedMotion}
++              tipPlacement="above"
++              className="min-w-0 flex-1"
++            >
++              <Button
++                className="w-full bg-voice hover:bg-voice/90"
++                onClick={() => {
++                  if (tour.active) return;
++                  setAutoDemo(true);
++                  goNextStep();
++                }}
++              >
++                {step === stepCount - 1 ? <><Play/> Start over</> : "Continue"}
++              </Button>
++            </SpotlightTarget>
++          </div>
++          {tour.active && (
++            <p className="mt-3 text-[11px] text-muted-foreground">
++              Highlight tips · tap anywhere in this panel to advance
++              {tour.reducedMotion ? " · reduced motion: tips stay until you tap" : ""}
++            </p>
++          )}
+         </div>
+-        {step1Tour.active && (
+-          <p className="mt-3 text-[11px] text-muted-foreground">
+-            Highlight tips · tap anywhere in this panel to advance
+-            {step1Tour.reducedMotion ? " · reduced motion: tips stay until you tap" : ""}
+-          </p>
+-        )}
+       </div>
+-    </div></Frame>
++    </Frame>
+   </div>;
+ }
+-- 
+2.43.0
+
