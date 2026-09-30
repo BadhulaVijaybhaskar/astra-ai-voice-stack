@@ -14,6 +14,13 @@ Self-explanatory highlight callouts on the HOW IT WORKS `VoiceWorkspace` demo:
 - Footer: “Auto demo · advances on its own”
 - Tip copy is data-driven in `VOICE_WALKTHROUGH_TIPS`
 
+## Progress rail polish
+Left step rail (`data-rail="voice-steps"`) uses per-step centered connector stubs:
+- `w-px` segments share the marker column axis (`flex-col items-center`)
+- Step 01: no visible line above the first circle
+- Step 07: no visible line below the last circle
+- Mid steps: connectors meet the circle edges on one vertical centerline
+
 ## Apply
 ```sh
 git clone https://github.com/BadhulaVijaybhaskar/astra-connect-hub.git

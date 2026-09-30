@@ -1,4 +1,3 @@
-import gsap from "gsap";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   Activity, BarChart3, BookOpen, BriefcaseBusiness, CalendarDays, Check, CheckCheck, Clock, FileText,
@@ -390,7 +389,6 @@ export function VoiceWorkspace() {
   ];
   const [step, setStep] = useState(0);
   const [autoDemo, setAutoDemo] = useState(true);
-  const barRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const stepCount = steps.length;
   const tipSteps = VOICE_WALKTHROUGH_TIPS[step] ?? VOICE_WALKTHROUGH_TIPS[0]!;
@@ -431,15 +429,6 @@ export function VoiceWorkspace() {
     <StepNextAction key="na" {...spotlightProps} />,
   ];
 
-  useEffect(() => {
-    if (!barRef.current) return;
-    if (reduced) {
-      barRef.current.style.transform = `scaleY(${(step + 1) / stepCount})`;
-      return;
-    }
-    gsap.to(barRef.current, { scaleY: (step + 1) / stepCount, duration: 0.5, ease: "power3.out" });
-  }, [step, reduced, stepCount]);
-
   const side = [
     { Icon: UserRound, label: "Employee", idx: 0 },
     { Icon: BookOpen, label: "Knowledge", idx: 1 },
@@ -458,29 +447,62 @@ export function VoiceWorkspace() {
   };
 
   return <div className="grid items-start gap-8 lg:grid-cols-[.72fr_1.28fr]">
-    <div className="relative pl-7">
-      <div className="absolute bottom-10 left-[7px] top-3 w-px bg-border">
-        <div ref={barRef} className="h-full origin-top bg-voice" style={{ transform: `scaleY(${1 / stepCount})` }}/>
+    <div>
+      <div className="flex flex-col" data-rail="voice-steps">
+        {steps.map((label, index) => {
+          const isFirst = index === 0;
+          const isLast = index === stepCount - 1;
+          const lineAbove = !isFirst && step >= index;
+          const lineBelow = !isLast && step > index;
+          return (
+            <button
+              key={label}
+              type="button"
+              aria-current={step === index ? "step" : undefined}
+              onClick={() => selectStep(index)}
+              className="grid w-full grid-cols-[1rem_minmax(0,1fr)] items-stretch gap-x-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {/*
+                Marker column: flex-1 stubs above/below the circle share the
+                column axis (items-center). First has no visible line above;
+                last has none below — stubs stay for vertical centering only.
+              */}
+              <span className="flex min-h-0 flex-col items-center" aria-hidden="true">
+                <i
+                  className={cn(
+                    "w-px flex-1",
+                    isFirst ? "bg-transparent" : lineAbove ? "bg-voice" : "bg-border",
+                  )}
+                />
+                <span
+                  className={cn(
+                    "relative z-10 grid size-4 shrink-0 place-items-center rounded-full border bg-background",
+                    step >= index && "border-voice bg-voice text-voice-foreground",
+                  )}
+                >
+                  {step > index && <Check className="size-3"/>}
+                </span>
+                <i
+                  className={cn(
+                    "w-px flex-1",
+                    isLast ? "bg-transparent" : lineBelow ? "bg-voice" : "bg-border",
+                  )}
+                />
+              </span>
+              <span
+                className={cn(
+                  "my-1 flex items-center gap-3 rounded-md px-3 py-2 transition-colors",
+                  step === index ? "bg-voice-soft font-semibold" : "text-muted-foreground hover:bg-secondary",
+                )}
+              >
+                <span className="text-sm tabular-nums">0{index + 1}</span>
+                <span className="text-sm leading-snug">{label}</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
-      {steps.map((label, index) => (
-        <button
-          key={label}
-          type="button"
-          aria-current={step === index ? "step" : undefined}
-          onClick={() => selectStep(index)}
-          className={cn(
-            "relative mb-2 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            step === index ? "bg-voice-soft font-semibold" : "text-muted-foreground hover:bg-secondary",
-          )}
-        >
-          <span className={cn("absolute -left-[27px] grid size-4 place-items-center rounded-full border bg-background", step >= index && "border-voice bg-voice text-voice-foreground")}>
-            {step > index && <Check className="size-3"/>}
-          </span>
-          <span className="text-sm tabular-nums">0{index + 1}</span>
-          <span className="text-sm leading-snug">{label}</span>
-        </button>
-      ))}
-      <p className="mt-4 pl-3 text-[11px] text-muted-foreground">Auto demo · advances on its own</p>
+      <p className="mt-4 pl-7 text-[11px] text-muted-foreground">Auto demo · advances on its own</p>
     </div>
     <Frame label="Astra Voice · workspace (sample data)" allowOverflow={tour.active}>
       <div
