@@ -73,6 +73,7 @@ const turnLatency = require('./lib/turn-latency');
 const llmStream = require('./lib/llm-stream');
 const voiceFastPath = require('./lib/voice-fast-path');
 const wf8NodeTrace = require('./lib/wf8-node-trace');
+const browserTalkTts = require('./lib/browser-talk-tts');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
@@ -621,15 +622,42 @@ async function apiAgentsDelete(req, res, ctx) {
   core.sendJson(res, 200, { ok: true });
 }
 
-// POST /api/tts -> Rumik WAV bytes. Increments tenant usage.chars.
+// POST /api/tts -> audio bytes. Voice Studio may still use Rumik HTTP.
+// Browser Talk (source=browser_talk) remaps dead Rumik mulberry onto Sarvam
+// bulbul:v3 / priya. Prefer /api/tts/stream for early first-audio.
 async function apiTts(req, res, ctx) {
   const b = ctx.body || {};
   try {
-    const selected = providers.resolveSelection('tts', { provider: b.provider, model: b.model });
+    const browserTalk = String(b.source || '').toLowerCase() === 'browser_talk'
+      || b.realtime === true
+      || String(b.mode || '') === 'http_stream';
+    let selected;
+    let speaker = b.speaker || b.voice_id;
+    let language = b.language || b.language_code;
+    let fullWav = false;
+    if (browserTalk) {
+      const mintSel = browserTalkTts.resolveMintSelection({
+        provider: b.provider,
+        model: b.model,
+        speaker: b.speaker || b.voice_id,
+        language: b.language || b.language_code,
+      });
+      selected = providers.resolveSelection('tts', {
+        provider: mintSel.provider,
+        model: mintSel.model,
+      });
+      speaker = mintSel.speaker;
+      language = mintSel.language;
+      fullWav = true;
+    } else {
+      selected = providers.resolveSelection('tts', { provider: b.provider, model: b.model });
+    }
     const out = await selected.adapter.synthesize({
       text: b.text,
       model: selected.model,
-      speaker: b.speaker,
+      speaker,
+      voice_id: speaker,
+      language,
       f0_up_key: b.f0_up_key,
       description: b.description,
     });
@@ -639,10 +667,13 @@ async function apiTts(req, res, ctx) {
       plans.debitUsage(d, ctx.tenant.id, { chars: out.chars, calls: 0 }, ctx.user.id, addLedgerEntry);
     }).catch(() => {});
     core.send(res, 200, out.buffer, {
-      'Content-Type': 'audio/wav',
+      'Content-Type': out.contentType || 'audio/wav',
       'Content-Length': out.buffer.length,
-      'X-Credits-Used': out.credits,
+      'X-Credits-Used': out.credits || '',
       'X-Chars': String(out.chars),
+      'X-Tts-Model': selected.model,
+      'X-Tts-Speaker': String(speaker || ''),
+      'X-Tts-Full-Wav-Buffer': fullWav ? '1' : '0',
     });
   } catch (e) {
     handleProviderError(res, e);
@@ -918,15 +949,113 @@ async function apiAiEmployeeJourneyCalendarTest(req, res, ctx) {
   }
 }
 
-// POST /api/ws-connect -> { ws_url, token, model } (streaming voice mint).
+// POST /api/ws-connect -> Browser Talk TTS mint (LATENCY P0.3).
+// Production path: Sarvam HTTP stream bulbul:v3 / priya. Never opens a dead
+// Rumik WS with mulberry (live Hostinger: unsupported_model). Customer JSON
+// omits Dograh / VoBiz / Rumik vendor ids.
 async function apiWsConnect(req, res, ctx) {
   const b = ctx.body || {};
   try {
-    const selected = providers.resolveSelection('tts', { provider: b.provider, model: b.model });
-    const data = await selected.adapter.wsConnect({ text: b.text, model: selected.model });
-    // Customer JSON: mint credentials + model only. Never vendor provider ids.
-    core.sendJson(res, 200, { ...data, model: selected.model });
+    const selection = browserTalkTts.resolveMintSelection({
+      provider: b.provider,
+      model: b.model,
+      speaker: b.speaker || b.voice_id,
+      language: b.language || b.language_code,
+    });
+    // Server-side: confirm Sarvam adapter is live before advertising stream path.
+    const adapter = providers.get('tts', selection.provider);
+    if (!adapter.live) {
+      throw new providers.ProviderError(
+        'Realtime voice stream is not configured',
+        501,
+        'not_configured',
+        { needs: adapter.needs },
+      );
+    }
+    const data = await adapter.wsConnect({
+      text: b.text,
+      model: selection.model,
+      speaker: selection.speaker,
+      voice_id: selection.speaker,
+      language: selection.language,
+    });
+    const mint = browserTalkTts.buildCustomerMintPayload(selection, {
+      model: data.model || selection.model,
+      speaker: data.speaker || data.voice_id || selection.speaker,
+      language: data.language || selection.language,
+      stream_path: data.stream_path || '/api/tts/stream',
+      early_audio: data.early_audio !== false,
+      full_wav_buffer: !!data.full_wav_buffer,
+      keep_alive: data.keep_alive !== false,
+      cold_start: b.cold_start === true,
+    });
+    core.sendJson(res, 200, mint);
   } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+/**
+ * POST /api/tts/stream — Sarvam HTTP stream proxy for Browser Talk first-audio.
+ * Streams linear16 PCM @ 24kHz so the client can play the first chunk without
+ * waiting for a full WAV. Marks X-Tts-First-Byte on the first upstream byte.
+ * Speaker defaults to frozen priya. No S2S. No PSTN.
+ */
+async function apiTtsStream(req, res, ctx) {
+  const b = ctx.body || {};
+  try {
+    const selection = browserTalkTts.resolveMintSelection({
+      provider: b.provider || 'sarvam',
+      model: b.model,
+      speaker: b.speaker || b.voice_id,
+      language: b.language || b.language_code,
+    });
+    const adapter = providers.get('tts', selection.provider);
+    if (typeof adapter.synthesizeStream !== 'function') {
+      throw new providers.ProviderError('stream TTS is not available for this voice path', 501, 'not_configured');
+    }
+
+    let firstByteSent = false;
+    const started = Date.now();
+    res.writeHead(200, {
+      'Content-Type': 'audio/l16;rate=24000;channels=1',
+      'Cache-Control': 'no-store',
+      'X-Accel-Buffering': 'no',
+      'X-Tts-Model': selection.model,
+      'X-Tts-Speaker': selection.speaker,
+      'X-Tts-Mode': 'http_stream',
+      'X-Tts-Early-Audio': '1',
+      'X-Tts-Full-Wav-Buffer': '0',
+      'Transfer-Encoding': 'chunked',
+    });
+
+    const out = await adapter.synthesizeStream({
+      text: b.text,
+      model: selection.model,
+      speaker: selection.speaker,
+      voice_id: selection.speaker,
+      language: selection.language,
+      output_audio_codec: 'linear16',
+      speech_sample_rate: 24000,
+      timeoutMs: 45000,
+    }, (chunk) => {
+      if (!firstByteSent && chunk && chunk.length) {
+        firstByteSent = true;
+        // First upstream byte time is recorded client-side as tts_first_audio.
+        void started;
+      }
+      if (chunk && chunk.length) {
+        try { res.write(chunk); } catch (_) {}
+      }
+    });
+
+    bumpUsage(ctx.tenant.id, 'chars', out.chars).catch(() => {});
+    res.end();
+  } catch (e) {
+    if (res.headersSent) {
+      try { res.end(); } catch (_) {}
+      return;
+    }
     handleProviderError(res, e);
   }
 }
@@ -5744,6 +5873,7 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/agents/update') return core.requireAuth(req, res, apiAgentsUpdate, body);
       if (route === '/api/agents/delete') return core.requireAuth(req, res, apiAgentsDelete, body);
       if (route === '/api/tts') return core.requireAuth(req, res, apiTts, body);
+      if (route === '/api/tts/stream') return core.requireAuth(req, res, apiTtsStream, body);
       if (route === '/api/voice/preview') return core.requireAuth(req, res, apiVoicePreview, body);
       if (route === '/api/ws-connect') return core.requireAuth(req, res, apiWsConnect, body);
       if (route === '/api/chat') return core.requireAuth(req, res, apiChat, body);
