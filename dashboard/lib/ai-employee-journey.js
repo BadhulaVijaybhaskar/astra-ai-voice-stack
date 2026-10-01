@@ -217,7 +217,7 @@ function buildKnowledgeStep(db, tenantId, employee, mode, draft) {
     return {
       demoPreview: true,
       label: 'Demo preview',
-      systemPrompt: 'You are Maya, a friendly sales assistant for Astra Voice. Understand the caller's team size, current tools and timeline. Be concise, never pushy, and always offer a demo when the lead qualifies.',
+      systemPrompt: 'You are Maya, a friendly sales assistant for Astra Voice. Understand the caller\'s team size, current tools and timeline. Be concise, never pushy, and always offer a demo when the lead qualifies.',
       knowledge: [
         { id: 'demo_kb_1', title: 'Pricing guide.pdf', meta: '12 pages', kind: 'file', demoPreview: true },
         { id: 'demo_kb_2', title: 'Product FAQ', meta: '48 answers', kind: 'text', demoPreview: true },

@@ -1,23 +1,22 @@
 /**
  * Astra Voice. Guided AI Employee Setup / Demo Journey (add-on UI).
- * Feature flag: ENABLE_AI_EMPLOYEE_JOURNEY (exposed via /api/me features).
- * Route: #/ai-employee-setup
- *
- * Relies on shared helpers from app.js: el, esc, api, toast, State, initials.
- * No em dashes anywhere. Commas and periods only.
+ * Layout mirrors astra-connect-hub VoiceWorkspace:
+ * left numbered timeline 01-07 + right product Frame (icon rail + panel).
+ * Feature flag: ENABLE_AI_EMPLOYEE_JOURNEY. Route: #/ai-employee-setup
+ * Live data wiring preserved. Demo preview labeled. No em dashes.
  */
 (function () {
   'use strict';
 
   const STORAGE_KEY = 'astra_ai_employee_journey_v1';
   const STEPS = [
-    { id: 'employee', label: 'Employee', title: 'Your AI employee' },
-    { id: 'knowledge', label: 'Knowledge', title: 'Teach the job' },
-    { id: 'language', label: 'Language', title: 'Voice & language' },
-    { id: 'routing', label: 'Routing', title: 'Connect customers' },
-    { id: 'call', label: 'Call', title: 'Live conversation' },
-    { id: 'outcome', label: 'Outcome', title: 'Structured result' },
-    { id: 'next', label: 'Next', title: 'Next action' },
+    { id: 'employee', label: 'Employee', timeline: 'Create AI Employee', title: 'Your AI employee' },
+    { id: 'knowledge', label: 'Knowledge', timeline: 'Teach the job', title: 'Teach Maya the job' },
+    { id: 'language', label: 'Language', timeline: 'Choose Voice & Language', title: 'Voice & language' },
+    { id: 'routing', label: 'Routing', timeline: 'Connect', title: 'Connect customers' },
+    { id: 'call', label: 'Call', timeline: 'Conversation', title: 'Live conversation' },
+    { id: 'outcome', label: 'Outcome', timeline: 'Structured result', title: 'Structured result' },
+    { id: 'next', label: 'Next', timeline: 'Next action', title: 'Next action' },
   ];
 
   const JourneyState = {
@@ -26,6 +25,10 @@
     mode: 'live',
     dirtyPrompt: null,
     talk: null,
+    voicePlaying: false,
+    voiceProgress: 0,
+    voiceTimer: null,
+    selectedVoiceId: 'maya',
   };
 
   function stepIndex(id) {
@@ -34,11 +37,8 @@
   }
 
   function loadLocal() {
-    try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {};
-    } catch (_) {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {}; }
+    catch (_) { return {}; }
   }
 
   function saveLocal(patch) {
@@ -53,9 +53,18 @@
       knowledge: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M8 7h8M8 11h6"/>',
       language: '<path d="M5 7h8M9 7c0 6-4 10-4 10M13 7c0 4 2 8 6 10"/><path d="M14 17l2 4 2-4"/>',
       routing: '<path d="M5 3.5h3l1.5 4.5-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4.5 1.5v3a1.5 1.5 0 0 1-1.6 1.5A16.5 16.5 0 0 1 3.5 5.1 1.5 1.5 0 0 1 5 3.5z"/>',
-      call: '<path d="M4 12h2l1.5-4 2 8 2-10 2 8 1.5-4H18"/>',
+      call: '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/>',
       outcome: '<path d="M7 3h10v18H7z"/><path d="M10 7h4M10 11h4M10 15h2"/>',
       next: '<path d="M4 19h16"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-6"/>',
+      book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/>',
+      file: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/>',
+      list: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
+      mic: '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/>',
+      langs: '<path d="M5 7h8M9 7c0 6-4 10-4 10M13 7c0 4 2 8 6 10"/>',
+      clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/>',
+      cal: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/>',
+      spark: '<path d="M12 3l1.2 4.2L17 8.5l-3.8 1.3L12 14l-1.2-4.2L7 8.5l3.8-1.3z"/>',
+      check: '<path d="m5 12 4 4 10-10"/>',
     };
     return '<svg viewBox="0 0 24 24">' + (paths[name] || paths.employee) + '</svg>';
   }
@@ -63,6 +72,12 @@
   function demoBadge(show) {
     if (!show) return null;
     return el('span', { class: 'journey-demo-badge' }, 'Demo preview');
+  }
+
+  function chromeLabel() {
+    return JourneyState.mode === 'demo'
+      ? 'Astra Voice · workspace (sample data)'
+      : 'Astra Voice · live workspace';
   }
 
   async function fetchJourney(opts) {
@@ -80,26 +95,31 @@
   function stopTalk() {
     const t = JourneyState.talk;
     if (!t) return;
-    try {
-      if (t.ws && t.ws.readyState < 2) t.ws.close();
-    } catch (_) {}
+    try { if (t.ws && t.ws.readyState < 2) t.ws.close(); } catch (_) {}
     try {
       if (t.pc) {
         t.pc.getSenders().forEach((s) => s.track && s.track.stop());
         t.pc.close();
       }
     } catch (_) {}
-    try {
-      if (t.stream) t.stream.getTracks().forEach((tr) => tr.stop());
-    } catch (_) {}
+    try { if (t.stream) t.stream.getTracks().forEach((tr) => tr.stop()); } catch (_) {}
     if (t.timer) clearInterval(t.timer);
     if (t.audio) t.audio.srcObject = null;
     JourneyState.talk = null;
   }
 
+  function stopVoicePreview() {
+    JourneyState.voicePlaying = false;
+    JourneyState.voiceProgress = 0;
+    if (JourneyState.voiceTimer) {
+      clearInterval(JourneyState.voiceTimer);
+      JourneyState.voiceTimer = null;
+    }
+  }
+
   function highlightText(text, highlights) {
     const raw = String(text || '');
-    if (!Array.isArray(highlights) || !highlights.length) return raw;
+    if (!Array.isArray(highlights) || !highlights.length) return esc(raw);
     let out = esc(raw);
     highlights.forEach((h) => {
       const needle = String(h || '').trim();
@@ -110,42 +130,52 @@
     return out;
   }
 
-  /* ---- Step renderers ---- */
+  function panelTitle(data) {
+    const idx = stepIndex(JourneyState.step);
+    const step = STEPS[idx];
+    if (step.id === 'knowledge') {
+      const name = (data.employee && data.employee.name) || 'Maya';
+      return 'Teach ' + name + ' the job';
+    }
+    return step.title;
+  }
+
+  /* ---- Step renderers (marketing structure + live/demo data) ---- */
 
   function renderEmployee(data) {
     const e = data.employee || {};
     if (e.empty) {
-      return el('div', { class: 'journey-card journey-empty' }, [
-        el('p', {}, e.message || 'No employee found.'),
-        el('a', { class: 'btn btn-primary', href: '#/employees?create=1' }, 'Create employee'),
+      return el('div', { class: 'journey-body' }, [
+        el('div', { class: 'journey-empty' }, [
+          el('p', {}, e.message || 'No employee found.'),
+          el('a', { class: 'btn btn-primary', href: '#/employees?create=1', style: 'margin-top:12px' }, 'Create employee'),
+        ]),
       ]);
     }
     const name = e.name || 'Employee';
     const ready = e.readiness || {};
     return el('div', { class: 'journey-body' }, [
-      el('div', { class: 'journey-card' }, [
-        el('div', { class: 'journey-profile' }, [
-          el('div', { class: 'journey-avatar' }, initials(name)),
-          el('div', { class: 'meta' }, [
-            el('strong', {}, name),
-            el('div', { class: 'sub' }, [(e.role || 'Role'), ' · ', (e.team || 'Team')].join('')),
-          ]),
-          el('div', { class: 'journey-status' }, [
-            el('span', { class: 'dot' }),
-            e.status || '-',
-          ]),
+      el('div', { class: 'journey-profile' }, [
+        el('div', { class: 'journey-avatar' }, initials(name)),
+        el('div', { class: 'meta' }, [
+          el('strong', {}, name),
+          el('div', { class: 'role-line' }, (e.role || 'Role') + ' · ' + (e.team || 'Team')),
         ]),
-        demoBadge(e.demoPreview),
+        el('div', { class: 'journey-status' }, [el('span', { class: 'dot' }), e.status || 'Ready']),
       ]),
       el('div', { class: 'journey-card' }, [
-        el('div', { class: 'eyebrow' }, 'Job'),
-        el('p', { class: 'sub' }, e.job || '-'),
+        el('div', { class: 'journey-job-title' }, 'Job'),
+        el('p', { class: 'journey-job-body' }, e.job || '-'),
       ]),
       el('div', { class: 'journey-checklist' }, [
-        el('div', { class: 'journey-check' }, ready.instructionsReady ? 'Instructions ready' : 'Instructions needed'),
-        el('div', { class: 'journey-check' }, ready.knowledgeAdded ? 'Knowledge added' : 'Knowledge needed'),
-        el('div', { class: 'journey-check' }, ready.outcomeFieldsSet ? 'Outcome fields set' : 'Outcome fields needed'),
+        el('div', { class: 'journey-check' + (ready.instructionsReady ? '' : ' is-pending') },
+          ready.instructionsReady ? 'Instructions ready' : 'Instructions needed'),
+        el('div', { class: 'journey-check' + (ready.knowledgeAdded ? '' : ' is-pending') },
+          ready.knowledgeAdded ? 'Knowledge added' : 'Knowledge needed'),
+        el('div', { class: 'journey-check' + (ready.outcomeFieldsSet ? '' : ' is-pending') },
+          ready.outcomeFieldsSet ? 'Outcome fields set' : 'Outcome fields needed'),
       ]),
+      e.demoPreview ? demoBadge(true) : null,
     ]);
   }
 
@@ -154,18 +184,28 @@
     const prompt = JourneyState.dirtyPrompt != null ? JourneyState.dirtyPrompt : (k.systemPrompt || '');
     const ta = el('textarea', {
       class: 'journey-textarea',
-      value: prompt,
+      rows: '4',
       disabled: !!k.demoPreview,
       oninput: (ev) => { JourneyState.dirtyPrompt = ev.target.value; },
     });
-    // value attr is unreliable for textarea in createElement path; set property.
     ta.value = prompt;
 
-    const rules = (k.qualificationRules || []).map((rule, idx) => {
-      const toggle = el('button', {
-        class: 'journey-toggle' + (rule.enabled ? ' is-on' : ''),
+    const fileIcon = el('span', { html: icon('file') });
+    const kbItems = (k.knowledge || []).length
+      ? (k.knowledge || []).map((item) => el('div', { class: 'journey-kb-item' }, [
+        el('span', { html: icon('file') }),
+        el('b', { class: 'title' }, item.title || 'Knowledge'),
+        el('span', { class: 'meta' }, item.meta || item.kind || ''),
+      ]))
+      : [el('p', { class: 'journey-note' }, 'No knowledge attached yet. Add file, text, or URL from Training.')];
+
+    const rulesHost = el('div', { class: 'journey-rules' });
+    (k.qualificationRules || []).forEach((rule, idx) => {
+      rulesHost.appendChild(el('button', {
+        class: 'journey-rule',
         type: 'button',
-        'aria-pressed': rule.enabled ? 'true' : 'false',
+        role: 'switch',
+        'aria-checked': rule.enabled ? 'true' : 'false',
         onclick: async () => {
           if (k.demoPreview) return toast('Demo preview only. Switch to Live mode to edit.', 'info');
           const next = (k.qualificationRules || []).map((r, i) => (
@@ -179,29 +219,19 @@
             toast(err.message || 'Could not save rules.', 'err');
           }
         },
-      });
-      return el('div', { class: 'journey-rule' }, [
-        el('div', {}, [
-          el('div', {}, rule.label || rule.id),
-          rule.demoPreview ? demoBadge(true) : null,
-        ]),
-        toggle,
-      ]);
+      }, [
+        el('span', {}, rule.label || rule.id),
+        el('span', { class: 'journey-toggle' + (rule.enabled ? ' is-on' : '') }),
+      ]));
     });
-
-    const kbItems = (k.knowledge || []).length
-      ? (k.knowledge || []).map((item) => el('div', { class: 'journey-kb-item' }, [
-        el('div', {}, [
-          el('div', { class: 'title' }, item.title || 'Knowledge'),
-          el('div', { class: 'meta' }, item.meta || item.kind || ''),
-          item.demoPreview ? demoBadge(true) : null,
-        ]),
-      ]))
-      : [el('p', { class: 'muted' }, 'No knowledge attached yet. Add file, text, or URL from Training.')];
+    if (!(k.qualificationRules || []).length) {
+      rulesHost.appendChild(el('p', { class: 'journey-note' }, 'No qualification rules yet.'));
+    }
 
     const saveBtn = k.demoPreview ? null : el('button', {
       class: 'btn btn-ghost btn-sm',
       type: 'button',
+      style: 'align-self:start',
       onclick: async () => {
         try {
           await saveJourney({
@@ -210,7 +240,7 @@
             instructions: JourneyState.dirtyPrompt != null ? JourneyState.dirtyPrompt : (k.systemPrompt || ''),
           });
           JourneyState.dirtyPrompt = null;
-          toast('System prompt draft saved to employee instructions.', 'ok');
+          toast('System prompt saved to employee instructions.', 'ok');
           await refresh();
         } catch (err) {
           toast(err.message || 'Could not save prompt.', 'err');
@@ -218,64 +248,148 @@
       },
     }, 'Save prompt');
 
-    const addRow = k.demoPreview ? null : el('div', { class: 'flex gap-2', style: 'flex-wrap:wrap' }, [
-      el('a', { class: 'btn btn-ghost btn-sm', href: data.employeeId ? ('#/employees?id=' + encodeURIComponent(data.employeeId) + '&tab=training') : '#/knowledge' }, 'Add knowledge'),
-    ]);
-
     return el('div', { class: 'journey-body' }, [
-      el('div', { class: 'journey-card' }, [
-        el('div', { class: 'flex items-center gap-2', style: 'justify-content:space-between;margin-bottom:8px' }, [
-          el('h3', {}, 'System prompt'),
+      el('label', { class: 'journey-field-label' }, [
+        el('span', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px' }, [
+          'System prompt',
           saveBtn,
         ]),
         ta,
-        k.demoPreview ? demoBadge(true) : null,
       ]),
-      el('div', { class: 'journey-card' }, [
-        el('h3', {}, 'Business knowledge'),
-        el('div', { class: 'journey-kb-list', style: 'margin-top:10px' }, kbItems),
-        addRow,
-      ]),
-      el('div', { class: 'journey-card' }, [
-        el('h3', {}, 'Qualification rules'),
-        el('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:10px' }, rules.length ? rules : [
-          el('p', { class: 'muted' }, 'No qualification rules yet. Outcome definitions on the employee appear here.'),
+      el('div', {}, [
+        el('p', { class: 'journey-section-label', style: 'text-transform:none;letter-spacing:0;font-size:.875rem;font-weight:650;color:#051223' }, [
+          el('span', { html: icon('book') }),
+          ' Business knowledge',
         ]),
+        el('div', { class: 'journey-kb-row' }, kbItems),
+        k.demoPreview ? null : el('a', {
+          class: 'btn btn-ghost btn-sm',
+          href: data.employeeId ? ('#/employees?id=' + encodeURIComponent(data.employeeId) + '&tab=training') : '#/knowledge',
+          style: 'margin-top:8px',
+        }, 'Add knowledge'),
       ]),
+      el('div', {}, [
+        el('p', { class: 'journey-section-label', style: 'text-transform:none;letter-spacing:0;font-size:.875rem;font-weight:650;color:#051223' }, [
+          el('span', { html: icon('list') }),
+          ' Qualification rules',
+        ]),
+        rulesHost,
+      ]),
+      k.demoPreview ? demoBadge(true) : null,
     ]);
   }
 
   function renderLanguage(data) {
     const L = data.language || {};
     const voice = L.voice || {};
-    const options = (voice.options || [
-      {
-        id: 'current',
-        name: (voice.current && (voice.current.speaker || voice.current.model)) || voice.title || 'Current voice',
-        description: (voice.subtitle || 'Draft preview only'),
-        selected: true,
-      },
-    ]).map((opt) => el('button', {
-      class: 'journey-voice-opt' + (opt.selected ? ' is-selected' : ''),
+    const voiceOptions = voice.options && voice.options.length ? voice.options : [
+      { id: 'maya', name: 'Maya', description: 'Lead qualification · Demo voice', selected: true, demoPreview: !!L.demoPreview },
+      { id: 'dev', name: 'Dev', description: 'Customer support · Demo voice', selected: false, demoPreview: !!L.demoPreview },
+      { id: 'sara', name: 'Sara', description: 'Appointments · Demo voice', selected: false, demoPreview: !!L.demoPreview },
+    ];
+    if (!voiceOptions.some((v) => v.id === JourneyState.selectedVoiceId)) {
+      const sel = voiceOptions.find((v) => v.selected) || voiceOptions[0];
+      JourneyState.selectedVoiceId = sel ? sel.id : 'maya';
+    }
+
+    const options = voiceOptions.map((opt) => el('button', {
+      class: 'journey-voice-opt' + (opt.id === JourneyState.selectedVoiceId || opt.selected ? ' is-selected' : ''),
       type: 'button',
+      'aria-pressed': (opt.id === JourneyState.selectedVoiceId || opt.selected) ? 'true' : 'false',
       onclick: () => {
-        if (opt.demoPreview || L.demoPreview) toast('Demo preview voice. Switch to Live to use catalog drafts.', 'info');
+        JourneyState.selectedVoiceId = opt.id;
+        stopVoicePreview();
+        refresh();
       },
     }, [
-      el('strong', {}, opt.name),
+      el('strong', {}, [
+        (opt.id === JourneyState.selectedVoiceId || opt.selected) ? el('span', { class: 'tick' }, '✓') : null,
+        opt.name,
+      ]),
       el('span', {}, opt.description || ''),
-      opt.demoPreview ? demoBadge(true) : null,
     ]));
 
-    const chips = (L.languages || []).map((lang) => el('button', {
+    const selected = voiceOptions.find((v) => v.id === JourneyState.selectedVoiceId) || voiceOptions[0];
+    const quote = '“Hi, this is ' + ((selected && selected.name) || 'Maya') + ' from Astra Voice. Is now a good time?”';
+
+    const wave = el('div', { class: 'journey-wave-bars', 'aria-hidden': 'true' });
+    for (let i = 0; i < 28; i++) {
+      const h = 6 + ((i * 7) % 16);
+      const on = (i / 28) * 100 < JourneyState.voiceProgress;
+      wave.appendChild(el('i', {
+        class: on ? 'is-on' : '',
+        style: 'height:' + h + 'px',
+      }));
+    }
+
+    const playBtn = el('button', {
+      class: 'journey-play',
+      type: 'button',
+      'aria-label': JourneyState.voicePlaying ? 'Pause sample' : 'Play voice sample',
+      onclick: async () => {
+        if (JourneyState.voicePlaying) {
+          stopVoicePreview();
+          return refresh();
+        }
+        JourneyState.voicePlaying = true;
+        JourneyState.voiceProgress = 0;
+        if (JourneyState.voiceTimer) clearInterval(JourneyState.voiceTimer);
+        JourneyState.voiceTimer = setInterval(() => {
+          JourneyState.voiceProgress += 4;
+          if (JourneyState.voiceProgress >= 100) {
+            stopVoicePreview();
+          }
+          const root = document.getElementById('ai-employee-journey-root');
+          if (root && JourneyState.payload) paint(root, JourneyState.payload, { skipFetch: true });
+        }, 120);
+        if (!L.demoPreview) {
+          try {
+            const res = await fetch('/api/tts', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: 'Hi, this is Maya from Astra Voice. Is now a good time?', provider: 'rumik', model: 'mulberry' }),
+            });
+            if (res.ok) {
+              const buf = await res.arrayBuffer();
+              const audio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
+              audio.play().catch(() => {});
+            }
+          } catch (_) {}
+        }
+        refresh();
+      },
+      html: JourneyState.voicePlaying
+        ? '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>'
+        : '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
+    });
+
+    // Language chips: prefer EN/HI/TE/TA like marketing for demo; full catalog in live
+    let langs = L.languages || [];
+    if (L.demoPreview) {
+      langs = langs.filter((l) => ['EN', 'HI', 'TE', 'TA'].includes(l.id));
+      if (!langs.length) {
+        langs = [
+          { id: 'EN', label: 'English', selected: false, demoPreview: true },
+          { id: 'HI', label: 'Hindi', selected: false, demoPreview: true },
+          { id: 'TE', label: 'Telugu', selected: true, demoPreview: true },
+          { id: 'TA', label: 'Tamil', selected: false, demoPreview: true },
+        ];
+      }
+    }
+
+    const chips = langs.map((lang) => el('button', {
       class: 'journey-chip' + (lang.selected ? ' is-selected' : ''),
       type: 'button',
+      'aria-pressed': lang.selected ? 'true' : 'false',
       onclick: async () => {
         if (L.demoPreview || lang.demoPreview) {
-          return toast('Demo preview language. Switch to Live mode to save.', 'info');
-        }
-        if (lang.status && lang.status !== 'Available' && !lang.live) {
-          toast(lang.label + ' is "' + lang.status + '". Not labeled live.', 'info');
+          // Allow local selection in demo for visual fidelity without writing live.
+          langs.forEach((l) => { l.selected = l.id === lang.id; });
+          L.note = lang.id === 'TE' || /telugu/i.test(lang.label || '')
+            ? 'Telugu selected for this illustrative demo · outcome fields stay in English.'
+            : null;
+          return refresh();
         }
         try {
           await saveJourney({
@@ -291,102 +405,70 @@
         }
       },
     }, [
-      lang.label + (lang.demoPreview ? ' · Demo preview' : ''),
-      el('span', { class: 'status' }, lang.status || ''),
+      lang.label,
+      (lang.demoPreview || (lang.status && lang.status !== 'Available'))
+        ? el('span', { class: 'chip-demo' }, 'Demo preview')
+        : null,
     ]));
 
-    const providerSel = el('select', { class: 'select' }, [
-      el('option', { value: 'dograh' }, 'Dograh Managed'),
-      el('option', { value: 'deepgram' }, 'Deepgram Aura'),
-      el('option', { value: 'sarvam' }, 'Sarvam'),
-      el('option', { value: 'rumik' }, 'Rumik'),
-    ]);
-    const speed = el('input', { type: 'range', min: '0.75', max: '1.25', step: '0.05', value: '1' });
-    const previewBtn = el('button', {
-      class: 'journey-play',
-      type: 'button',
-      'aria-label': 'Preview voice',
-      onclick: async () => {
-        try {
-          const text = voice.previewText || 'Hi, this is Maya from Astra Voice. Is now a good time?';
-          const provider = providerSel.value;
-          const res = await fetch('/api/tts', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              text,
-              provider: provider === 'dograh' ? 'rumik' : provider,
-              model: provider === 'rumik' ? 'mulberry' : undefined,
-            }),
-          });
-          if (!res.ok) throw new Error('Preview failed');
-          const buf = await res.arrayBuffer();
-          const blob = new Blob([buf], { type: 'audio/wav' });
-          const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          audio.play().catch(() => {});
-          toast('Playing draft preview. Production voice unchanged.', 'ok');
-        } catch (err) {
-          toast(err.message || 'Voice preview unavailable.', 'err');
-        }
-      },
-    }, el('span', { html: '▶' }));
+    const selectedLang = langs.find((l) => l.selected);
+    const bannerText = L.note
+      || (selectedLang && /telugu/i.test(selectedLang.label || '')
+        ? 'Telugu selected for this illustrative demo · outcome fields stay in English.'
+        : null);
 
-    const saveDraft = L.demoPreview ? null : el('button', {
-      class: 'btn btn-ghost btn-sm',
-      type: 'button',
-      onclick: async () => {
-        try {
-          await api('/api/voice/draft-prefs', {
-            method: 'PUT',
-            body: {
-              voice_mode: providerSel.value === 'dograh' ? 'dograh_managed' : 'byok',
-              provider: providerSel.value,
-              speed: Number(speed.value) || 1,
-              apply_live: false,
-            },
-          });
-          await saveJourney({
-            mode: 'live',
-            step: 'language',
-            voiceDraft: {
-              provider: providerSel.value,
-              speed: Number(speed.value) || 1,
-              apply_live: false,
-            },
-          });
-          toast('Voice draft saved. Maya production voice was not changed.', 'ok');
-        } catch (err) {
-          toast(err.message || 'Could not save voice draft.', 'err');
-        }
-      },
-    }, 'Save draft');
+    const draftControls = L.demoPreview ? null : el('div', { class: 'journey-select-row' }, [
+      el('label', {}, [
+        'Provider',
+        el('select', { id: 'journeyProvider' }, [
+          el('option', { value: 'dograh' }, 'Dograh Managed'),
+          el('option', { value: 'deepgram' }, 'Deepgram Aura'),
+          el('option', { value: 'sarvam' }, 'Sarvam'),
+          el('option', { value: 'rumik' }, 'Rumik'),
+        ]),
+      ]),
+      el('button', {
+        class: 'btn btn-ghost btn-sm',
+        type: 'button',
+        onclick: async () => {
+          const provider = (document.getElementById('journeyProvider') || {}).value || 'dograh';
+          try {
+            await api('/api/voice/draft-prefs', {
+              method: 'PUT',
+              body: { voice_mode: provider === 'dograh' ? 'dograh_managed' : 'byok', provider: provider, apply_live: false },
+            });
+            await saveJourney({ mode: 'live', step: 'language', voiceDraft: { provider: provider, apply_live: false } });
+            toast('Voice draft saved. Maya production voice unchanged.', 'ok');
+          } catch (err) {
+            toast(err.message || 'Could not save voice draft.', 'err');
+          }
+        },
+      }, 'Save draft'),
+    ]);
 
     return el('div', { class: 'journey-body' }, [
-      el('div', { class: 'journey-card is-soft' }, [
-        el('div', { class: 'eyebrow' }, 'Voice'),
-        el('h3', {}, voice.title || 'Voice profile'),
-        el('p', { class: 'sub' }, voice.subtitle || 'Preview + Save draft only.'),
-        el('div', { class: 'journey-voice-options', style: 'margin:12px 0' }, options),
-        el('div', { class: 'journey-select-row', style: 'margin-bottom:10px' }, [
-          el('label', {}, ['Provider', providerSel]),
-          el('label', {}, ['Speed', speed]),
-        ]),
+      el('div', { class: 'journey-voice-panel' }, [
+        el('p', { class: 'journey-section-label' }, [el('span', { html: icon('mic') }), ' VOICE']),
+        el('h3', {}, voice.title || 'Warm · Natural · Indian English'),
+        el('p', { class: 'sub' }, voice.subtitle || (L.demoPreview
+          ? 'Demo voice profile for Maya - illustrative sample.'
+          : 'Draft preview only. Saving does not flip Maya production voice.')),
+        el('div', { class: 'journey-voice-options' }, options),
+        draftControls,
         el('div', { class: 'journey-preview-bar' }, [
-          previewBtn,
-          el('div', { class: 'sub', style: 'flex:1' }, '"' + (voice.previewText || 'Hi, this is Maya from Astra Voice.') + '"'),
-          el('div', { class: 'journey-wave', 'aria-hidden': 'true' }),
-          saveDraft,
+          playBtn,
+          el('div', { style: 'min-width:0;flex:1' }, [
+            el('p', { class: 'journey-preview-quote' }, quote),
+            wave,
+          ]),
         ]),
-        L.demoPreview ? demoBadge(true) : el('p', { class: 'journey-note', style: 'margin-top:8px' }, 'Production TTS / Maya live voice is never auto-flipped from this screen.'),
       ]),
-      el('div', { class: 'journey-card' }, [
-        el('div', { class: 'eyebrow' }, 'Language'),
-        el('h3', {}, L.demoPreview ? 'Regional language ready' : 'Languages'),
-        el('p', { class: 'sub' }, 'Statuses stay honest: Available, Ready for paid validation, Tested, Unavailable.'),
-        el('div', { class: 'journey-lang-chips', style: 'margin-top:12px' }, chips),
-        L.note ? el('p', { class: 'journey-note', style: 'margin-top:12px' }, L.note) : null,
+      el('div', { class: 'journey-lang-panel' }, [
+        el('p', { class: 'journey-section-label is-muted' }, [el('span', { html: icon('langs') }), ' LANGUAGE']),
+        el('h3', {}, 'Regional language ready'),
+        el('p', { class: 'sub' }, 'Speak to customers in English and selected regional languages.'),
+        el('div', { class: 'journey-lang-chips' }, chips),
+        bannerText ? el('p', { class: 'journey-info-banner' }, bannerText) : null,
       ]),
     ]);
   }
@@ -395,76 +477,90 @@
     const r = data.routing || {};
     const num = r.businessNumber || {};
     const hours = r.workingHours || {};
-    const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-    const activeDays = new Set(hours.days || [1, 2, 3, 4, 5]);
-    const days = dayLabels.map((label, idx) => el('div', {
-      class: 'journey-day' + (activeDays.has(idx) ? ' is-on' : ''),
+    const dayLabels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    // Marketing uses Mon-Sun as M T W T F S S; our hours.days use 0=Sun.
+    const activeMap = [false, false, false, false, false, false, false];
+    (hours.days || [1, 2, 3, 4, 5]).forEach((d) => {
+      if (d >= 1 && d <= 6) activeMap[d - 1] = true;
+      if (d === 0) activeMap[6] = true;
+    });
+    if (hours.mode === 'always') activeMap.fill(true);
+
+    const days = dayLabels.map((label, idx) => el('button', {
+      class: 'journey-day' + (activeMap[idx] ? ' is-on' : ''),
+      type: 'button',
+      'aria-pressed': activeMap[idx] ? 'true' : 'false',
     }, label));
 
-    const rules = (r.routing || []).map((rule) => el('div', { class: 'journey-rule' }, [
-      el('div', {}, [
-        el('strong', {}, rule.when || 'When'),
-        el('div', { class: 'sub' }, '→ ' + (rule.then || '')),
-        rule.demoPreview ? demoBadge(true) : null,
-      ]),
-    ]));
+    const routingText = (r.routing || []).length
+      ? (r.routing || []).map((rule) => (rule.when || '') + ' → ' + (rule.then || '')).join(' · ')
+      : (r.workflowName ? ('Workflow · ' + r.workflowName) : 'Assign a workflow or configure Actions.');
 
     const cal = r.calendar || {};
     const primary = cal.primary || {};
     const secondary = cal.secondary || {};
-
-    const testBtn = el('button', {
-      class: 'btn btn-ghost btn-sm',
-      type: 'button',
-      onclick: async () => {
-        try {
-          const out = await api('/api/ai-employee-journey/calendar/test');
-          if (out.connected) toast('Cal.com connected · ' + (out.label || 'event'), 'ok');
-          else toast(out.error || 'Cal.com not connected', 'info');
-        } catch (err) {
-          toast(err.message || 'Calendar test failed.', 'err');
-        }
-      },
-    }, 'Test connection');
+    const connected = /connected/i.test(String(primary.status || ''));
 
     return el('div', { class: 'journey-body' }, [
-      el('div', { class: 'journey-card' }, [
-        el('div', { class: 'eyebrow' }, 'Business number'),
-        el('h3', {}, num.e164 || '-'),
-        el('p', { class: 'sub' }, num.direction || ''),
-        num.note ? el('p', { class: 'journey-note' }, num.note) : null,
-        num.demoPreview ? demoBadge(true) : null,
-      ]),
-      el('div', { class: 'journey-card' }, [
-        el('div', { class: 'eyebrow' }, 'Routing'),
-        el('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:8px' },
-          rules.length ? rules : [el('p', { class: 'muted' }, 'No routing rules yet. Configure Actions on the employee or assign a workflow.')]),
-        r.workflowName ? el('p', { class: 'journey-note' }, 'Assigned workflow · ' + r.workflowName) : null,
-      ]),
-      el('div', { class: 'journey-card' }, [
-        el('div', { class: 'eyebrow' }, 'Working hours'),
-        el('h3', {}, hours.label || 'Asia/Kolkata'),
-        el('div', { class: 'journey-days', style: 'margin-top:10px' }, days),
-        hours.demoPreview ? demoBadge(true) : null,
-      ]),
-      el('div', { class: 'journey-card' }, [
-        el('div', { class: 'eyebrow' }, 'Calendar'),
-        el('div', { class: 'journey-field-grid' }, [
-          el('div', { class: 'journey-card is-soft', style: 'padding:12px' }, [
-            el('strong', {}, primary.label || 'Calendar'),
-            el('p', { class: 'sub' }, primary.status || '-'),
-            primary.eventTypeId ? el('p', { class: 'journey-note' }, 'Event ' + primary.eventTypeId) : null,
-            primary.note ? el('p', { class: 'journey-note' }, primary.note) : null,
-            primary.demoPreview ? demoBadge(true) : null,
-          ]),
-          el('div', { class: 'journey-card', style: 'padding:12px' }, [
-            el('strong', {}, secondary.label || 'Second calendar'),
-            el('p', { class: 'sub' }, secondary.status || 'Connect'),
-            secondary.demoPreview ? demoBadge(true) : null,
+      el('div', { class: 'journey-routing-panel' }, [
+        el('div', { class: 'journey-routing-row' }, [
+          el('div', { class: 'ico', html: icon('routing') }),
+          el('div', {}, [
+            el('div', { class: 'label' }, 'Business number'),
+            el('div', { class: 'value' }, (num.e164 || '-') + (num.direction ? (' · ' + num.direction) : '')),
           ]),
         ]),
-        el('div', { class: 'flex gap-2', style: 'margin-top:10px;flex-wrap:wrap' }, [
-          testBtn,
+        el('div', { class: 'journey-routing-row' }, [
+          el('div', { class: 'ico', html: icon('routing') }),
+          el('div', {}, [
+            el('div', { class: 'label' }, 'Routing'),
+            el('div', { class: 'value' }, routingText),
+          ]),
+        ]),
+      ]),
+      el('div', {}, [
+        el('p', { class: 'journey-hours-head' }, [
+          el('span', { html: icon('clock') }),
+          ' Working hours · ' + (hours.label || '09:00 – 19:00 IST'),
+        ]),
+        el('div', { class: 'journey-days' }, days),
+      ]),
+      el('div', {}, [
+        el('p', { class: 'journey-cal-head' }, [el('span', { html: icon('cal') }), ' Calendar']),
+        el('div', { class: 'journey-cal-grid' }, [
+          el('div', { class: 'journey-cal-card' + (connected ? ' is-connected' : '') }, [
+            el('span', {}, primary.label || 'Configured calendar'),
+            connected
+              ? el('span', { class: 'ok' }, [el('span', { html: icon('check') }), ' Connected'])
+              : el('span', { class: 'journey-note' }, primary.status || 'Not connected'),
+          ]),
+          el('div', { class: 'journey-cal-card' }, [
+            el('span', {}, secondary.label || 'Second calendar'),
+            el('button', {
+              class: 'journey-connect-btn',
+              type: 'button',
+              onclick: () => toast('Connect additional calendars from Integrations.', 'info'),
+            }, secondary.status === 'Connected' ? 'Connected' : 'Connect'),
+          ]),
+        ]),
+        primary.note || r.demoPreview
+          ? el('p', { class: 'journey-note', style: 'margin-top:8px' },
+            primary.note || 'Illustrative setup · no external account is connected.')
+          : null,
+        el('div', { class: 'flex gap-2', style: 'margin-top:8px;flex-wrap:wrap' }, [
+          el('button', {
+            class: 'btn btn-ghost btn-sm',
+            type: 'button',
+            onclick: async () => {
+              try {
+                const out = await api('/api/ai-employee-journey/calendar/test');
+                if (out.connected) toast('Cal.com connected · ' + (out.label || 'event'), 'ok');
+                else toast(out.error || 'Cal.com not connected', 'info');
+              } catch (err) {
+                toast(err.message || 'Calendar test failed.', 'err');
+              }
+            },
+          }, 'Test connection'),
           el('a', { class: 'btn btn-ghost btn-sm', href: '#/integrations' }, 'Change provider'),
         ]),
       ]),
@@ -473,37 +569,37 @@
 
   function renderCall(data) {
     const c = data.call || {};
-    const statusEl = el('span', {}, 'Ready');
+    const statusEl = el('span', {}, c.demoPreview ? 'Connected' : 'Ready');
     const timerEl = el('span', {}, c.timer || '00:00');
-    const statusPill = el('div', { class: 'journey-pill' }, [el('span', {}, 'Status · '), statusEl]);
-    const timerPill = el('div', { class: 'journey-pill is-dark' }, timerEl);
-    const langPill = el('div', { class: 'journey-pill is-outline' }, c.language || (c.demoPreview ? 'Telugu · Demo preview' : 'Live'));
 
     const transcriptHost = el('div', { class: 'journey-transcript' });
     function paintTranscript(rows) {
       transcriptHost.innerHTML = '';
       (rows || []).forEach((row) => {
+        const isAgent = row.role === 'agent' || /maya/i.test(row.speaker || '');
         transcriptHost.appendChild(el('div', {
-          class: 'journey-bubble ' + (row.role === 'agent' || /maya/i.test(row.speaker || '') ? 'is-agent' : 'is-caller'),
+          class: 'journey-bubble' + (isAgent ? '' : ' is-caller'),
         }, [
           el('div', { class: 'who' }, [
-            (row.speaker || row.role || 'Speaker'),
+            (row.speaker || row.role || 'Speaker').toUpperCase(),
             row.language ? (' · ' + row.language) : '',
           ].join('')),
           el('div', { html: highlightText(row.text, row.highlights) }),
-          row.demoPreview ? demoBadge(true) : null,
         ]));
       });
       if (!(rows || []).length) {
-        transcriptHost.appendChild(el('p', { class: 'muted' }, c.note || 'No transcript yet.'));
+        transcriptHost.appendChild(el('p', { class: 'journey-note' }, c.note || 'No transcript yet.'));
       }
     }
     paintTranscript(c.transcript || []);
 
-    const wave = el('div', { class: 'journey-wave', style: 'height:40px;margin:8px 0 12px' });
+    const wave = el('div', { class: 'journey-wave-card', 'aria-hidden': 'true' });
+    [28, 54, 78, 42, 90, 62, 36, 70, 48, 84, 58, 34, 76, 50, 66, 40, 88, 52, 30, 72].forEach((h) => {
+      wave.appendChild(el('i', { style: 'height:' + h + '%' }));
+    });
 
     const startBtn = el('button', {
-      class: 'btn btn-primary',
+      class: 'btn btn-primary btn-sm',
       type: 'button',
       disabled: !!c.demoPreview || !c.realtimeAvailable || !c.agentId,
       onclick: async () => {
@@ -519,16 +615,16 @@
           onStatus: (s) => { statusEl.textContent = s; },
           onTick: (sec) => {
             const m = String(Math.floor(sec / 60)).padStart(2, '0');
-            const s = String(sec % 60).padStart(2, '0');
-            timerEl.textContent = m + ':' + s;
+            const s2 = String(sec % 60).padStart(2, '0');
+            timerEl.textContent = m + ':' + s2;
           },
           onTranscript: (row) => {
-            const cur = Array.from(transcriptHost.querySelectorAll('.journey-bubble')).length;
-            if (!cur) transcriptHost.innerHTML = '';
+            if (!transcriptHost.querySelector('.journey-bubble')) transcriptHost.innerHTML = '';
+            const isAgent = row.role === 'agent';
             transcriptHost.appendChild(el('div', {
-              class: 'journey-bubble ' + (row.role === 'agent' ? 'is-agent' : 'is-caller'),
+              class: 'journey-bubble' + (isAgent ? '' : ' is-caller'),
             }, [
-              el('div', { class: 'who' }, row.speaker || row.role || 'Speaker'),
+              el('div', { class: 'who' }, (row.speaker || row.role || 'Speaker').toUpperCase()),
               el('div', {}, row.text || ''),
             ]));
           },
@@ -538,26 +634,45 @@
     }, c.demoPreview ? 'Demo preview only' : (c.realtimeAvailable ? 'Start live call' : 'Realtime unavailable'));
 
     return el('div', { class: 'journey-body' }, [
-      el('div', { class: 'journey-call-head' }, [statusPill, timerPill, langPill, c.demoPreview ? demoBadge(true) : null]),
-      c.participant ? el('div', {}, [
-        el('h3', {}, c.participant.name || 'Caller'),
-        el('p', { class: 'sub' }, c.participant.context || ''),
-      ]) : el('p', { class: 'sub' }, c.note || 'Realtime Talk uses the employee agent when available.'),
+      el('div', { class: 'journey-call-top' }, [
+        el('div', {}, [
+          el('div', { class: 'journey-live-label' }, 'LIVE CALL'),
+          el('h4', { class: 'journey-caller-name' }, (c.participant && c.participant.name) || (c.demoPreview ? 'Arjun Mehta' : 'Caller')),
+          el('p', { class: 'journey-note', style: 'margin-top:2px;font-size:.875rem' },
+            (c.participant && c.participant.context) || (c.note || 'Realtime Talk uses the employee agent when available.')),
+        ]),
+        el('div', { class: 'journey-call-badges' }, [
+          el('span', { class: 'journey-pill' }, ['', statusEl]),
+          el('span', { class: 'journey-pill is-dark' }, [timerEl]),
+          el('span', { class: 'journey-pill is-outline' }, c.language || (c.demoPreview ? 'Telugu · Demo preview' : 'Live')),
+        ]),
+      ]),
       wave,
       transcriptHost,
-      el('div', { class: 'flex gap-2', style: 'margin-top:8px;flex-wrap:wrap;align-items:center' }, [
+      el('div', { class: 'journey-regional-foot' }, [
+        el('span', { class: 'journey-pill' }, 'Regional language'),
+        el('span', {}, c.demoPreview
+          ? 'Conversation continues in Telugu + English · illustrative demo'
+          : 'Live mode never invents transcripts.'),
+      ]),
+      el('div', { class: 'flex gap-2', style: 'flex-wrap:wrap' }, [
         startBtn,
         el('a', { class: 'btn btn-ghost btn-sm', href: '#/talk' }, 'Open Talk'),
       ]),
-      el('p', { class: 'journey-note' }, c.demoPreview
-        ? 'Conversation labeled Demo preview. Not written to live call records.'
-        : 'Live mode never invents transcripts. Fake lines appear only in Demo preview.'),
     ]);
   }
 
   async function startRealtimeCall(agentId, hooks) {
     stopTalk();
-    const talk = { running: true, startedAt: Date.now(), pc: null, ws: null, stream: null, audio: el('audio', { autoplay: 'autoplay', playsinline: 'playsinline' }), timer: null };
+    const talk = {
+      running: true,
+      startedAt: Date.now(),
+      pc: null,
+      ws: null,
+      stream: null,
+      audio: el('audio', { autoplay: 'autoplay', playsinline: 'playsinline' }),
+      timer: null,
+    };
     JourneyState.talk = talk;
     hooks.onStatus && hooks.onStatus('Connecting');
     try {
@@ -619,7 +734,7 @@
           hooks.onStatus && hooks.onStatus('Failed');
         } else if (message.type === 'rtf-user-transcription') {
           const p = message.payload || {};
-          hooks.onStatus && hooks.onStatus(p.final ? 'Listening' : 'Listening');
+          hooks.onStatus && hooks.onStatus('Listening');
           if (p.text && p.final) hooks.onTranscript && hooks.onTranscript({ role: 'caller', speaker: 'Caller', text: p.text });
         } else if (message.type === 'rtf-bot-text') {
           const p = message.payload || {};
@@ -667,37 +782,42 @@
 
   function renderOutcome(data) {
     const o = data.outcome || {};
-    const crumbs = el('div', { class: 'journey-breadcrumb' }, []);
-    (o.breadcrumb || ['CONVERSATION', 'UNDERSTANDING', 'OUTCOME', 'NEXT ACTION']).forEach((label, idx, arr) => {
-      crumbs.appendChild(el('span', { class: label === (o.active || 'OUTCOME') ? 'is-on' : '' }, label));
-      if (idx < arr.length - 1) crumbs.appendChild(el('span', { class: 'sep' }, '--'));
+    const crumbs = el('div', { class: 'journey-breadcrumb' });
+    const labels = o.breadcrumb || ['CONVERSATION', 'UNDERSTANDING', 'OUTCOME', 'NEXT ACTION'];
+    labels.forEach((label, idx) => {
+      crumbs.appendChild(el('span', {
+        class: label === (o.active || 'OUTCOME') ? 'is-on' : '',
+      }, label));
+      if (idx < labels.length - 1) crumbs.appendChild(el('span', { class: 'sep' }));
     });
 
     const fields = (o.fields || []).map((f) => el('div', {
-      class: 'journey-card' + (f.success ? ' is-success' : ' is-soft'),
+      class: 'journey-field-card' + (f.success || /status/i.test(f.key || '') ? ' is-success' : ''),
     }, [
       el('div', { class: 'eyebrow' }, f.label || f.key),
-      el('h3', {}, String(f.value == null ? '-' : f.value)),
+      el('b', { class: 'value' }, String(f.value == null ? '-' : f.value)),
       f.provenance ? el('p', { class: 'prov' }, f.provenance) : null,
-      f.demoPreview ? demoBadge(true) : null,
     ]));
 
     return el('div', { class: 'journey-body' }, [
+      el('div', {}, [
+        el('p', { class: 'journey-eyebrow' }, 'STRUCTURED OUTCOME'),
+        el('h4', { class: 'journey-context-title' }, 'Customer context'),
+        el('p', { class: 'journey-note', style: 'margin-top:4px;font-size:.875rem' },
+          o.note || 'Normalized English fields from the multilingual call.'),
+      ]),
       crumbs,
-      el('div', { class: 'eyebrow' }, 'Structured outcome'),
-      el('h3', {}, 'Customer context'),
-      el('p', { class: 'sub' }, o.note || 'Normalized fields from real call outcomes when available.'),
-      el('div', { class: 'journey-field-grid', style: 'margin-top:10px' }, fields.length ? fields : [
+      el('div', { class: 'journey-fields-stack' }, fields.length ? fields : [
         el('div', { class: 'journey-card' }, [
-          el('p', { class: 'muted' }, 'No structured outcome fields yet.'),
+          el('p', { class: 'journey-note' }, 'No structured outcome fields yet.'),
           (o.schema || []).length
             ? el('p', { class: 'journey-note' }, 'Configured schema: ' + o.schema.map((s) => s.label || s.key).join(', '))
             : null,
         ]),
       ]),
-      o.summary ? el('div', { class: 'journey-card', style: 'margin-top:8px' }, [
-        el('div', { class: 'eyebrow' }, 'Summary'),
-        el('p', {}, o.summary),
+      o.summary ? el('div', { class: 'journey-card' }, [
+        el('div', { class: 'journey-eyebrow' }, 'Summary'),
+        el('p', { style: 'margin-top:6px' }, o.summary),
       ]) : null,
       o.demoPreview ? demoBadge(true) : null,
     ]);
@@ -709,27 +829,25 @@
     const metrics = (n.metrics || []).map((m) => el('div', { class: 'journey-card' }, [
       el('strong', {}, String(m.value == null ? '-' : m.value)),
       el('span', {}, m.label || m.key),
-      m.demoPreview ? demoBadge(true) : null,
     ]));
     return el('div', { class: 'journey-body' }, [
       el('div', { class: 'journey-card is-soft' }, [
-        el('div', { class: 'eyebrow' }, 'Next action'),
-        el('h3', {}, action.title || '-'),
-        el('p', { class: 'sub' }, [
+        el('p', { class: 'journey-eyebrow' }, 'NEXT ACTION'),
+        el('b', { style: 'display:block;margin-top:8px;font-size:1.25rem' }, action.title || '-'),
+        el('p', { class: 'journey-note', style: 'margin-top:4px;font-size:.875rem' }, [
           action.owner ? ('Owner ' + action.owner) : null,
           action.owner && action.detail ? ' · ' : '',
           action.detail || '',
         ].join('')),
-        action.demoPreview ? demoBadge(true) : null,
       ]),
       metrics.length
         ? el('div', { class: 'journey-metrics' }, metrics)
         : el('p', { class: 'journey-note' }, 'Metrics hidden until real employee analytics exist.'),
       el('div', { class: 'journey-card is-soft' }, [
-        el('div', { class: 'eyebrow' }, 'Outcome summary'),
-        el('p', {}, (n.outcomeSummary && n.outcomeSummary.text)
-          || 'No Groq auto-summary yet. Complete a live call with summary pipeline enabled.'),
-        n.outcomeSummary && n.outcomeSummary.demoPreview ? demoBadge(true) : null,
+        el('p', { class: 'journey-summary-head' }, [el('span', { html: icon('spark') }), ' Outcome summary']),
+        el('p', { class: 'journey-note', style: 'margin-top:6px;font-size:.875rem' },
+          (n.outcomeSummary && n.outcomeSummary.text)
+            || 'No Groq auto-summary yet. Complete a live call with summary pipeline enabled.'),
       ]),
       n.disclaimer ? el('p', { class: 'journey-note' }, n.disclaimer) : null,
       n.demoPreview ? demoBadge(true) : null,
@@ -749,26 +867,21 @@
   async function setMode(mode) {
     JourneyState.mode = mode === 'demo' ? 'demo' : 'live';
     saveLocal({ mode: JourneyState.mode, step: JourneyState.step });
-    try {
-      await saveJourney({ mode: JourneyState.mode, step: JourneyState.step });
-    } catch (_) {}
+    try { await saveJourney({ mode: JourneyState.mode, step: JourneyState.step }); } catch (_) {}
     await refresh();
   }
 
   async function goStep(stepId) {
+    stopVoicePreview();
     JourneyState.step = stepId;
     saveLocal({ step: stepId, mode: JourneyState.mode });
-    try {
-      await saveJourney({ step: stepId, mode: JourneyState.mode });
-    } catch (_) {}
+    try { await saveJourney({ step: stepId, mode: JourneyState.mode }); } catch (_) {}
     await refresh();
   }
 
   async function refresh() {
     const root = document.getElementById('ai-employee-journey-root');
     if (!root) return;
-    root.innerHTML = '';
-    root.appendChild(el('div', { class: 'muted' }, 'Loading journey…'));
     try {
       const payload = await fetchJourney({ step: JourneyState.step, mode: JourneyState.mode });
       JourneyState.payload = payload;
@@ -779,7 +892,7 @@
       root.innerHTML = '';
       root.appendChild(el('div', { class: 'journey-card' }, [
         el('h3', {}, 'Journey unavailable'),
-        el('p', { class: 'muted' }, err.message || 'Could not load AI Employee journey.'),
+        el('p', { class: 'journey-note' }, err.message || 'Could not load AI Employee journey.'),
       ]));
     }
   }
@@ -788,20 +901,36 @@
     stopTalk();
     const idx = stepIndex(JourneyState.step);
     const step = STEPS[idx];
-    const title = step.id === 'knowledge' && data.employee && data.employee.name
-      ? ('Teach ' + data.employee.name + ' the job')
-      : step.title;
+    const fillScale = ((idx + 1) / STEPS.length).toFixed(4);
+
+    const timeline = el('div', { class: 'journey-timeline' }, [
+      el('div', { class: 'journey-timeline-track' }, [
+        el('div', { class: 'journey-timeline-fill', style: 'transform:scaleY(' + fillScale + ')' }),
+      ]),
+    ].concat(STEPS.map((s, i) => el('button', {
+      class: 'journey-timeline-item'
+        + (s.id === step.id ? ' is-active' : '')
+        + (i < idx ? ' is-done' : ''),
+      type: 'button',
+      'aria-current': s.id === step.id ? 'step' : undefined,
+      onclick: () => goStep(s.id),
+    }, [
+      el('span', {
+        class: 'journey-timeline-dot',
+        html: i < idx ? icon('check') : '',
+      }),
+      el('span', { class: 'journey-timeline-num' }, '0' + (i + 1)),
+      el('span', { class: 'journey-timeline-label' }, s.timeline),
+    ]))));
 
     const rail = el('aside', { class: 'journey-rail' }, STEPS.map((s) => el('button', {
       class: 'journey-rail-item' + (s.id === step.id ? ' is-active' : ''),
       type: 'button',
       onclick: () => goStep(s.id),
       html: icon(s.id) + '<span>' + esc(s.label) + '</span>',
-    })).concat([
-      el('div', { class: 'journey-rail-foot' }, 'Step ' + (idx + 1) + ' of 7'),
-    ]));
+    })));
 
-    const bodyHost = el('div', { id: 'journey-step-body' });
+    const bodyHost = el('div', { class: 'journey-panel is-animating' });
     const renderer = RENDERERS[step.id] || renderEmployee;
     bodyHost.appendChild(renderer(data));
 
@@ -818,10 +947,10 @@
       onclick: async () => {
         if (idx >= STEPS.length - 1) {
           JourneyState.step = 'employee';
-          JourneyState.mode = 'live';
           JourneyState.dirtyPrompt = null;
-          saveLocal({ step: 'employee', mode: 'live' });
-          try { await saveJourney({ step: 'employee', mode: 'live' }); } catch (_) {}
+          stopVoicePreview();
+          saveLocal({ step: 'employee', mode: JourneyState.mode });
+          try { await saveJourney({ step: 'employee', mode: JourneyState.mode }); } catch (_) {}
           toast('Journey restarted.', 'ok');
           await refresh();
           return;
@@ -829,49 +958,61 @@
         await goStep(STEPS[idx + 1].id);
       },
       html: idx >= STEPS.length - 1
-        ? '<span style="margin-right:6px">▶</span> Start over'
+        ? '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Start over'
         : 'Continue',
     });
 
     const main = el('div', { class: 'journey-main' }, [
       el('div', { class: 'journey-top' }, [
-        el('h2', {}, title),
+        el('h2', {}, panelTitle(data)),
         el('div', { class: 'step-meta' }, 'Step ' + (idx + 1) + ' of 7'),
       ]),
-      el('div', { class: 'journey-mode-bar' }, [
-        el('div', { class: 'mode-toggle' }, [
-          el('button', {
-            type: 'button',
-            class: JourneyState.mode === 'live' ? 'is-on' : '',
-            onclick: () => setMode('live'),
-          }, 'Live'),
-          el('button', {
-            type: 'button',
-            class: JourneyState.mode === 'demo' ? 'is-on' : '',
-            onclick: () => setMode('demo'),
-          }, 'Demo preview'),
-        ]),
-        JourneyState.mode === 'demo' ? demoBadge(true) : el('span', { class: 'journey-note' }, 'Live mode uses real Astra Voice entities only.'),
-      ]),
       bodyHost,
-      el('div', { class: 'journey-footer' }, [back, continueBtn]),
+      el('div', { class: 'journey-footer' }, [
+        idx > 0 ? back : null,
+        continueBtn,
+      ]),
+    ]);
+
+    const frame = el('div', { class: 'journey-chrome' }, [
+      el('div', { class: 'journey-chrome-bar' }, [
+        el('span', { class: 'chrome-title' }, chromeLabel()),
+        el('div', { class: 'chrome-right' }, [
+          el('div', { class: 'journey-mode-mini' }, [
+            el('button', {
+              type: 'button',
+              class: JourneyState.mode === 'live' ? 'is-on' : '',
+              onclick: () => setMode('live'),
+            }, 'Live'),
+            el('button', {
+              type: 'button',
+              class: JourneyState.mode === 'demo' ? 'is-on' : '',
+              onclick: () => setMode('demo'),
+            }, 'Demo preview'),
+          ]),
+          el('span', { class: 'journey-traffic', 'aria-hidden': 'true' }, [
+            el('span', { class: 'r' }), el('span', { class: 'y' }), el('span', { class: 'g' }),
+          ]),
+        ]),
+      ]),
+      el('div', { class: 'journey-shell' }, [rail, main]),
     ]);
 
     root.innerHTML = '';
-    root.appendChild(el('div', { class: 'journey-shell' }, [rail, main]));
+    root.appendChild(el('div', { class: 'journey-wrap' }, [
+      el('div', { class: 'journey-outer' }, [timeline, frame]),
+    ]));
   }
 
   async function viewAiEmployeeSetup(root) {
     stopTalk();
+    stopVoicePreview();
     const local = loadLocal();
     JourneyState.step = local.step || 'employee';
     JourneyState.mode = local.mode || 'live';
     JourneyState.dirtyPrompt = null;
 
-    root.appendChild(el('div', { class: 'view-head' }, [
-      el('h2', {}, 'AI Employee Setup'),
-      el('p', {}, 'Guided Astra Voice journey for your investor-demo employee. Existing console pages stay unchanged.'),
-    ]));
+    // No extra page chrome: the Frame itself is the product surface.
     const host = el('div', { id: 'ai-employee-journey-root' });
     root.appendChild(host);
     await refresh();
