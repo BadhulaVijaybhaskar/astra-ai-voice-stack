@@ -107,14 +107,21 @@ Mid-call: language may change; provider + speaker stay locked when the locked en
 
 ### Language voice table (Employee Studio)
 
-Compact table: **Language | Voice | Speed | TTS Test Text | Preview | Status**.
+Compact **Voice by Language** table: **Language | Voice | Speed | TTS Test Text | Preview | Status**.
 
-- TTS Test Text is editable, seeded with native samples, Use sample / Clear.
-- Preview synthesizes language + voice + speed + current text (max 500 chars).
+- Rows for all Astra-supported languages (`en-IN` … `pa-IN`).
+- Voice dropdown = merged Astra catalog voices **compatible with that language** (no provider picker in normal UI).
+- Speed slider (0.70x–1.20x).
+- TTS Test Text is editable, seeded with native samples; **Use sample** / **Clear**.
+- Preview synthesizes language + voice + speed + current text (max 500 chars) and does **not** alter active production config.
 - Preview text is **never** saved as instructions or knowledge.
-- Save stores only `languageVoiceConfig` (`voice_id` + `speed`) and optional primary language.
+- Save stores `languageVoiceConfig` (`voice_id` + `speed`; internal `provider` / `model` may be stored server-side and hidden in the public payload).
+- Optional per-row Save. Persists across process restart via `data/db.json`.
+- Maya: draft may be seeded from validated persona mappings; **production / WF8 / `+918065353938` are never overwritten automatically**.
 
-`GET /api/voice/catalog` includes `voice_personas` and `persona_routes_debug` (no credentials).
+Call start resolves `languageVoiceConfig[initialLanguage]` → session `voice_lock` including **speed**. Mid-call keeps locked speaker + speed and only changes `language_code`.
+
+`GET /api/voice/catalog` includes `voice_personas`, `language_voice_options`, and `persona_routes_debug` (no credentials).
 
 ## Production safety
 

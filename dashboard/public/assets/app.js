@@ -3259,6 +3259,22 @@ async function viewEmployeeStudio(root, id) {
       }
     }
 
+    async function ensureDraftLanguageVoiceSeed() {
+      const existing = (emp.voice && emp.voice.languageVoiceConfig) || {};
+      if (existing && Object.keys(existing).length) return;
+      if (!employeePersonaId(emp)) return;
+      try {
+        const res = await api('/api/employees/' + encodeURIComponent(emp.id) + '/language-voice-config', {
+          method: 'PUT',
+          body: { seed_from_persona: true },
+        });
+        if (res && res.languageVoiceConfig) {
+          emp.voice = emp.voice || {};
+          emp.voice.languageVoiceConfig = res.languageVoiceConfig;
+        }
+      } catch (_) { /* seed optional; never blocks UI */ }
+    }
+
     function renderCascade() {
       cascadeHost.innerHTML = '';
       const isMayaEmp = /^maya$/i.test(String(emp.name || '').trim())
@@ -3327,16 +3343,23 @@ async function viewEmployeeStudio(root, id) {
         ]);
         provBar.appendChild(btn);
       });
-      cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
-        el('h4', { class: 't-h4' }, 'Provider'),
-        provBar,
-        el('p', { class: 'muted', style: 'margin-top:8px' },
-          meta.state === 'needs_funding'
-            ? 'Needs funding. Catalog stays visible. Preview and Activate are disabled until funded.'
-            : (meta.state === 'needs_credentials'
-              ? 'Needs credentials on the server. Catalog stays visible. Preview and Activate are disabled.'
-              : 'Provider catalog from Astra Voice. Keys never appear in this UI.')),
-      ]));
+      // Provider picker hidden in normal Voice by Language UI.
+      // Engines stay internal; Advanced details may still show starting-route debug.
+      if (voiceMode !== 'astra_auto' && selectedProvider !== 'auto' && !isInvestorDemo()) {
+        cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
+          el('h4', { class: 't-h4' }, 'Provider (advanced)'),
+          provBar,
+          el('p', { class: 'muted', style: 'margin-top:8px' },
+            meta.state === 'needs_funding'
+              ? 'Needs funding. Catalog stays visible. Preview and Activate are disabled until funded.'
+              : (meta.state === 'needs_credentials'
+                ? 'Needs credentials on the server. Catalog stays visible. Preview and Activate are disabled.'
+                : 'Advanced engine override. Normal Voice by Language uses the merged Astra catalog.')),
+        ]));
+      } else {
+        // Keep Auto selected for the language table path.
+        selectedProvider = 'auto';
+      }
 
       // 3. Compact language voice TABLE editor (replaces per-language cards / chips).
       // Columns: Language | Voice | Speed | TTS Test Text | Preview | Status
@@ -3364,7 +3387,6 @@ async function viewEmployeeStudio(root, id) {
 
       function voiceOptionsForLang(langId) {
         const route = personaRouteForLanguage(langId);
-        const blocks = providerBlocks();
         const seen = new Set();
         const opts = [];
         function pushVoice(id, label) {
@@ -3373,25 +3395,17 @@ async function viewEmployeeStudio(root, id) {
           seen.add(vId);
           opts.push({ id: vId, label: label || titleCaseVoice(vId) });
         }
+        // Merged Astra catalog voices compatible with this language only.
+        // No provider picker — provider stays internal.
+        const catalogOpts = (catalog && catalog.language_voice_options
+          && catalog.language_voice_options[langId]) || [];
+        catalogOpts.forEach((vv) => {
+          pushVoice(vv.voice_id || vv.id, vv.display_name || titleCaseVoice(vv.voice_id || vv.id));
+        });
         if (route && route.voice_id) pushVoice(route.voice_id, titleCaseVoice(route.voice_id));
         if (savedCfg[langId] && savedCfg[langId].voice_id) {
           pushVoice(savedCfg[langId].voice_id, titleCaseVoice(savedCfg[langId].voice_id));
         }
-        // Prefer curated female / multilingual speakers for the table.
-        const prefer = ['priya', 'neha', 'ishita', 'ritu', 'pooja', 'roopa', 'suhani',
-          'speaker_2', 'speaker_1', 'aura-2-helena-en'];
-        prefer.forEach((id) => pushVoice(id, titleCaseVoice(id)));
-        blocks.forEach((b) => {
-          (b.voices || []).forEach((vv) => {
-            const id = vv.id || vv.voice_id;
-            const lang = String(vv.language || vv.locale || '');
-            if (lang && lang !== 'multi' && lang !== langId
-              && !(lang === 'en' && /^en([-_]|$)/i.test(langId))) {
-              return;
-            }
-            pushVoice(id, vv.display_name || vv.name || titleCaseVoice(id));
-          });
-        });
         return opts;
       }
 
@@ -3538,11 +3552,51 @@ async function viewEmployeeStudio(root, id) {
         }
       }
 
+      const saveStateEl = el('p', { class: 'muted emp-lvt-save-state' }, 'All changes saved');
+      function updateSaveState() {
+        const dirty = Object.keys(rowState).some((k) => rowState[k] && rowState[k].dirty);
+        saveStateEl.textContent = dirty ? 'Unsaved changes' : 'All changes saved';
+        saveStateEl.classList.toggle('is-dirty', !!dirty);
+      }
+      async function persistLanguageVoiceConfig(partialLangId) {
+        const body = partialLangId
+          ? {
+            merge: true,
+            language: partialLangId,
+            voice_id: rowState[partialLangId] && rowState[partialLangId].voice_id,
+            speed: rowState[partialLangId] && rowState[partialLangId].speed,
+            primary_language: selectedLanguage,
+          }
+          : {
+            language: selectedLanguage,
+            languageVoiceConfig: (() => {
+              const full = {};
+              langs.forEach((l) => {
+                const r = rowState[l.id];
+                if (!r || !r.voice_id) return;
+                full[l.id] = { voice_id: r.voice_id, speed: Number(r.speed) || 1 };
+              });
+              return full;
+            })(),
+          };
+        const res = await api('/api/employees/' + encodeURIComponent(emp.id) + '/language-voice-config', {
+          method: 'PUT',
+          body,
+        });
+        if (partialLangId && rowState[partialLangId]) rowState[partialLangId].dirty = false;
+        else Object.keys(rowState).forEach((k) => { if (rowState[k]) rowState[k].dirty = false; });
+        emp.voice = emp.voice || {};
+        if (res && res.languageVoiceConfig) emp.voice.languageVoiceConfig = res.languageVoiceConfig;
+        if (res && res.language) emp.voice.language = res.language;
+        updateSaveState();
+        return res;
+      }
+
       const tableWrap = el('div', { class: 'emp-lang-voice-table-wrap' });
       const table = el('table', {
         class: 'emp-lang-voice-table',
         role: 'table',
-        'aria-label': 'Persona starting voices by language',
+        'aria-label': 'Voice by Language configuration',
       });
       table.appendChild(el('thead', {}, el('tr', {}, [
         el('th', {}, 'Language'),
@@ -3563,24 +3617,27 @@ async function viewEmployeeStudio(root, id) {
             selected: o.id === row.voice_id ? 'selected' : null,
           }, o.label))
         );
-        voiceSel.onchange = () => { row.voice_id = voiceSel.value; };
+        voiceSel.onchange = () => { row.voice_id = voiceSel.value; row.dirty = true; updateSaveState(); };
 
+        const speedVal = el('span', { class: 'muted emp-lvt-speed-x' },
+          Number(row.speed).toFixed(2) + 'x');
         const speedIn = el('input', {
-          class: 'input emp-lvt-speed',
-          type: 'number',
+          class: 'emp-lvt-speed',
+          type: 'range',
           min: '0.7',
           max: '1.2',
           step: '0.05',
-          value: String(Number(row.speed).toFixed(2)),
+          value: String(Number(row.speed) || 1),
           'aria-label': 'Speed for ' + (l.label || l.id),
         });
-        const speedSuffix = el('span', { class: 'muted emp-lvt-speed-x' }, 'x');
-        speedIn.onchange = () => {
+        speedIn.oninput = () => {
           let n = Number(speedIn.value);
           if (!Number.isFinite(n)) n = 1;
           n = Math.max(0.7, Math.min(1.2, Math.round(n * 100) / 100));
           row.speed = n;
-          speedIn.value = n.toFixed(2);
+          speedVal.textContent = n.toFixed(2) + 'x';
+          row.dirty = true;
+          updateSaveState();
         };
 
         const textArea = el('textarea', {
@@ -3633,6 +3690,23 @@ async function viewEmployeeStudio(root, id) {
         const statusEl = el('span', {
           class: 'emp-lvt-status is-' + st.tone,
         }, st.label);
+        const rowSaveBtn = el('button', {
+          class: 'btn btn-ghost btn-xs emp-lvt-row-save',
+          type: 'button',
+          title: 'Save this language row',
+        }, 'Save');
+        rowSaveBtn.onclick = async () => {
+          rowSaveBtn.disabled = true;
+          try {
+            await persistLanguageVoiceConfig(l.id);
+            toast('Saved ' + (PERSONA_PREVIEW_LANG_LABELS[l.id] || l.id) + ' voice settings.', 'ok');
+          } catch (e) {
+            toast((e && e.message) || 'Save failed', 'err');
+          } finally {
+            rowSaveBtn.disabled = false;
+          }
+        };
+        const statusCell = el('div', { class: 'emp-lvt-status-cell' }, [statusEl, rowSaveBtn]);
 
         const langLabel = el('div', { class: 'emp-lvt-lang' }, [
           el('strong', {}, l.label || PERSONA_PREVIEW_LANG_LABELS[l.id] || l.id),
@@ -3654,58 +3728,39 @@ async function viewEmployeeStudio(root, id) {
         tbody.appendChild(el('tr', { 'data-language': l.id }, [
           el('td', {}, langLabel),
           el('td', {}, voiceSel),
-          el('td', { class: 'emp-lvt-speed-td' }, [speedIn, speedSuffix]),
+          el('td', { class: 'emp-lvt-speed-td' }, [speedIn, speedVal]),
           el('td', {}, textCell),
           el('td', {}, previewBtn),
-          el('td', {}, statusEl),
+          el('td', {}, statusCell),
         ]));
       });
       table.appendChild(tbody);
       tableWrap.appendChild(table);
 
-      const saveTableBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Save voices');
+      const saveTableBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Save voice settings');
       saveTableBtn.onclick = async () => {
         saveTableBtn.disabled = true;
         try {
-          const languageVoiceConfig = {};
-          langs.forEach((l) => {
-            const row = rowState[l.id];
-            if (!row || !row.voice_id) return;
-            languageVoiceConfig[l.id] = {
-              voice_id: row.voice_id,
-              speed: Number(row.speed) || 1,
-            };
-          });
-          // Preview text intentionally omitted — never saved as prompt/knowledge.
-          await api('/api/employees/' + encodeURIComponent(emp.id) + '/language-voice-config', {
-            method: 'PUT',
-            body: {
-              language: selectedLanguage,
-              languageVoiceConfig,
-            },
-          });
-          // Mirror primary onto runtime draft TTS without activating Maya production.
-          const primaryRow = languageVoiceConfig[selectedLanguage];
-          if (primaryRow) {
+          await persistLanguageVoiceConfig();
+          const primaryRow = rowState[selectedLanguage];
+          // Draft mirror only for non-Maya. Maya production stays untouched.
+          if (primaryRow && primaryRow.voice_id && !isMayaEmp) {
             try {
               await api('/api/employees/' + encodeURIComponent(emp.id) + '/runtime-config/draft', {
                 method: 'POST',
                 body: {
                   tts: {
-                    provider: selectedProvider === 'auto' ? 'sarvam' : selectedProvider,
+                    provider: 'auto',
                     voice_id: primaryRow.voice_id,
                     language: selectedLanguage,
-                    speed: primaryRow.speed,
+                    speed: Number(primaryRow.speed) || 1,
                   },
                 },
               });
             } catch (_) { /* draft optional */ }
           }
-          emp.voice = emp.voice || {};
-          emp.voice.languageVoiceConfig = languageVoiceConfig;
-          emp.voice.language = selectedLanguage;
           State.loaded.employees = false;
-          toast('Saved voice + speed per language. Preview text was not saved.', 'ok');
+          toast('Saved voice settings. Preview text was not saved.', 'ok');
         } catch (e) {
           toast((e && e.message) || 'Save failed', 'err');
         } finally {
@@ -3758,11 +3813,13 @@ async function viewEmployeeStudio(root, id) {
       };
 
       cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
-        el('h4', { class: 't-h4' }, 'Persona starting voices'),
+        el('h4', { class: 't-h4' }, 'Voice by Language'),
         el('p', { class: 'muted' },
-          'Starting voice when a new call begins in each language. Mid-call language switches keep the locked speaker. '
-          + 'TTS Test Text is for Preview only and is never saved as instructions or knowledge.'),
+          'Configure voice and speed per language. Call start locks the selected voice + speed. '
+          + 'Mid-call language switches keep that lock (language_code only). '
+          + 'TTS Test Text is Preview only and is never saved as instructions or knowledge.'),
         tableWrap,
+        saveStateEl,
         el('div', { class: 'flex gap-2', style: 'margin-top:12px;flex-wrap:wrap' }, [
           saveTableBtn,
           activateBtn,
@@ -3961,7 +4018,7 @@ async function viewEmployeeStudio(root, id) {
       }
     }
 
-    renderCascade();
+    ensureDraftLanguageVoiceSeed().finally(() => renderCascade());
   } else if (tab === 'settings') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Settings'));
     const nameIn = el('input', { class: 'input', value: emp.name || '' });

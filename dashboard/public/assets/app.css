@@ -1364,9 +1364,12 @@
   width: fit-content;
 }
 .emp-lvt-voice { min-width: 112px; max-width: 150px; }
-.emp-lvt-speed-td { white-space: nowrap; }
-.emp-lvt-speed { width: 72px; display: inline-block; }
-.emp-lvt-speed-x { margin-left: 2px; }
+.emp-lvt-speed-td { white-space: nowrap; min-width: 110px; }
+.emp-lvt-speed { width: 88px; display: inline-block; vertical-align: middle; }
+.emp-lvt-speed-x { margin-left: 6px; font-variant-numeric: tabular-nums; }
+.emp-lvt-status-cell { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.emp-lvt-save-state { margin-top: 10px; font-size: 0.8rem; }
+.emp-lvt-save-state.is-dirty { color: #B45309; }
 .emp-lvt-text-cell { min-width: 220px; max-width: 320px; }
 .emp-lvt-text {
   width: 100%;

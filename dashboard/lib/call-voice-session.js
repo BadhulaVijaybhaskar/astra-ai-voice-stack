@@ -248,20 +248,23 @@ function resolveChannelVoice(input = {}) {
 function voiceLockContextVariables(session) {
   if (!session || !session.voice_lock) return {};
   const lock = session.voice_lock;
+  const speed = lock.speed != null ? String(lock.speed) : '';
   return {
     astra_voice_lock_provider: lock.provider || '',
     astra_voice_lock_speaker: lock.speaker || lock.voice_id || '',
     astra_voice_lock_persona: lock.persona || lock.persona_id || '',
     astra_voice_lock_model: lock.model || '',
+    astra_voice_lock_speed: speed,
     astra_voice_switch_policy: session.voice_switch_policy
       || personaRouter.DEFAULT_VOICE_SWITCH_POLICY,
     astra_voice_initial_language: session.initial_language || '',
     astra_voice_current_language: session.current_language || session.initial_language || '',
     astra_call_session_id: session.call_session_id || '',
-    // TTS snapshot follows the lock (speaker stays for the call).
+    // TTS snapshot follows the lock (speaker + speed stay for the call).
     astra_tts_provider: lock.provider || '',
     astra_tts_voice: lock.speaker || lock.voice_id || '',
     astra_tts_language: session.current_language || session.initial_language || '',
+    astra_tts_speed: speed || '',
   };
 }
 

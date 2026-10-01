@@ -250,3 +250,181 @@ test('debugRouteSummary marks routes as call start only', () => {
   const rows = router.debugRouteSummary('vaani');
   assert.ok(rows.some((r) => /call start/.test(r.summary)));
 });
+
+test('PER-LANGUAGE VOICE SELECTOR: compatibleVoicesForLanguage filters by language', () => {
+  const hi = router.compatibleVoicesForLanguage('hi-IN');
+  assert.ok(hi.length > 0);
+  assert.ok(hi.some((v) => v.voice_id === 'priya'));
+  // English-only Rumik speakers must not appear for Hindi.
+  assert.equal(hi.some((v) => v.voice_id === 'speaker_2'), false);
+  const en = router.compatibleVoicesForLanguage('en-IN');
+  assert.ok(en.some((v) => v.voice_id === 'priya' || v.voice_id === 'speaker_2' || v.voice_id === 'aura-2-helena-en'));
+  // Public-facing fields omit provider brand as a required picker field.
+  assert.ok(hi.every((v) => v.voice_id && v.display_name));
+});
+
+test('PER-LANGUAGE SPEED: languageVoiceConfig speed is locked at call start', () => {
+  const employee = {
+    id: 'emp_f85510806c9de004',
+    name: 'Vaani',
+    voice: {
+      language: 'hi-IN',
+      languageVoiceConfig: {
+        'hi-IN': { voice_id: 'priya', speed: 0.95 },
+        'te-IN': { voice_id: 'neha', speed: 1.1 },
+      },
+    },
+  };
+  const started = router.createSessionVoiceLock({ employee, language: 'hi-IN' });
+  assert.equal(started.ok, true);
+  assert.equal(started.voice_lock.speaker, 'priya');
+  assert.equal(started.voice_lock.speed, 0.95);
+  const mid = router.resolveLockedVoice(started.voice_lock, 'te-IN');
+  assert.equal(mid.ok, true);
+  assert.equal(mid.speed_unchanged, true);
+  assert.equal(mid.route.speed, 0.95);
+  assert.equal(mid.route.voice_id, 'priya'); // do NOT re-read te-IN neha
+});
+
+test('NATIVE PREVIEW samples exist for all Astra languages', () => {
+  for (const lang of ['en-IN', 'hi-IN', 'te-IN', 'ta-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'bn-IN', 'gu-IN', 'pa-IN']) {
+    const text = router.getPreviewText(lang, 'Maya');
+    assert.ok(text && text.length <= 500, lang);
+    assert.match(text, /Maya/);
+  }
+});
+
+test('SAVE/RELOAD + RESTART PERSISTENCE: languageVoiceConfig survives db round-trip', () => {
+  const db = freshDb();
+  db.employees.push({
+    id: 'emp_f85510806c9de004',
+    tenantId: 't_a',
+    name: 'Vaani',
+    status: 'ACTIVE',
+    voice: { language: 'en-IN' },
+    knowledgeIds: [],
+    outcomes: [],
+    actions: [],
+  });
+  const saved = employees.setEmployeeLanguageVoiceConfig(db, 't_a', 'emp_f85510806c9de004', {
+    language: 'te-IN',
+    languageVoiceConfig: {
+      'en-IN': { voice_id: 'priya', speed: 1 },
+      'te-IN': { voice_id: 'neha', speed: 1.05 },
+    },
+  });
+  assert.equal(saved.ok, true);
+  // Simulate restart: re-read employee row from db.
+  const reloaded = employees.findEmployee(db, 't_a', 'emp_f85510806c9de004');
+  assert.equal(reloaded.voice.languageVoiceConfig['te-IN'].voice_id, 'neha');
+  assert.equal(reloaded.voice.languageVoiceConfig['te-IN'].speed, 1.05);
+  // Public payload hides internal provider fields.
+  const pub = employees.publicEmployee(reloaded, db);
+  assert.equal(pub.voice.languageVoiceConfig['te-IN'].provider, undefined);
+  assert.equal(pub.voice.languageVoiceConfig['te-IN'].model, undefined);
+  // Internal row may keep provider for call-start resolution.
+  assert.ok(reloaded.voice.languageVoiceConfig['te-IN'].provider === 'sarvam'
+    || reloaded.voice.languageVoiceConfig['te-IN'].voice_id === 'neha');
+});
+
+test('CALL-START VOICE RESOLUTION uses languageVoiceConfig then locks speed', () => {
+  const employee = {
+    id: 'emp_f85510806c9de004',
+    name: 'Vaani',
+    voice: {
+      language: 'ta-IN',
+      languageVoiceConfig: {
+        'ta-IN': { voice_id: 'ishita', speed: 0.9, provider: 'sarvam', model: 'bulbul:v3' },
+      },
+    },
+  };
+  const started = callVoice.startCallVoiceSession({
+    employee, language: 'ta-IN', channel: 'browser',
+  });
+  assert.equal(started.voice_lock.speaker, 'ishita');
+  assert.equal(started.voice_lock.speed, 0.9);
+  const vars = callVoice.voiceLockContextVariables(started);
+  assert.equal(vars.astra_tts_voice, 'ishita');
+  assert.equal(vars.astra_tts_speed, '0.9');
+  assert.equal(vars.astra_voice_lock_speed, '0.9');
+  callVoice.endCallVoiceSession(started.call_session_id);
+});
+
+test('SESSION VOICE LOCK does not re-read another language config mid-call', () => {
+  const employee = {
+    id: 'emp_f85510806c9de004',
+    name: 'Vaani',
+    voice: {
+      language: 'hi-IN',
+      languageVoiceConfig: {
+        'hi-IN': { voice_id: 'priya', speed: 0.95 },
+        'te-IN': { voice_id: 'neha', speed: 1.2 },
+      },
+    },
+  };
+  const s = callVoice.startCallVoiceSession({ employee, language: 'hi-IN', channel: 'browser' });
+  const mid = callVoice.applyCallLanguage(s.call_session_id, 'te-IN');
+  assert.equal(mid.ok, true);
+  assert.equal(mid.voice_lock.speaker, 'priya');
+  assert.equal(mid.voice_lock.speed, 0.95);
+  assert.notEqual(mid.voice_lock.speaker, 'neha');
+  callVoice.endCallVoiceSession(s.call_session_id);
+});
+
+test('DEFAULT MAYA: seed draft from persona without overwriting existing or production', () => {
+  const db = freshDb();
+  db.employees.push({
+    id: 'emp_33eae8ef454680f0',
+    tenantId: 't_a',
+    name: 'Maya',
+    status: 'ACTIVE',
+    voice: { language: 'en-IN' },
+    knowledgeIds: [],
+    outcomes: [],
+    actions: [],
+  });
+  const seeded = employees.setEmployeeLanguageVoiceConfig(db, 't_a', 'emp_33eae8ef454680f0', {
+    seed_from_persona: true,
+  });
+  assert.equal(seeded.ok, true);
+  assert.equal(seeded.seeded, true);
+  assert.equal(seeded.production_protected, true);
+  assert.ok(seeded.languageVoiceConfig['hi-IN']);
+  assert.equal(seeded.languageVoiceConfig['hi-IN'].voice_id, 'priya');
+  // Second seed does not overwrite.
+  const again = employees.setEmployeeLanguageVoiceConfig(db, 't_a', 'emp_33eae8ef454680f0', {
+    seed_from_persona: true,
+  });
+  assert.equal(again.seeded, false);
+  assert.equal(again.reason, 'already_configured');
+});
+
+test('PER-ROW merge save patches one language only', () => {
+  const db = freshDb();
+  db.employees.push({
+    id: 'emp_f85510806c9de004',
+    tenantId: 't_a',
+    name: 'Vaani',
+    status: 'ACTIVE',
+    voice: {
+      language: 'en-IN',
+      languageVoiceConfig: {
+        'en-IN': { voice_id: 'priya', speed: 1 },
+        'hi-IN': { voice_id: 'priya', speed: 1 },
+      },
+    },
+    knowledgeIds: [],
+    outcomes: [],
+    actions: [],
+  });
+  const patched = employees.setEmployeeLanguageVoiceConfig(db, 't_a', 'emp_f85510806c9de004', {
+    merge: true,
+    language: 'hi-IN',
+    voice_id: 'suhani',
+    speed: 0.85,
+  });
+  assert.equal(patched.ok, true);
+  assert.equal(patched.languageVoiceConfig['hi-IN'].voice_id, 'suhani');
+  assert.equal(patched.languageVoiceConfig['hi-IN'].speed, 0.85);
+  assert.equal(patched.languageVoiceConfig['en-IN'].voice_id, 'priya');
+});

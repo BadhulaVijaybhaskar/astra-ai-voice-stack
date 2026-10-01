@@ -727,13 +727,126 @@ function lockedSpeakerSupportsLanguage(provider, speaker, language) {
 
 function publicVoiceLock(lock) {
   if (!lock) return null;
+  const speed = lock.speed != null && Number.isFinite(Number(lock.speed))
+    ? Number(lock.speed)
+    : undefined;
   return {
     provider: lock.provider,
     speaker: lock.speaker,
     voice_id: lock.speaker,
     model: lock.model || '',
+    speed,
     persona: lock.persona || null,
     persona_id: lock.persona || null,
+  };
+}
+
+/**
+ * Merged Astra catalog voices compatible with a language.
+ * Sarvam multilingual speakers are compatible with all Astra Indic (+ en-IN).
+ * Rumik / Deepgram only for English. No provider picker required in UI.
+ */
+function compatibleVoicesForLanguage(language, opts = {}) {
+  const lang = normalizeLanguageCode(language);
+  if (!lang || !voiceCatalog.isAstraSupportedLanguage(lang)) return [];
+  const english = isEnglishLanguage(lang);
+  const all = voiceCatalog.listAllVoices();
+  const out = [];
+  const seen = new Set();
+
+  function push(row) {
+    const id = String(row.voice_id || row.id || '').trim();
+    if (!id || seen.has(id)) return;
+    // Skip legacy / unavailable unless explicitly allowed.
+    if (row.status === 'legacy' && !opts.includeLegacy) return;
+    seen.add(id);
+    out.push({
+      voice_id: id,
+      display_name: row.display_name || titleCaseVoiceId(id),
+      gender: row.gender || '',
+      // Internal only. Normal UI must not surface provider brands as pickers.
+      _provider: row.provider,
+      _model: row.model || '',
+    });
+  }
+
+  for (const v of all) {
+    const provider = String(v.provider || '').toLowerCase();
+    if (provider === 'sarvam') {
+      // Multilingual Bulbul speakers: empty language means any Astra language.
+      const vLang = String(v.language || '');
+      if (!vLang || vLang === lang || vLang === 'multi') push(v);
+      continue;
+    }
+    if (english && (provider === 'rumik' || provider === 'deepgram')) {
+      const vLang = String(v.language || '');
+      if (!vLang || vLang === 'en' || vLang === 'en-IN' || /^en([-_]|$)/i.test(vLang)) {
+        push(v);
+      }
+    }
+  }
+
+  // Prefer persona / recommendation order when provided.
+  const prefer = [];
+  if (opts.preferredVoiceId) prefer.push(String(opts.preferredVoiceId));
+  const rec = voiceCatalog.SARVAM_LANGUAGE_RECOMMENDATIONS[lang];
+  if (rec && rec.female) prefer.push(...rec.female);
+  if (english) prefer.push('speaker_2', 'aura-2-helena-en', 'priya');
+  out.sort((a, b) => {
+    const ai = prefer.indexOf(a.voice_id);
+    const bi = prefer.indexOf(b.voice_id);
+    if (ai === -1 && bi === -1) return a.display_name.localeCompare(b.display_name);
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+  return out;
+}
+
+function titleCaseVoiceId(id) {
+  return String(id || '')
+    .replace(/^aura-2-/, '')
+    .replace(/-en$/, '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Seed draft languageVoiceConfig from persona starting routes.
+ * Never overwrites existing config. Never mutates Maya production / WF8.
+ */
+function seedLanguageVoiceConfigFromPersona(personaOrId, existingConfig) {
+  const persona = getPersona(personaOrId);
+  if (!persona || !persona.language_routes) return { ok: false, code: 'unknown_persona' };
+  const existing = existingConfig && typeof existingConfig === 'object' ? existingConfig : {};
+  if (Object.keys(existing).length) {
+    return {
+      ok: true,
+      seeded: false,
+      languageVoiceConfig: existing,
+      reason: 'already_configured',
+    };
+  }
+  const cfg = {};
+  for (const [lang, route] of Object.entries(persona.language_routes)) {
+    if (!voiceCatalog.isAstraSupportedLanguage(lang)) continue;
+    cfg[lang] = {
+      voice_id: route.voice_id,
+      speed: 1,
+      // Internal resolution hints (hidden in normal UI public payload).
+      provider: route.provider,
+      provider_voice_id: route.voice_id,
+      model: route.model || '',
+    };
+  }
+  return {
+    ok: true,
+    seeded: true,
+    languageVoiceConfig: cfg,
+    production_protected: !!persona.production_protected,
+    note: persona.production_protected
+      ? 'Draft seed only. Maya production / Dograh WF8 unchanged.'
+      : 'Draft seed from persona starting routes.',
   };
 }
 
@@ -782,10 +895,12 @@ function createSessionVoiceLock(input = {}) {
     : null;
 
   let resolved;
+  let lockedSpeed = 1;
   if (cfgRow && (cfgRow.voice_id || cfgRow.speaker)) {
     const voiceId = String(cfgRow.voice_id || cfgRow.speaker).trim();
     let provider = String(cfgRow.provider || '').trim().toLowerCase();
     let model = String(cfgRow.model || '').trim();
+    lockedSpeed = Number.isFinite(Number(cfgRow.speed)) ? Number(cfgRow.speed) : 1;
     if (!provider) {
       const known = voiceCatalog.findVoice('sarvam', voiceId)
         || voiceCatalog.findVoice('rumik', voiceId)
@@ -818,7 +933,7 @@ function createSessionVoiceLock(input = {}) {
         voice_id: voiceId,
         model: model || (provider === 'sarvam' ? 'bulbul:v3' : (provider === 'deepgram' ? 'aura-2' : 'mulberry')),
         language: initialLanguage,
-        speed: cfgRow.speed != null ? Number(cfgRow.speed) : undefined,
+        speed: lockedSpeed,
       },
       persona: persona ? publicPersona(persona) : null,
       language: initialLanguage,
@@ -829,9 +944,13 @@ function createSessionVoiceLock(input = {}) {
     resolved = resolvePersonaRoute(persona, initialLanguage, mode, {
       provider: input.provider,
     });
+    lockedSpeed = 1;
   } else if (input.pipelineTts && input.pipelineTts.provider && input.pipelineTts.voice_id) {
     // No persona map: lock the employee pipeline TTS snapshot as-is.
     const pipeLang = normalizeLanguageCode(input.pipelineTts.language) || initialLanguage;
+    lockedSpeed = Number.isFinite(Number(input.pipelineTts.speed))
+      ? Number(input.pipelineTts.speed)
+      : 1;
     resolved = {
       ok: true,
       route: {
@@ -839,6 +958,7 @@ function createSessionVoiceLock(input = {}) {
         voice_id: String(input.pipelineTts.voice_id),
         model: String(input.pipelineTts.model || ''),
         language: pipeLang,
+        speed: lockedSpeed,
       },
       persona: null,
       language: pipeLang,
@@ -864,10 +984,15 @@ function createSessionVoiceLock(input = {}) {
     };
   }
 
+  if (resolved.route && resolved.route.speed != null && Number.isFinite(Number(resolved.route.speed))) {
+    lockedSpeed = Number(resolved.route.speed);
+  }
+
   const voice_lock = Object.freeze({
     provider: resolved.route.provider,
     speaker: resolved.route.voice_id,
     model: resolved.route.model || '',
+    speed: lockedSpeed,
     persona: personaId,
   });
 
@@ -881,18 +1006,20 @@ function createSessionVoiceLock(input = {}) {
     route: {
       ...resolved.route,
       language: initialLanguage,
+      speed: lockedSpeed,
     },
     persona: resolved.persona || (persona ? publicPersona(persona) : null),
     mode: resolved.mode || mode,
     source: resolved.source || 'persona_route',
-    // Persona routes are starting voices only.
+    // Persona routes / languageVoiceConfig are starting voices only.
     route_semantics: 'call_start_only',
   };
 }
 
 /**
  * Mid-call language switch under an existing voice_lock.
- * Keeps provider + speaker. Updates language_code when supported.
+ * Keeps provider + speaker + speed. Updates language_code when supported.
+ * Never re-reads another language's languageVoiceConfig row.
  * Never silently swaps speakers when policy is locked.
  */
 function resolveLockedVoice(voiceLock, language, opts = {}) {
@@ -907,6 +1034,9 @@ function resolveLockedVoice(voiceLock, language, opts = {}) {
   const provider = String(lock.provider).trim().toLowerCase();
   const speaker = String(lock.speaker || lock.voice_id).trim();
   const model = String(lock.model || '').trim();
+  const speed = lock.speed != null && Number.isFinite(Number(lock.speed))
+    ? Number(lock.speed)
+    : 1;
   const persona = lock.persona || lock.persona_id || null;
   const lang = normalizeLanguageCode(language);
   const policy = normalizeVoiceSwitchPolicy(
@@ -919,7 +1049,7 @@ function resolveLockedVoice(voiceLock, language, opts = {}) {
       ok: false,
       error: 'Unsupported language',
       code: 'unsupported_language',
-      voice_lock: publicVoiceLock({ provider, speaker, model, persona }),
+      voice_lock: publicVoiceLock({ provider, speaker, model, speed, persona }),
       language: String(language || ''),
       voice_switch_policy: policy,
     };
@@ -931,14 +1061,16 @@ function resolveLockedVoice(voiceLock, language, opts = {}) {
       locked: true,
       speaker_unchanged: true,
       provider_unchanged: true,
+      speed_unchanged: true,
       route: {
         provider,
         voice_id: speaker,
         speaker,
         model,
         language: lang,
+        speed,
       },
-      voice_lock: publicVoiceLock({ provider, speaker, model, persona }),
+      voice_lock: publicVoiceLock({ provider, speaker, model, speed, persona }),
       language: lang,
       voice_switch_policy: policy,
       source: 'voice_lock',
@@ -954,17 +1086,19 @@ function resolveLockedVoice(voiceLock, language, opts = {}) {
         locked: false,
         speaker_unchanged: false,
         provider_unchanged: fb.route.provider === provider,
-        route: fb.route,
+        speed_unchanged: false,
+        route: { ...fb.route, speed },
         voice_lock: publicVoiceLock({
           provider: fb.route.provider,
           speaker: fb.route.voice_id,
           model: fb.route.model || '',
+          speed,
           persona,
         }),
         language: lang,
         voice_switch_policy: policy,
         source: 'fallback_allowed_reresolve',
-        previous_voice_lock: publicVoiceLock({ provider, speaker, model, persona }),
+        previous_voice_lock: publicVoiceLock({ provider, speaker, model, speed, persona }),
       };
     }
   }
@@ -973,7 +1107,7 @@ function resolveLockedVoice(voiceLock, language, opts = {}) {
     ok: false,
     error: 'Locked voice does not support this language',
     code: 'locked_voice_language_unsupported',
-    voice_lock: publicVoiceLock({ provider, speaker, model, persona }),
+    voice_lock: publicVoiceLock({ provider, speaker, model, speed, persona }),
     language: lang,
     voice_switch_policy: policy,
     supported_languages: (PROVIDER_SUPPORTED_LANGUAGES[provider] || []).slice(),
@@ -1041,6 +1175,8 @@ module.exports = {
   resolveLockedVoice,
   resolveCallVoice,
   publicVoiceLock,
+  compatibleVoicesForLanguage,
+  seedLanguageVoiceConfigFromPersona,
   languagesForMode,
   getPreviewText,
   listPersonas,
