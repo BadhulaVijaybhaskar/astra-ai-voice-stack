@@ -1155,6 +1155,9 @@ async function apiChatStream(req, res, ctx) {
       booking_ack: turnPath.ack,
       turn_path: turnPath,
       streamed: true,
+      rate_limited: !!out.rate_limited,
+      rate_limit: out.rate_limit || null,
+      architecture: turnPath.architecture,
     });
     res.end();
   } catch (e) {
