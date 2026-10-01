@@ -846,15 +846,27 @@
 .prov-card .pc-name { font-weight: 580; font-size: 0.98rem; }
 .prov-card .pc-needs { font-size: 0.8rem; color: var(--ink-dim); line-height: 1.5; }
 .prov-card .pc-needs code { font-family: var(--mono); color: var(--ink-soft); background: var(--raised); padding: 2px 6px; border-radius: 6px; font-size: 0.78rem; }
-.badge-live, .badge-ready {
+.badge-live, .badge-ready, .badge-error {
   display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; font-weight: 560;
   padding: 4px 10px; border-radius: var(--r-pill); white-space: nowrap;
 }
 .badge-live { background: rgba(5,150,105,0.10); border: 1px solid rgba(5,150,105,0.28); color: var(--ok); }
 .badge-ready { background: var(--bg-2); border: 1px solid var(--line); color: var(--ink-dim); }
-.badge-live .d, .badge-ready .d { width: 6px; height: 6px; border-radius: 50%; }
+.badge-error { background: rgba(185,28,28,0.08); border: 1px solid rgba(185,28,28,0.28); color: var(--danger, #b91c1c); }
+.badge-live .d, .badge-ready .d, .badge-error .d { width: 6px; height: 6px; border-radius: 50%; }
 .badge-live .d { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .badge-ready .d { background: var(--ink-faint); }
+.badge-error .d { background: var(--danger, #b91c1c); }
+.pn-provider-list { display: flex; flex-direction: column; gap: 12px; }
+.pn-provider-card .pc-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pn-provider-card .pc-name { font-weight: 600; font-size: 1.02rem; }
+.pn-check-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px;
+  margin-top: 12px; font-size: 0.8rem;
+}
+.pn-check-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.pn-check-row .k { color: var(--ink-dim); text-transform: capitalize; }
+.pn-check-row .v { font-family: var(--mono); font-weight: 560; }
 .settings-form { max-width: 480px; display: flex; flex-direction: column; gap: 16px; }
 .color-row { display: flex; align-items: center; gap: 12px; }
 .color-row input[type="color"] { width: 46px; height: 38px; padding: 0; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg-2); cursor: pointer; }

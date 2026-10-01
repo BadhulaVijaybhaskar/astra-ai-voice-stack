@@ -89,12 +89,15 @@ Numbers are first-class Astra **Phone Number** resources. Customers never see Do
 - `POST /api/phone-numbers/:id/unassign` returns the number to platform inventory and clears Employee links + phoneConfig.
 - `PATCH /api/phone-numbers/:id` toggles `inboundEnabled` / `outboundEnabled` and may set Inbound greeting / hours.
 - `GET` / `PUT` / `PATCH /api/phone-numbers/:id/inbound` customer Inbound ownership (answer, greeting, hours). See `docs/INBOUND.md`.
-- `POST /api/phone-numbers/purchase` requires `confirm:true` and quoted fee match. Live VoBiz debit requires `ASTRA_ALLOW_LIVE_NUMBER_PURCHASE=1`. Dev/CI uses `simulate:true` (READY, no live buy).
+- `POST /api/phone-numbers/purchase` requires `confirm:true` and quoted fee match. Live VoBiz debit requires `ASTRA_ALLOW_LIVE_NUMBER_PURCHASE=1`. Dev/CI uses `simulate:true` (READY, no live buy). Plivo purchase (`provider:plivo`) returns **403** `plivo_purchase_disabled`.
 - `POST /api/phone-numbers/search`, `GET|POST /api/phone-numbers/pricing`, `GET /api/phone-numbers/usage`, `POST /api/phone-numbers/:id/status`, `POST /api/phone-numbers/:id/release` (confirm), `POST /api/phone-numbers/:id/configure`.
 - `GET` / `PUT` / `PATCH /api/employees/:id/phone-config` per-employee phone configuration (Business Number, direction, status, workflow name). `?advanced=1` for infrastructure ids.
 - `POST /api/employees/:id/phone-config/assign|change|unassign` employee-scoped number binding with isolation.
 - `POST /api/employees/:id/phone-config/test-inbound|test-outbound` dry-run preflight only. Never places paid PSTN calls.
 - `POST /api/phone-numbers/purchase` returns **501** `purchase_deferred` during the testing phase.
+- `GET /api/phone-numbers/providers` (owner+) returns VoBiz + Plivo connection status for Providers / Advanced. Never Auth ID / Auth Token.
+- `GET|POST /api/phone-numbers/providers/plivo/search` (owner+) read-only Plivo India inventory probe. Never purchases.
+
 See `docs/PHONE-NUMBERS.md` for curl examples and adapter notes.
 
 ## Calls (Sprint 2 history)

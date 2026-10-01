@@ -6,9 +6,10 @@ Astra Voice Phone Numbers is a dedicated top-level product section. Customers bu
 | Tab | Purpose |
 | --- | --- |
 | My Numbers | Rich cards: number, Connected, label, assignee, capabilities, routing, today calls/minutes (`—` when unknown) |
-| Buy Number | Marketplace search + confirmation drawer (Buy & Assign) |
+| Buy Number | Marketplace search + confirmation drawer (Buy & Assign). Plivo India probe is display-only. |
 | Assignments | Table: number / employee / direction / workflow / status + Change / Unassign / Test |
 | Usage & Cost | Real Astra call aggregates only. Never invent metrics. |
+| Providers / Advanced | Owner+: VoBiz + Plivo connection status (Connected / Needs setup / Error). No secrets. |
 
 Header **Get New Number** opens the Buy tab.
 Purchase is deferred (`POST /api/phone-numbers/purchase` returns **501** `purchase_deferred`).
@@ -98,7 +99,13 @@ POST /api/phone-numbers/:id/status    # verify without dialing
 
 `listNumbers`, `searchAvailableNumbers`, `getPricing`, `purchaseNumber`, `releaseNumber`, `assignNumber`, `configureNumber`, `getUsage`, `getNumberStatus`.
 
-Initial adapter: `DograhVobizProvider` (VoBiz inventory + Dograh bind).
+Active adapter: `DograhVobizProvider` (VoBiz inventory + Dograh bind). Maya / production dial stays here.
+
+Secondary adapter: `PlivoProvider` (org-level `PLIVO_AUTH_ID` / `PLIVO_AUTH_TOKEN`). Validates auth, account, balance, owned numbers, India search, pricing, inbound XML/app config, outbound initiation (dry-run), status callbacks, audio streaming hooks, and recording metadata. Never the default dial path. Purchase on Plivo is refused.
+
+Advanced UI (`Phone Numbers` → Providers / Advanced, owner+): VoBiz Connected / Needs setup / Error and Plivo Connected / Needs setup / Error. Auth ID and Auth Token are never returned.
+
+Buy Number for Plivo: Astra probes India inventory via Plivo search before showing a display-only Buy control. Empty or failed search means no Buy. No invented inventory or pricing. No purchase.
 
 ## Env
 
@@ -107,6 +114,10 @@ VOBIZ_AUTH_ID=
 VOBIZ_AUTH_TOKEN=
 # Required for a real paid purchase (never set in CI):
 # ASTRA_ALLOW_LIVE_NUMBER_PURCHASE=1
+
+# Secondary Plivo (optional). Never switch Maya to Plivo.
+# PLIVO_AUTH_ID=
+# PLIVO_AUTH_TOKEN=
 ```
 
 Until VoBiz inventory credentials are configured, Buy shows setup guidance and My Numbers keeps platform test inventory. When search is live, the "purchase not available" copy is removed.

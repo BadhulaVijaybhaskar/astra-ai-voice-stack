@@ -24,6 +24,12 @@ const {
   livePurchaseAllowed,
   VobizClientError,
 } = require('./vobiz-client');
+const {
+  createPlivoClient,
+  createMockPlivoClient,
+  credentialsConfigured: plivoCredentialsConfigured,
+  PlivoClientError,
+} = require('./plivo-client');
 
 class TelephonyProviderError extends Error {
   constructor(message, status = 502, code = 'telephony_error', detail) {
@@ -37,6 +43,9 @@ class TelephonyProviderError extends Error {
 function toProviderError(err) {
   if (err instanceof TelephonyProviderError) return err;
   if (err instanceof VobizClientError) {
+    return new TelephonyProviderError(err.message, err.status, err.code, err.detail);
+  }
+  if (err instanceof PlivoClientError) {
     return new TelephonyProviderError(err.message, err.status, err.code, err.detail);
   }
   return new TelephonyProviderError(String(err && err.message || err), 502, 'telephony_error');
@@ -1244,13 +1253,415 @@ class DograhVobizProvider extends TelephonyProvider {
   }
 }
 
+/**
+ * Plivo secondary telephony adapter.
+ *
+ * Validates auth, account, balance, owned numbers, India search, pricing,
+ * inbound XML/app config, outbound initiation (dry-run by default), call
+ * status callback parsing, audio streaming hooks, and recording metadata.
+ *
+ * Does NOT replace DograhVobizProvider as the default dial / Maya path.
+ * purchaseNumber always refuses (secondary validation only).
+ */
+class PlivoProvider extends TelephonyProvider {
+  constructor(options = {}) {
+    super();
+    this.core = options.core || null;
+    this.plivo = options.plivoClient
+      || (options.useMockPlivo
+        ? createMockPlivoClient(options.mockPlivo || {})
+        : createPlivoClient(options.plivoOptions || {}));
+    this.role = 'secondary';
+    this.id = 'plivo';
+    this.label = 'Plivo';
+  }
+
+  /**
+   * Public connection status for Advanced UI. Never includes Auth ID / Token.
+   * status: connected | needs_setup | error
+   */
+  async connectionStatus(options = {}) {
+    const configured = !!(this.plivo && (this.plivo.configured || this.plivo.id === 'plivo_mock'));
+    if (!configured) {
+      return {
+        id: 'plivo',
+        label: 'Plivo',
+        role: 'secondary',
+        status: 'needs_setup',
+        connected: false,
+        message: 'Add PLIVO_AUTH_ID and PLIVO_AUTH_TOKEN on the server.',
+        checks: null,
+      };
+    }
+    try {
+      const checks = await this.validateReadOnly(options);
+      const failed = Object.entries(checks).filter(([, v]) => v === 'FAIL');
+      const status = failed.length ? 'error' : 'connected';
+      return {
+        id: 'plivo',
+        label: 'Plivo',
+        role: 'secondary',
+        status,
+        connected: status === 'connected',
+        message: status === 'connected'
+          ? 'Plivo account reachable (secondary).'
+          : ('Plivo checks failed: ' + failed.map(([k]) => k).join(', ')),
+        checks,
+        indiaInventoryAvailable: checks.NUMBER_SEARCH === 'PASS',
+        buyEligible: checks.NUMBER_SEARCH === 'PASS',
+        // Never auth id / token.
+      };
+    } catch (e) {
+      return {
+        id: 'plivo',
+        label: 'Plivo',
+        role: 'secondary',
+        status: 'error',
+        connected: false,
+        message: String(e && e.message || e).slice(0, 200),
+        checks: null,
+      };
+    }
+  }
+
+  /**
+   * Read-only capability matrix for PR / ops validation.
+   * Values: PASS | FAIL | UNKNOWN | NOT AVAILABLE
+   */
+  async validateReadOnly(options = {}) {
+    const out = {
+      PLIVO_AUTH: 'FAIL',
+      ACCOUNT: 'FAIL',
+      BALANCE: 'UNKNOWN',
+      OWNED_NUMBERS: 'FAIL',
+      NUMBER_SEARCH: 'FAIL',
+      PRICING: 'FAIL',
+      AUDIO_STREAMING: 'FAIL',
+      OUTBOUND_API: 'FAIL',
+      INBOUND_CONFIG: 'FAIL',
+    };
+    const skipLive = options.skipLive === true;
+
+    try {
+      if (!this.plivo || !(this.plivo.configured || this.plivo.id === 'plivo_mock')) {
+        return out;
+      }
+      out.PLIVO_AUTH = 'PASS';
+
+      if (skipLive && this.plivo.id !== 'plivo_mock') {
+        out.ACCOUNT = 'UNKNOWN';
+        out.BALANCE = 'UNKNOWN';
+        out.OWNED_NUMBERS = 'UNKNOWN';
+        out.NUMBER_SEARCH = 'UNKNOWN';
+        out.PRICING = 'UNKNOWN';
+        out.INBOUND_CONFIG = 'UNKNOWN';
+      } else {
+        const account = await this.plivo.getAccount();
+        out.ACCOUNT = account && account.ok ? 'PASS' : 'FAIL';
+        const balance = await this.plivo.getBalance();
+        out.BALANCE = balance && balance.available ? 'PASS' : 'UNKNOWN';
+        const owned = await this.plivo.listOwnedNumbers({ limit: 5 });
+        out.OWNED_NUMBERS = owned && owned.ok ? 'PASS' : 'FAIL';
+
+        const search = await this.plivo.searchAvailableNumbers({ country: 'IN', limit: 5 });
+        if (search && search.ok && search.available && (search.numbers || []).length) {
+          out.NUMBER_SEARCH = 'PASS';
+        } else if (search && search.ok) {
+          out.NUMBER_SEARCH = 'NOT AVAILABLE';
+        } else {
+          out.NUMBER_SEARCH = 'FAIL';
+        }
+
+        try {
+          const pricing = await this.plivo.getNumberPricing({ country: 'IN' });
+          out.PRICING = pricing && pricing.ok ? 'PASS' : 'FAIL';
+        } catch (_) {
+          // Fall back to per-number pricing from search results.
+          const priced = (search.numbers || []).some((n) => n.monthlyFee != null || n.setupFee != null);
+          out.PRICING = priced ? 'PASS' : 'NOT AVAILABLE';
+        }
+
+        try {
+          const apps = await this.plivo.listApplications();
+          out.INBOUND_CONFIG = apps && apps.ok ? 'PASS' : 'FAIL';
+        } catch (_) {
+          out.INBOUND_CONFIG = 'FAIL';
+        }
+      }
+
+      const stream = this.plivo.audioStreamingCapability
+        ? this.plivo.audioStreamingCapability()
+        : null;
+      out.AUDIO_STREAMING = stream && stream.supported ? 'PASS' : 'FAIL';
+
+      const dry = await this.plivo.initiateOutboundCall({
+        from: '+918065353938',
+        to: '+919999999999',
+        answerUrl: 'https://example.test/plivo/answer',
+        execute: false,
+      });
+      out.OUTBOUND_API = dry && dry.ok && dry.dryRun ? 'PASS' : 'FAIL';
+    } catch (e) {
+      if (e instanceof PlivoClientError && e.code === 'plivo_auth_failed') {
+        out.PLIVO_AUTH = 'FAIL';
+        out.ACCOUNT = 'FAIL';
+      }
+      // Leave remaining FAIL / UNKNOWN as-is.
+    }
+    return out;
+  }
+
+  async listNumbers(tenantId, opts = {}) {
+    // Plivo secondary does not own Astra inventory. Report owned Plivo DIDs only.
+    const owned = await this.plivo.listOwnedNumbers({
+      limit: opts.limit,
+      offset: opts.offset,
+    });
+    return {
+      numbers: owned.numbers || [],
+      available: [],
+      marketplace: {
+        configured: !!(this.plivo && this.plivo.configured),
+        livePurchaseEnabled: false,
+        provider: 'plivo',
+        searchLive: !!(this.plivo && this.plivo.configured),
+        role: 'secondary',
+      },
+    };
+  }
+
+  async searchAvailableNumbers(query = {}) {
+    const country = String(query.country || 'IN').toUpperCase();
+    const listed = await this.plivo.searchAvailableNumbers({
+      country,
+      search: query.search || query.q || query.area || query.city,
+      numberType: query.numberType,
+      capability: query.capability,
+      maxMonthlyFee: query.maxMonthlyFee,
+      limit: query.perPage || query.limit,
+      offset: query.offset,
+    });
+    return {
+      ok: true,
+      source: 'plivo',
+      marketplace: {
+        configured: true,
+        livePurchaseEnabled: false,
+        provider: 'plivo',
+        searchLive: true,
+        role: 'secondary',
+        indiaInventoryAvailable: country === 'IN' ? !!listed.available : null,
+      },
+      numbers: (listed.numbers || []).map((n) => ({
+        ...n,
+        // Secondary: show Select only when real inventory+pricing exist.
+        // Purchase path still refuses (do not buy on Plivo from Astra yet).
+        purchaseAvailable: false,
+        provider: 'plivo',
+      })),
+      available: !!listed.available,
+      page: listed.page,
+      total: listed.total,
+    };
+  }
+
+  async getPricing(e164) {
+    try {
+      return await this.plivo.getNumberPricing(e164);
+    } catch (e) {
+      throw toProviderError(e);
+    }
+  }
+
+  async purchaseNumber() {
+    throw new TelephonyProviderError(
+      'Plivo purchase is not enabled. VoBiz remains the active telephony purchase path.',
+      403,
+      'plivo_purchase_disabled',
+    );
+  }
+
+  async configureNumber(_numberId, _tenantId, opts = {}) {
+    const xml = this.plivo.buildAnswerXml({
+      streamUrl: opts.streamUrl || null,
+      speak: opts.speak || null,
+      redirectUrl: opts.redirectUrl || null,
+      contentType: opts.contentType || null,
+    });
+    const apps = await this.plivo.listApplications().catch(() => ({ applications: [] }));
+    return {
+      ok: true,
+      inbound: {
+        mode: 'plivo_xml',
+        answerXml: xml,
+        applications: apps.applications || [],
+        hangupUrl: opts.hangupUrl || null,
+        statusCallbackUrl: opts.statusCallbackUrl || null,
+      },
+    };
+  }
+
+  async createOutboundCall(_tenantId, rawNumber, options = {}) {
+    const to = phoneNumbers.normalizeE164(rawNumber);
+    const from = phoneNumbers.normalizeE164(options.from || options.fromE164 || '');
+    const answerUrl = options.answerUrl || options.answer_url;
+    try {
+      return await this.plivo.initiateOutboundCall({
+        from,
+        to,
+        answerUrl,
+        hangupUrl: options.hangupUrl,
+        execute: false, // hard safety: never place Plivo calls from this adapter path
+      });
+    } catch (e) {
+      throw toProviderError(e);
+    }
+  }
+
+  async getRecording(callId) {
+    try {
+      const meta = await this.plivo.getRecordingMetadata(callId);
+      if (!meta.available || !(meta.recordings || []).length) {
+        throw new TelephonyProviderError('recording not available', 404, 'recording_not_found');
+      }
+      const first = meta.recordings[0];
+      if (first.recordingUrl && /^https:\/\//i.test(first.recordingUrl)) {
+        return { mode: 'redirect', url: first.recordingUrl, metadata: first };
+      }
+      return { mode: 'metadata', metadata: first, recordings: meta.recordings };
+    } catch (e) {
+      throw toProviderError(e);
+    }
+  }
+
+  /**
+   * Parse Plivo hangup / status callback form fields into a normalized event.
+   * Does not mutate Astra call state by itself (caller decides).
+   */
+  async handleWebhook(payload = {}, _headers = {}) {
+    const body = payload && typeof payload === 'object' ? payload : {};
+    const callUuid = body.CallUUID || body.call_uuid || body.RequestUUID || null;
+    const status = body.CallStatus || body.call_status || body.Event || null;
+    return {
+      ok: true,
+      provider: 'plivo',
+      event: {
+        callUuid: callUuid ? String(callUuid) : null,
+        status: status ? String(status).toLowerCase() : null,
+        from: body.From || body.from || null,
+        to: body.To || body.to || null,
+        direction: body.Direction || body.direction || null,
+        duration: body.Duration != null ? Number(body.Duration) : null,
+        hangupCause: body.HangupCause || body.hangup_cause || null,
+      },
+      // Echo-safe: never include auth material.
+    };
+  }
+
+  audioStreaming() {
+    return this.plivo.audioStreamingCapability
+      ? this.plivo.audioStreamingCapability()
+      : { supported: false };
+  }
+}
+
+/**
+ * Aggregate VoBiz (active) + Plivo (secondary) status for Phone Numbers Advanced UI.
+ * Never returns Auth ID / Auth Token.
+ */
+async function listTelephonyProviderStatuses(options = {}) {
+  const core = options.core || null;
+  const vobizProvider = options.vobizProvider
+    || new DograhVobizProvider({
+      core,
+      telephony: options.telephony || providers.telephony,
+      vobizClient: options.vobizClient,
+    });
+  const plivoProvider = options.plivoProvider
+    || new PlivoProvider({
+      core,
+      plivoClient: options.plivoClient,
+      useMockPlivo: options.useMockPlivo,
+      mockPlivo: options.mockPlivo,
+    });
+
+  let vobizStatus = 'needs_setup';
+  let vobizMessage = 'VoBiz / Dograh credentials not configured.';
+  let vobizConnected = false;
+  try {
+    const tel = options.telephony || providers.telephony;
+    const vobizCreds = credentialsConfigured();
+    if (tel && tel.live) {
+      try {
+        const st = await tel.status();
+        vobizConnected = !!(st && st.connected);
+        vobizStatus = vobizConnected ? 'connected' : 'error';
+        vobizMessage = vobizConnected
+          ? 'VoBiz connected via Dograh (active production).'
+          : 'Dograh telephony status did not report connected.';
+      } catch (e) {
+        vobizStatus = 'error';
+        vobizMessage = String(e && e.message || e).slice(0, 200);
+      }
+    } else if (vobizCreds || (vobizProvider.vobiz && vobizProvider.vobiz.configured)) {
+      vobizStatus = 'connected';
+      vobizConnected = true;
+      vobizMessage = 'VoBiz inventory credentials present. Dial path uses Dograh when live.';
+    }
+  } catch (e) {
+    vobizStatus = 'error';
+    vobizMessage = String(e && e.message || e).slice(0, 200);
+  }
+
+  const plivo = await plivoProvider.connectionStatus({
+    skipLive: options.skipPlivoLive === true,
+  });
+
+  return {
+    ok: true,
+    activeProvider: 'vobiz',
+    providers: [
+      {
+        id: 'vobiz',
+        label: 'VoBiz',
+        role: 'active',
+        status: vobizStatus,
+        connected: vobizConnected,
+        message: vobizMessage,
+      },
+      {
+        id: plivo.id,
+        label: plivo.label,
+        role: 'secondary',
+        status: plivo.status,
+        connected: !!plivo.connected,
+        message: plivo.message,
+        indiaInventoryAvailable: plivo.indiaInventoryAvailable ?? null,
+        buyEligible: plivo.buyEligible === true,
+        checks: plivo.checks || null,
+      },
+    ],
+  };
+}
+
 function createDefaultTelephonyProvider(core) {
+  // Active production path remains VoBiz via Dograh. Do not switch Maya to Plivo.
   return new DograhVobizProvider({ core, telephony: providers.telephony });
+}
+
+function createPlivoTelephonyProvider(core, options = {}) {
+  return new PlivoProvider({ core, ...options });
 }
 
 module.exports = {
   TelephonyProvider,
   DograhVobizProvider,
+  PlivoProvider,
   TelephonyProviderError,
   createDefaultTelephonyProvider,
+  createPlivoTelephonyProvider,
+  listTelephonyProviderStatuses,
+  createMockPlivoClient,
+  createPlivoClient,
+  plivoCredentialsConfigured,
 };

@@ -5664,6 +5664,7 @@ function phoneNumbersTab() {
   if (t === 'buy' || t === 'get' || t === 'purchase') return 'buy';
   if (t === 'assignments' || t === 'assign') return 'assignments';
   if (t === 'usage' || t === 'cost') return 'usage';
+  if (t === 'advanced' || t === 'providers') return 'advanced';
   if (t === 'detail') return 'detail';
   return 'mine';
 }
@@ -5749,6 +5750,8 @@ async function viewPhoneNumbers(root) {
     { id: 'assignments', label: 'Assignments' },
     { id: 'usage', label: 'Usage & Cost' },
   ];
+  const canSeeAdvanced = State.me && ['super_admin', 'admin', 'owner'].includes(State.me.user.role);
+  if (canSeeAdvanced) tabs.push({ id: 'advanced', label: 'Providers / Advanced' });
   const tabBar = el('div', { class: 'pn-tabs', role: 'tablist' });
   tabs.forEach((t) => {
     const btn = el('button', {
@@ -5777,6 +5780,8 @@ async function viewPhoneNumbers(root) {
       paintAssignmentsTab(host, data);
     } else if (tab === 'usage') {
       await paintUsageTab(host);
+    } else if (tab === 'advanced') {
+      await paintProvidersAdvancedTab(host);
     } else {
       paintMyNumbersTab(host, data);
     }
@@ -6004,6 +6009,125 @@ async function paintBuyNumberTab(host, data) {
     ]),
   ]));
   host.appendChild(resultsHost);
+
+  // Secondary Plivo India probe (owner+). Show Buy eligibility only when real inventory returns.
+  const canProbePlivo = State.me && ['super_admin', 'admin', 'owner'].includes(State.me.user.role);
+  if (canProbePlivo) {
+    const plivoHost = el('div', { class: 'card card-pad', style: 'margin-top:18px' }, [
+      el('h4', { class: 't-h4' }, 'Secondary provider inventory (Plivo)'),
+      el('p', { class: 'muted' }, 'Read-only India check. Purchase on Plivo stays disabled. Active buy path remains VoBiz.'),
+    ]);
+    host.appendChild(plivoHost);
+    (async () => {
+      try {
+        const res = await api('/api/phone-numbers/providers/plivo/search?country=IN&perPage=5');
+        const list = res.numbers || [];
+        const eligible = !!res.buyEligible && list.length > 0;
+        plivoHost.appendChild(el('div', { class: 'flex items-center justify-between', style: 'margin-top:10px' }, [
+          el('span', {}, eligible
+            ? ('India inventory available (' + list.length + ' shown). Buy button below is display-only.')
+            : 'India inventory not available to this Plivo account (or not configured).'),
+          eligible
+            ? el('span', { class: 'badge-live' }, [el('span', { class: 'd' }), 'Buy eligible (display)'])
+            : el('span', { class: 'badge-ready' }, [el('span', { class: 'd' }), 'No Buy']),
+        ]));
+        if (eligible) {
+          const grid = el('div', { class: 'pn-card-grid', style: 'margin-top:12px' });
+          list.slice(0, 5).forEach((item) => {
+            const hasPrice = item.monthlyFee != null || item.setupFee != null;
+            grid.appendChild(el('div', { class: 'pn-card pn-buy-card' }, [
+              el('div', { class: 'pn-card-top' }, [
+                el('div', { class: 'pn-card-num' }, item.e164 || '—'),
+                el('span', { class: 'pill' }, 'Plivo · ' + (item.numberType || item.country || 'IN')),
+              ]),
+              el('div', { class: 'pn-card-meta' }, [
+                el('div', {}, [el('span', { class: 'muted' }, 'Monthly'), el('b', {}, hasPrice && item.monthlyFee != null ? fmtMoney(item.monthlyFee, item.currency) : '—')]),
+                el('div', {}, [el('span', { class: 'muted' }, 'Setup'), el('b', {}, hasPrice && item.setupFee != null ? fmtMoney(item.setupFee, item.currency) : '—')]),
+              ]),
+              el('div', { class: 'pn-card-actions' }, [
+                el('button', {
+                  class: 'btn btn-ghost btn-sm',
+                  disabled: 'disabled',
+                  title: 'Plivo purchase disabled. VoBiz is the active buy path.',
+                }, 'Buy (disabled)'),
+              ]),
+            ]));
+          });
+          plivoHost.appendChild(grid);
+        }
+      } catch (e) {
+        plivoHost.appendChild(el('p', { class: 'muted', style: 'margin-top:10px' },
+          esc(e.message || 'Plivo India check unavailable.')));
+      }
+    })();
+  }
+}
+
+async function paintProvidersAdvancedTab(host) {
+  host.appendChild(el('div', { class: 'pn-section-head' }, [
+    el('h3', { class: 't-h3' }, 'Providers / Advanced'),
+    el('span', { class: 'pill' }, 'ops'),
+  ]));
+  host.appendChild(el('p', { class: 'muted', style: 'margin:0 0 14px;line-height:1.5' },
+    'Telephony provider connection status. Secrets never appear here. Active production dial path stays VoBiz. Plivo is secondary.'));
+
+  const listHost = el('div', { class: 'pn-provider-list' }, skeleton('sk-line', 3));
+  host.appendChild(listHost);
+
+  try {
+    const res = await api('/api/phone-numbers/providers');
+    listHost.innerHTML = '';
+    const rows = res.providers || [];
+    if (!rows.length) {
+      listHost.appendChild(el('div', { class: 'muted' }, 'No provider status returned.'));
+      return;
+    }
+    rows.forEach((p) => {
+      const status = String(p.status || 'needs_setup');
+      const badge = status === 'connected'
+        ? el('span', { class: 'badge-live' }, [el('span', { class: 'd' }), 'Connected'])
+        : status === 'error'
+          ? el('span', { class: 'badge-error' }, [el('span', { class: 'd' }), 'Error'])
+          : el('span', { class: 'badge-ready' }, [el('span', { class: 'd' }), 'Needs setup']);
+      const card = el('div', { class: 'card card-pad pn-provider-card' }, [
+        el('div', { class: 'pc-top' }, [
+          el('div', {}, [
+            el('div', { class: 'pc-name' }, p.label || p.id),
+            el('div', { class: 'muted', style: 'font-size:.82rem;margin-top:4px' },
+              (p.role === 'active' ? 'Active production' : 'Secondary')
+              + (p.id === 'vobiz' ? ' · Maya dial path' : '')),
+          ]),
+          badge,
+        ]),
+        el('p', { class: 'muted', style: 'margin:10px 0 0;line-height:1.5' }, p.message || ''),
+      ]);
+      if (p.id === 'plivo' && p.checks) {
+        const checks = el('div', { class: 'pn-check-grid' });
+        Object.keys(p.checks).forEach((k) => {
+          checks.appendChild(el('div', { class: 'pn-check-row' }, [
+            el('span', { class: 'k' }, k.replace(/_/g, ' ')),
+            el('span', { class: 'v' }, String(p.checks[k])),
+          ]));
+        });
+        card.appendChild(checks);
+      }
+      if (p.id === 'plivo') {
+        card.appendChild(el('p', { class: 'muted', style: 'margin-top:10px;font-size:.82rem' },
+          p.buyEligible
+            ? 'India inventory available. Buy display allowed. Purchase remains disabled.'
+            : 'Buy for Plivo stays hidden until India inventory returns real rows.'));
+      }
+      listHost.appendChild(card);
+    });
+    // Assert UI never received secret-looking fields.
+    const blob = JSON.stringify(res);
+    if (/auth[_-]?token|auth[_-]?id/i.test(blob) && /MAO|PLIVO_AUTH/i.test(blob)) {
+      listHost.appendChild(el('div', { class: 'danger-note' }, 'Provider payload looked unsafe and was truncated in UI.'));
+    }
+  } catch (e) {
+    listHost.innerHTML = '';
+    listHost.appendChild(el('div', { class: 'muted' }, 'Could not load provider status. ' + esc(e.message)));
+  }
 }
 
 function renderMarketplaceCard(item) {

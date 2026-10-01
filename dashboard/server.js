@@ -26,7 +26,7 @@ const demoLinks = require('./lib/demo-links');
 const callback = require('./lib/callback');
 const phoneNumbers = require('./lib/phone-numbers');
 const calls = require('./lib/calls');
-const { createDefaultTelephonyProvider, TelephonyProviderError } = require('./lib/telephony-provider');
+const { createDefaultTelephonyProvider, TelephonyProviderError, listTelephonyProviderStatuses, createPlivoTelephonyProvider } = require('./lib/telephony-provider');
 const { AGENT_TYPES, seedPresets, publicPreset, applyPresetToAgent, normalizeAgentType } = require('./lib/agent-types');
 const org = require('./lib/org');
 const knowledge = require('./lib/knowledge');
@@ -1519,6 +1519,13 @@ async function apiPhoneNumbersInboundPut(req, res, ctx) {
 async function apiPhoneNumbersPurchase(req, res, ctx) {
   if (rejectImpersonated(res, ctx)) return;
   const b = ctx.body || {};
+  // Refuse Plivo purchase path explicitly. VoBiz remains the only buy adapter.
+  if (String(b.provider || '').toLowerCase() === 'plivo') {
+    return core.sendJson(res, 403, {
+      error: 'Plivo purchase is not enabled. VoBiz remains the active telephony purchase path.',
+      code: 'plivo_purchase_disabled',
+    });
+  }
   try {
     const result = await telephonyProvider.purchaseNumber({
       tenantId: ctx.tenant.id,
@@ -1558,6 +1565,71 @@ async function apiPhoneNumbersPurchase(req, res, ctx) {
   }
 }
 
+/**
+ * Advanced / Providers status: VoBiz (active) + Plivo (secondary).
+ * Owner+ only. Never returns Auth ID or Auth Token.
+ */
+async function apiPhoneNumbersProviders(req, res, ctx) {
+  const role = ctx.user && ctx.user.role;
+  if (!['super_admin', 'admin', 'owner'].includes(role)) {
+    return core.sendJson(res, 403, { error: 'owner role required', code: 'forbidden' });
+  }
+  try {
+    const skipLive = String(process.env.PLIVO_SKIP_LIVE_STATUS || '').trim() === '1';
+    const payload = await listTelephonyProviderStatuses({
+      core,
+      vobizProvider: telephonyProvider,
+      skipPlivoLive: skipLive,
+    });
+    const check = org.assertNoSecretValues(payload);
+    if (!check.ok) {
+      return core.sendJson(res, 500, { error: 'provider status refused to leak secrets', code: 'secret_guard' });
+    }
+    core.sendJson(res, 200, payload);
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+/**
+ * Secondary Plivo India inventory probe for Buy Number eligibility.
+ * Read-only search. Never purchases. Never returns secrets.
+ */
+async function apiPhoneNumbersPlivoSearch(req, res, ctx) {
+  const role = ctx.user && ctx.user.role;
+  if (!['super_admin', 'admin', 'owner'].includes(role)) {
+    return core.sendJson(res, 403, { error: 'owner role required', code: 'forbidden' });
+  }
+  const body = ctx.body || {};
+  const url = new URL(req.url || '/', 'http://localhost');
+  try {
+    const plivo = createPlivoTelephonyProvider(core);
+    const result = await plivo.searchAvailableNumbers({
+      country: body.country || url.searchParams.get('country') || 'IN',
+      q: body.q || body.search || url.searchParams.get('q') || undefined,
+      numberType: body.numberType || url.searchParams.get('numberType') || undefined,
+      capability: body.capability || url.searchParams.get('capability') || undefined,
+      maxMonthlyFee: body.maxMonthlyFee != null
+        ? body.maxMonthlyFee
+        : (url.searchParams.get('maxMonthlyFee') || undefined),
+      perPage: body.perPage || url.searchParams.get('perPage') || 10,
+    });
+    const check = org.assertNoSecretValues(result);
+    if (!check.ok) {
+      return core.sendJson(res, 500, { error: 'search refused to leak secrets', code: 'secret_guard' });
+    }
+    core.sendJson(res, 200, {
+      ...result,
+      buyEligible: !!(result.available && (result.numbers || []).some((n) =>
+        n.monthlyFee != null || n.setupFee != null)),
+      purchaseEnabled: false,
+      note: 'Plivo is secondary. Buy is shown only when India inventory returns real rows. Purchase remains disabled.',
+    });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
 function matchPhoneNumberRoute(route) {
   if (route === '/api/phone-numbers') return { action: 'list' };
   if (route === '/api/phone-numbers/available') return { action: 'available' };
@@ -1565,6 +1637,8 @@ function matchPhoneNumberRoute(route) {
   if (route === '/api/phone-numbers/pricing') return { action: 'pricing' };
   if (route === '/api/phone-numbers/purchase') return { action: 'purchase' };
   if (route === '/api/phone-numbers/usage') return { action: 'usage' };
+  if (route === '/api/phone-numbers/providers') return { action: 'providers' };
+  if (route === '/api/phone-numbers/providers/plivo/search') return { action: 'plivo_search' };
   const assign = route.match(/^\/api\/phone-numbers\/([^/]+)\/assign$/);
   if (assign) return { action: 'assign', id: decodeURIComponent(assign[1]) };
   const unassign = route.match(/^\/api\/phone-numbers\/([^/]+)\/unassign$/);
@@ -4192,6 +4266,8 @@ const server = http.createServer(async (req, res) => {
           if (pnGet.action === 'search') return core.requireAuth(req, res, apiPhoneNumbersSearch);
           if (pnGet.action === 'pricing') return core.requireAuth(req, res, apiPhoneNumbersPricing);
           if (pnGet.action === 'usage') return core.requireAuth(req, res, apiPhoneNumbersUsage);
+          if (pnGet.action === 'providers') return core.requireAuth(req, res, apiPhoneNumbersProviders);
+          if (pnGet.action === 'plivo_search') return core.requireAuth(req, res, apiPhoneNumbersPlivoSearch);
           if (pnGet.action === 'one') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersGetOne(rq, rs, { ...ctx, params: { id: pnGet.id } }));
           }
@@ -4559,6 +4635,9 @@ const server = http.createServer(async (req, res) => {
         }
         if (pnPost.action === 'search') {
           return core.requireAuth(req, res, apiPhoneNumbersSearch, body);
+        }
+        if (pnPost.action === 'plivo_search') {
+          return core.requireAuth(req, res, apiPhoneNumbersPlivoSearch, body);
         }
         if (pnPost.action === 'pricing') {
           return core.requireAuth(req, res, apiPhoneNumbersPricing, body);
