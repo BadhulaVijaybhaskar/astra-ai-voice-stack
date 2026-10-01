@@ -185,15 +185,52 @@ test('Sarvam upstream 402 maps to funding required', async () => {
   );
 });
 
-test('dograh managed preview fails closed as voice_unavailable', async () => {
+test('dograh managed preview is allowed via Rumik (managed_via: rumik)', async () => {
+  const wav = tinyWav();
+  const preview = loadProviders(async () => ({
+    status: 200,
+    headers: { 'content-type': 'audio/wav' },
+    buffer: wav,
+  }));
+  process.env.RUMIK_API_KEY = 'rk_test_managed';
+  delete process.env.RUMIK_NEEDS_FUNDING;
+  delete process.env.RUMIK_ACCOUNT_STATUS;
+
+  const out = await preview.synthesizePreview({
+    provider: 'dograh',
+    voice_id: 'default',
+    language: 'en-IN',
+    text: 'Hello, this is a preview from Astra Voice.',
+  });
+  assert.equal(out.provider, 'rumik');
+  assert.equal(out.managed_via, 'rumik');
+  assert.equal(out.voice_id, 'speaker_2');
+  assert.ok(Buffer.isBuffer(out.buffer));
+  assert.equal(out.buffer.toString('ascii', 0, 4), 'RIFF');
+});
+
+test('deprecated Sarvam Bulbul v2 speakers map to voice_unavailable', async () => {
+  process.env.SARVAM_API_KEY = 'sk_test';
+  delete process.env.SARVAM_NEEDS_FUNDING;
+  delete process.env.SARVAM_ACCOUNT_STATUS;
+
   await assert.rejects(
     () => voicePreview.synthesizePreview({
-      provider: 'dograh',
-      voice_id: 'default',
-      language: 'en-IN',
+      provider: 'sarvam',
+      voice_id: 'anushka',
+      language: 'hi-IN',
+      text: 'Hello',
     }),
-    (err) => err.code === 'voice_unavailable',
+    (err) => err.code === 'voice_unavailable'
+      && err.detail
+      && err.detail.reason === 'deprecated_bulbul_v2',
   );
+});
+
+test('app.js allows Dograh managed preview (no hard-block toast)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../public/assets/app.js'), 'utf8');
+  assert.ok(!/if \(provider === 'dograh'\) \{\s*toast\('Voice unavailable'/.test(src));
+  assert.ok(src.includes('managed_via: rumik') || src.includes('Managed (Dograh) preview is allowed via Rumik'));
 });
 
 test('POST /api/voice/preview returns audio bytes and honors funding gate', async (t) => {

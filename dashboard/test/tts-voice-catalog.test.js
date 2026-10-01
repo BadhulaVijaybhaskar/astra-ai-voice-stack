@@ -10,6 +10,24 @@ const crypto = require('crypto');
 
 const catalog = require('../lib/tts-voice-catalog');
 
+test('Sarvam catalog prefers Bulbul v3 speakers and excludes deprecated v2 IDs', () => {
+  const payload = catalog.getCatalog({ provider: 'sarvam' });
+  assert.ok(payload.voices.length >= 20);
+  assert.ok(payload.voices.every((v) => v.model === 'bulbul:v3'));
+  assert.ok(payload.voices.every((v) => v.status === 'available'));
+  assert.ok(payload.voices.some((v) => v.voice_id === 'shubh'));
+  assert.equal(payload.voices.some((v) => v.voice_id === 'anushka'), false);
+  assert.equal(payload.models.sarvam[0], 'bulbul:v3');
+
+  // Deprecated v2 IDs remain findable for voice_unavailable mapping.
+  const deprecated = catalog.findVoice('sarvam', 'anushka');
+  assert.ok(deprecated);
+  assert.equal(deprecated.status, 'voice_unavailable');
+  assert.equal(deprecated.model, 'bulbul:v2');
+  assert.equal(catalog.isSarvamV2VoiceId('anushka'), true);
+  assert.equal(catalog.isSarvamV2VoiceId('shubh'), false);
+});
+
 test('ASTRA_SUPPORTED_LANGUAGES is curated 10 and refuses unvalidated TESTED', () => {
   const langs = catalog.listAstraSupportedLanguages();
   assert.equal(langs.length, 10);

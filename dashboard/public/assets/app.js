@@ -3398,11 +3398,8 @@ async function viewEmployeeStudio(root, id) {
           toast('Voice unavailable', 'err');
           return;
         }
-        // Never silent Maya fallback. Preview uses the currently selected chips.
-        if (provider === 'dograh') {
-          toast('Voice unavailable', 'err');
-          return;
-        }
+        // Managed (Dograh) preview is allowed via Rumik on the server
+        // (managed_via: rumik). Do not hard-block here.
 
         previewBtn.dataset.busy = '1';
         previewBtn.disabled = true;

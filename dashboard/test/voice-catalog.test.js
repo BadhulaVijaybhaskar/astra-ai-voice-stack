@@ -170,6 +170,24 @@ test('product catalog excludes openai/grok realtime and always includes Sarvam',
   assert.ok(['ready', 'needs_funding', 'needs_credentials', 'unavailable'].includes(sarvamOpt.state));
 });
 
+test('Dograh managed preview is ready via Rumik when Rumik is funded', () => {
+  const prevRumik = process.env.RUMIK_API_KEY;
+  const prevFund = process.env.RUMIK_NEEDS_FUNDING;
+  process.env.RUMIK_API_KEY = 'rk_test_dograh_preview';
+  delete process.env.RUMIK_NEEDS_FUNDING;
+  delete process.env.RUMIK_ACCOUNT_STATUS;
+  try {
+    const state = unified.resolveProviderState('dograh');
+    assert.equal(state.can_preview, true);
+    assert.equal(state.reason, 'managed_via_rumik');
+  } finally {
+    if (prevRumik === undefined) delete process.env.RUMIK_API_KEY;
+    else process.env.RUMIK_API_KEY = prevRumik;
+    if (prevFund === undefined) delete process.env.RUMIK_NEEDS_FUNDING;
+    else process.env.RUMIK_NEEDS_FUNDING = prevFund;
+  }
+});
+
 test('Sarvam stays visible with needs_funding and preview gated', async () => {
   const prevKey = process.env.SARVAM_API_KEY;
   const prevFund = process.env.SARVAM_NEEDS_FUNDING;
