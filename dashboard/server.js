@@ -1014,7 +1014,8 @@ async function apiChatStream(req, res, ctx) {
   const messages = Array.isArray(b.messages) ? b.messages : [];
   const lastUser = [...messages].reverse().find((m) => m && (m.role === 'user' || m.role === 'human'));
   const lastText = lastUser ? String(lastUser.text || lastUser.content || '') : '';
-  const turnPath = voiceFastPath.classifyTurnPath(lastText);
+  // Language-agnostic first-audio plan (ack-before-LLM or stream-first-phrase).
+  const turnPath = voiceFastPath.planFirstAudio(lastText);
 
   res.writeHead(200, {
     'Content-Type': 'application/x-ndjson; charset=utf-8',
@@ -1053,18 +1054,23 @@ async function apiChatStream(req, res, ctx) {
   const isMaya = (b.employeeId && mayaConversationPolicy.isMayaEmployee({ id: b.employeeId, name: b.employeeName }))
     || !!b.applyMayaPolicy;
   if (isMaya && !/CONVERSATION POLICY \(MANDATORY\)/.test(system)) {
-    const cached = voiceFastPath.getCachedStatic('maya_global_prompt', () => mayaConversationPolicy.GLOBAL_PROMPT);
+    // Hot prompt only on first-audio path; full qualification bank rides later.
+    const cached = voiceFastPath.getCachedStatic('maya_global_prompt_hot', () => (
+      mayaConversationPolicy.GLOBAL_PROMPT_HOT || mayaConversationPolicy.GLOBAL_PROMPT
+    ));
     system = cached.value + (system ? ('\n\n' + system) : '');
   }
 
-  // Booking tool path: emit ack phrase immediately so TTS can start before Groq.
-  if (turnPath.path === 'tool' && turnPath.ack && turnPath.ack.text) {
+  // Tool / booking path: emit ack immediately so TTS starts before Groq.
+  // Same architecture as HI booking ack; not language-gated.
+  if (turnPath.emit_before_llm && turnPath.ack && turnPath.ack.text) {
     write({
       type: 'first_phrase',
       phrase: turnPath.ack.text,
       at_ms: Date.now(),
       booking_ack: true,
       language: turnPath.ack.language,
+      architecture: turnPath.architecture,
     });
     if (b.turn_id || b.record_latency) {
       turnLatency.ingestTurnTiming({
@@ -1074,7 +1080,7 @@ async function apiChatStream(req, res, ctx) {
         booking_ack: true,
         tool_assisted: true,
         tool_start_ms: Date.now(),
-        note: 'booking_ack_emitted_before_llm',
+        note: 'ack_emitted_before_llm',
       });
     }
   }
@@ -1085,6 +1091,7 @@ async function apiChatStream(req, res, ctx) {
     booking_intent: !!turnPath.ack,
     model: providers.llm.model,
     targets: voiceFastPath.latencyBudgets(),
+    architecture: turnPath.architecture,
   });
 
   const llmStarted = Date.now();
@@ -1099,6 +1106,7 @@ async function apiChatStream(req, res, ctx) {
       messages: b.messages,
       system,
       model: selected.model,
+      phraseOpts: turnPath.phrase_opts || voiceFastPath.ORDINARY_PHRASE_OPTS,
       onFirstToken: (ev) => {
         write({ type: 'first_token', ...ev });
         if (b.turn_id || b.record_latency) {
@@ -1113,8 +1121,8 @@ async function apiChatStream(req, res, ctx) {
         }
       },
       onFirstPhrase: (ev) => {
-        // Skip duplicate first_phrase if booking ack already started TTS.
-        if (turnPath.path === 'tool' && turnPath.ack) {
+        // Skip duplicate first_phrase if ack already started TTS.
+        if (turnPath.emit_before_llm && turnPath.ack) {
           write({ type: 'continue_phrase', ...ev });
           return;
         }
@@ -1261,7 +1269,7 @@ async function apiTalkLatencyReport(req, res) {
 async function apiTalkBookingAck(req, res, ctx) {
   const b = ctx.body || {};
   const text = b.lastUserText || b.transcript || b.text || '';
-  const pathInfo = voiceFastPath.classifyTurnPath(text);
+  const pathInfo = voiceFastPath.planFirstAudio(text);
   core.sendJson(res, 200, {
     ...pathInfo,
     booking_intent: mayaConversationPolicy.detectBookingIntent(text),

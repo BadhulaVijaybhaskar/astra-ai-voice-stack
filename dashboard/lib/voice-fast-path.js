@@ -1,9 +1,14 @@
 /**
  * Astra Voice. Sub-1000ms voice fast path vs tool path.
  *
- * Fast path: STT final → stream LLM → TTS on first safe phrase (no tools).
- * Tool path: speak booking/ack FIRST (<=1200ms), run tools in background,
- * then continue collecting details. Never block first audio on Cal.com.
+ * Architecture (language-agnostic; same for EN / TE / HI / mixed):
+ *   Fast path: STT final → stream LLM → TTS on first safe phrase (no tools).
+ *   Tool path: speak booking/ack FIRST (<=1200ms), run tools in background,
+ *   then continue collecting details. Never block first audio on Cal.com.
+ *
+ * HI booking ~707ms was the ack-before-LLM pattern. Ordinary EN/TE turns use
+ * the same pipeline shape: speak early (stream first phrase), never wait for
+ * llm_complete or tools. Do not special-case language strings for latency.
  *
  * Also: context compaction for first-response, prompt token audit, static
  * prompt cache keys, parallel stage helpers.
@@ -22,6 +27,11 @@ const FIRST_AUDIO_HARD_FAIL_MS = 2500;
 const TOOL_ACK_TARGET_MS = 1200;
 const STT_FINAL_TARGET_MS = 250;
 
+/** Aggressive first-phrase flush for ordinary turns (language-agnostic). */
+const ORDINARY_PHRASE_OPTS = Object.freeze({ minChars: 16, minWords: 3 });
+/** Tool-path continue phrase after ack (language-agnostic). */
+const CONTINUE_PHRASE_OPTS = Object.freeze({ minChars: 12, minWords: 2 });
+
 const BOOKING_ACK = Object.freeze({
   hi: 'Haan, bilkul. Demo book karte hain.',
   en: 'Yes. Let us book a short demo.',
@@ -31,6 +41,7 @@ const BOOKING_ACK = Object.freeze({
 
 /**
  * Pick booking acknowledgement language from user text.
+ * Language pick is for spoken quality only, never a latency branch.
  */
 function detectAckLanguage(text) {
   const s = String(text || '');
@@ -66,15 +77,36 @@ function classifyTurnPath(userText, opts = {}) {
       ack: bookingAckSpeech(text),
       tools_block_first_audio: false,
       first_audio_target_ms: TOOL_ACK_TARGET_MS,
+      emit_before_llm: true,
+      phrase_opts: CONTINUE_PHRASE_OPTS,
     };
   }
   return {
     path: 'fast',
-    reason: 'ordinary_dialogue',
+    reason: needsTool ? 'forced_tools_without_booking' : 'ordinary_dialogue',
     first_audio_strategy: 'stream_first_safe_phrase',
     ack: null,
     tools_block_first_audio: false,
     first_audio_target_ms: FIRST_AUDIO_TARGET_MS,
+    emit_before_llm: false,
+    phrase_opts: ORDINARY_PHRASE_OPTS,
+  };
+}
+
+/**
+ * Language-agnostic first-audio plan. Same architecture for ordinary EN/TE
+ * and booking HI: speak early, stream/continue, never block on tools.
+ */
+function planFirstAudio(userText, opts = {}) {
+  const classified = classifyTurnPath(userText, opts);
+  return {
+    ...classified,
+    stream_tts_on_first_phrase: true,
+    wait_for_llm_complete: false,
+    wait_for_tools: false,
+    architecture: classified.emit_before_llm
+      ? 'ack_before_llm_then_stream'
+      : 'stream_first_safe_phrase',
   };
 }
 
@@ -188,6 +220,7 @@ function latencyBudgets() {
     stt_final_ms: STT_FINAL_TARGET_MS,
     primary_metric: 'speech_end → first audible',
     note: 'Do not shorten useful answers to hit these budgets',
+    architecture: 'ack_before_llm OR stream_first_safe_phrase; language-agnostic',
   };
 }
 
@@ -210,10 +243,13 @@ module.exports = {
   FIRST_AUDIO_HARD_FAIL_MS,
   TOOL_ACK_TARGET_MS,
   STT_FINAL_TARGET_MS,
+  ORDINARY_PHRASE_OPTS,
+  CONTINUE_PHRASE_OPTS,
   BOOKING_ACK,
   detectAckLanguage,
   bookingAckSpeech,
   classifyTurnPath,
+  planFirstAudio,
   compactContextForFirstResponse,
   auditPromptTokens,
   getCachedStatic,

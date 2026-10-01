@@ -127,16 +127,57 @@ If the transcript is nonsense or clearly wrong, ask one short clarification.
 Do not invent a business answer from garbage text. Do not end the call.
 `;
 
+/**
+ * Hot-path global prompt for first audio / TTFT.
+ * Defers the long qualification bank and verbose booking step list to stage
+ * nodes so Groq is not stuffed before the first spoken syllable.
+ * Preserves identity, streaming lead-in, end-call safety, booking ack rule.
+ */
+const GLOBAL_PROMPT_HOT = `# WHO YOU ARE
+
+You are Maya, the AI voice employee for Astra Voice on a live phone call.
+Speak naturally in the caller's language (Hindi, Hinglish, Telugu, TE-EN, English).
+
+# FIRST AUDIO / STREAMING
+
+Lead with a safe natural opening phrase, then continue. Do not wait for tools.
+Match answer length to the question. Once you start, finish a complete answer.
+
+# CONVERSATION POLICY (MANDATORY)
+
+Understand the need first. Do not pitch a demo on turn one unless they asked.
+Ask qualification questions one at a time only after you start speaking.
+Once they want a demo or schedule, STOP selling and enter booking with a short
+spoken ack first. Never invent a Cal.com booking. Never hang up on booking talk.
+
+# END CALL / ASR
+
+End only on clear goodbye or stop. Booking language is NOT goodbye.
+If ASR is nonsense, ask one short clarification. Do not invent answers.
+`;
+
 const START_PROMPT = `# THIS STAGE
 
 Greet briefly as Maya from Astra Voice and ask how you can help.
 Do not pitch a demo yet. Do not ask for email yet unless they already want to book.
+Do not run a separate language or intent classifier before this greeting speech.
 `;
 
 const MAIN_PROMPT = `# THIS STAGE
 
-Follow the conversation policy. Qualify with 2 to 4 questions, summarize, then
-offer a demo. If they already want to book, move to booking without more selling.
+Follow the conversation policy. Qualify with 2 to 4 questions (need, volume,
+decision maker, timeline), summarize in one sentence, then offer a demo.
+Ask one question at a time after a brief spoken ack. If they already want to
+book, move to booking without more selling.
+
+# DEFERRED FROM HOT PATH
+
+Full qualification themes live here (not in a pre-speech classifier LLM):
+- need: What are you hoping Astra Voice helps with for your team?
+- volume: About how many outbound or inbound calls do you handle in a week?
+- decision maker: Who else needs to be involved in choosing a voice agent?
+- timeline: Is there a timeline you are working toward?
+Do not preload all four into the first spoken turn.
 `;
 
 const BOOKING_PROMPT = `# THIS STAGE
@@ -147,6 +188,19 @@ the background after the ack. Stay here until booking is confirmed, declined, or
 they clearly want to stop. Never jump to End Call from this stage on booking
 language. Never stay silent waiting on Cal.com.
 `;
+
+/** Hostinger / Dograh: hops that must NOT run before first audible speech. */
+const PRE_SPEECH_POLICY = Object.freeze({
+  defer_edge_router_llm_before_first_audio: true,
+  defer_end_call_eligibility_llm: true,
+  defer_language_classifier_llm: true,
+  defer_qualification_bank: true,
+  defer_summarizer_llm: true,
+  defer_calcom_tools: true,
+  use_local_booking_and_hangup_policy: true,
+  required_before_first_audio: ['global_hot', 'active_stage_compact'],
+  note: 'Dograh natural-language edge routers and extra Groq hops (lang/qual/summarizer) inflate speech_end→first_audio. Prefer local ASR/booking/hangup policy for routing until after first spoken.',
+});
 
 const END_PROMPT = `# THIS STAGE
 
@@ -254,7 +308,8 @@ function buildMayaWorkflowGraph() {
         type: 'globalNode',
         data: {
           name: 'Global Node',
-          prompt: GLOBAL_PROMPT,
+          // Hot prompt on WF8 import: defer qualification bank to Qualify stage.
+          prompt: GLOBAL_PROMPT_HOT,
           allow_interrupt: true,
         },
       },
@@ -314,6 +369,8 @@ function buildMayaWorkflowGraph() {
         data: {
           label: 'Start qualifying',
           condition: 'Choose this after the greeting reply unless the caller already asked to book a demo.',
+          // Prefer local policy over an extra Groq router hop before speech.
+          prefer_local_policy: true,
         },
       },
       {
@@ -325,6 +382,7 @@ function buildMayaWorkflowGraph() {
         data: {
           label: 'Direct to booking',
           condition: TO_BOOKING_CONDITION,
+          prefer_local_policy: true,
         },
       },
       {
@@ -336,6 +394,7 @@ function buildMayaWorkflowGraph() {
         data: {
           label: 'Enter booking',
           condition: TO_BOOKING_CONDITION,
+          prefer_local_policy: true,
         },
       },
       {
@@ -347,6 +406,7 @@ function buildMayaWorkflowGraph() {
         data: {
           label: 'End call',
           condition: END_CALL_CONDITION,
+          prefer_local_policy: true,
         },
       },
       {
@@ -358,6 +418,7 @@ function buildMayaWorkflowGraph() {
         data: {
           label: 'End call',
           condition: END_CALL_CONDITION,
+          prefer_local_policy: true,
         },
       },
       {
@@ -370,6 +431,7 @@ function buildMayaWorkflowGraph() {
           label: 'End after booking',
           condition: END_CALL_CONDITION
             + ' From Booking, also allow End Call after Cal.com success was confirmed aloud, or after the caller clearly declines booking.',
+          prefer_local_policy: true,
         },
       },
     ],
@@ -379,7 +441,8 @@ function buildMayaWorkflowGraph() {
       dograh_workflow_id: MAYA_DOGRAH_WORKFLOW_ID,
       tts: MAYA_TTS,
       protected: true,
-      note: 'Astra-owned Maya policy graph. Diff / import to Dograh WF8 on Hostinger manually. Activate never auto-writes WF8.',
+      pre_speech_policy: PRE_SPEECH_POLICY,
+      note: 'Astra-owned Maya policy graph. Diff / import to Dograh WF8 on Hostinger manually. Activate never auto-writes WF8. Global uses HOT prompt; Qualify holds deferred qual bank.',
     },
   };
 }
@@ -487,6 +550,8 @@ module.exports = {
   BOOKING_STAGES,
   QUALIFICATION_QUESTIONS,
   GLOBAL_PROMPT,
+  GLOBAL_PROMPT_HOT,
+  PRE_SPEECH_POLICY,
   END_CALL_CONDITION,
   TO_BOOKING_CONDITION,
   detectBookingIntent,
