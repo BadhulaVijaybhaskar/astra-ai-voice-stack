@@ -78,7 +78,21 @@ services:
 ```
 
 `mulberry` is the fast model and the right default for phone. `muga` is more
-expressive. Set `full_response_aggregation` to **false** so TTS can start on the
-first safe phrase while the LLM continues (sub-1000ms first-audio path). Sarvam
-Maya production uses `silence_time_s=0.2` in the overlay service factory.expressive and costs roughly twice as much. `description` is a free-text voice
+expressive and costs roughly twice as much. `description` is a free-text voice
 prompt, it is worth tuning by ear before shipping.
+
+Set `full_response_aggregation` to **false** so TTS can start on the first safe
+phrase while the LLM continues (sub-1000ms first-audio path).
+
+## Sarvam (Maya production WF8)
+
+Maya stays on Sarvam `bulbul:v3` voice **priya** (frozen). Overlay TTFB knobs:
+
+| Knob | Value | Why |
+|---|---|---|
+| `silence_time_s` | `0.2` | Was 1.0; cut trailing pad before first forward |
+| `text_aggregation_mode` | `TOKEN` (fallback `aggregate_sentences=False`) | Pipecat default `SENTENCE` buffers until sentence end and inflates TTFB |
+| `min_buffer_size` | `20` | Lower WS buffer so first audio frame forwards sooner |
+
+Rebuild the overlay after pulling these files (`bash deploy/02-build-rumik-overlay.sh`).
+Do not change priya / bulbul:v3.

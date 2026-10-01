@@ -742,13 +742,37 @@ def create_tts_service(
         }
         if speed and speed != 1.0:
             settings_kwargs["pace"] = speed
-        return SarvamTTSService(
-            api_key=user_config.tts.api_key,
-            settings=SarvamTTSSettings(**settings_kwargs),
-            text_filters=[xml_function_tag_filter],
-            skip_aggregator_types=["recording_router", "recording"],
-            silence_time_s=0.2,
-        )
+        # Low WS min buffer so the first audio frame forwards sooner (TTFB).
+        # Maya production stays bulbul:v3 / priya; this only tunes the path.
+        min_buf = getattr(user_config.tts, "min_buffer_size", None)
+        try:
+            settings_kwargs["min_buffer_size"] = (
+                int(min_buf) if min_buf is not None else 20
+            )
+            settings = SarvamTTSSettings(**settings_kwargs)
+        except (TypeError, ValueError):
+            settings_kwargs.pop("min_buffer_size", None)
+            settings = SarvamTTSSettings(**settings_kwargs)
+
+        tts_kwargs = {
+            "api_key": user_config.tts.api_key,
+            "settings": settings,
+            "text_filters": [xml_function_tag_filter],
+            "skip_aggregator_types": ["recording_router", "recording"],
+            # Pad after speech end only; 1.0s previously inflated first-audio.
+            "silence_time_s": 0.2,
+        }
+        # Pipecat default text_aggregation_mode=SENTENCE buffers until a
+        # sentence boundary before synthesis, which delays first-frame TTFB.
+        # TOKEN streams as tokens arrive. Fall back for older Dograh forks.
+        try:
+            from pipecat.services.tts_service import TextAggregationMode
+
+            tts_kwargs["text_aggregation_mode"] = TextAggregationMode.TOKEN
+        except Exception:
+            tts_kwargs["aggregate_sentences"] = False
+
+        return SarvamTTSService(**tts_kwargs)
     elif user_config.tts.provider == ServiceProviders.MINIMAX.value:
         group_id = getattr(user_config.tts, "group_id", None)
         if not group_id:
@@ -1234,16 +1258,8 @@ def create_realtime_llm_service(user_config, audio_config: "AudioConfig"):
         )
 
 
-def create_llm_service(
-    user_config,
-    correlation_id: str | None = None,
-    usage_context: str | None = None,
-):
-    """Create and return appropriate LLM service based on user configuration."""
-    provider = user_config.llm.provider
-    model = user_config.llm.model
-    api_key = user_config.llm.api_key
-
+def _llm_provider_kwargs_from_user_config(user_config, provider: str) -> dict:
+    """Extract provider-specific kwargs from user_config.llm without mutating it."""
     kwargs = {}
     if provider in (
         ServiceProviders.OPENAI.value,
@@ -1272,7 +1288,35 @@ def create_llm_service(
         kwargs["temperature"] = user_config.llm.temperature
     elif provider == ServiceProviders.SARVAM.value:
         kwargs["temperature"] = user_config.llm.temperature
+    return kwargs
 
+
+def create_llm_service_with_model_override(
+    user_config,
+    model_override: str | None = None,
+    *,
+    correlation_id: str | None = None,
+    usage_context: str | None = None,
+    provider_override: str | None = None,
+):
+    """Create an LLM service with an optional per-call model/provider override.
+
+    Used by Dograh workflow nodes (classifiers, voicemail, etc.) that need a
+    different model than ``user_config.llm.model`` without mutating the config.
+    Delegates to ``create_llm_service_from_provider`` so all providers stay
+    consistent with ``create_llm_service``.
+
+    Args:
+        user_config: Runtime user configuration (llm.provider/model/api_key).
+        model_override: Optional model id; falls back to user_config.llm.model.
+        correlation_id: Optional request correlation id.
+        usage_context: Optional Dograh usage tag (e.g. voicemail_detection).
+        provider_override: Optional provider id; falls back to user_config.llm.provider.
+    """
+    provider = provider_override or user_config.llm.provider
+    model = model_override or user_config.llm.model
+    api_key = user_config.llm.api_key
+    kwargs = _llm_provider_kwargs_from_user_config(user_config, provider)
     return create_llm_service_from_provider(
         provider,
         model,
@@ -1280,4 +1324,19 @@ def create_llm_service(
         correlation_id=correlation_id,
         usage_context=usage_context,
         **kwargs,
+    )
+
+
+def create_llm_service(
+    user_config,
+    correlation_id: str | None = None,
+    usage_context: str | None = None,
+):
+    """Create and return appropriate LLM service based on user configuration."""
+    return create_llm_service_with_model_override(
+        user_config,
+        model_override=None,
+        correlation_id=correlation_id,
+        usage_context=usage_context,
+        provider_override=None,
     )

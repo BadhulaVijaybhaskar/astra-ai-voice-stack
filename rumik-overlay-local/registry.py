@@ -1180,6 +1180,15 @@ class SarvamTTSConfiguration(BaseTTSConfiguration):
         le=2.0,
         description="Speech speed multiplier.",
     )
+    min_buffer_size: int = Field(
+        default=20,
+        ge=1,
+        le=500,
+        description=(
+            "Sarvam WebSocket minimum buffer (chars) before first synthesis. "
+            "Lower values reduce first-audio TTFB. Maya production uses 20."
+        ),
+    )
 
 
 CAMB_TTS_MODELS = ["mars-flash", "mars-pro", "mars-instruct"]
