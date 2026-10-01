@@ -2086,6 +2086,20 @@ async function viewEmployeeStudio(root, id) {
     ]));
     body.appendChild(el('p', { class: 'muted', style: 'margin-top:12px' },
       'Brand and private enterprise voices are design placeholders only. No celebrity cloning in this product.'));
+
+    // Draft provider catalog (Sarvam / Deepgram Aura / Rumik). Does not change live agent TTS.
+    const catalogCard = el('div', { class: 'card card-pad', style: 'margin-top:18px' }, [
+      el('h4', { class: 't-h4' }, 'Provider voice (draft)'),
+      el('p', { class: 'muted', style: 'margin-bottom:12px' },
+        'Browse Sarvam, Deepgram Aura, and Rumik voices from the server catalog. Saves workspace draft prefs only. Live Employee dials keep the current production voice.'),
+      el('div', { class: 'muted' }, 'Loading catalog...'),
+    ]);
+    body.appendChild(catalogCard);
+    paintVoiceCatalogPanel(catalogCard).catch((e) => {
+      catalogCard.innerHTML = '';
+      catalogCard.appendChild(el('h4', { class: 't-h4' }, 'Provider voice (draft)'));
+      catalogCard.appendChild(el('p', { class: 'muted' }, 'Could not load voice catalog. ' + esc(e.message)));
+    });
   } else if (tab === 'settings') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Settings'));
     const nameIn = el('input', { class: 'input', value: emp.name || '' });
@@ -5824,6 +5838,20 @@ async function viewSettings(root) {
     provHost.innerHTML = '';
     provHost.appendChild(el('div', { class: 'card card-pad muted' }, 'Could not load providers. ' + esc(e.message)));
   }
+
+  // Voice catalog (draft prefs). Admin / owner config surface. Does not change live TTS.
+  if (isOwner || (State.me && State.me.user && State.me.user.role === 'admin')) {
+    const voiceCatalogHost = el('div', { class: 'card card-pad voice-catalog-panel', style: 'margin-top:12px' }, [
+      el('h3', { class: 't-h3' }, 'Voice catalog'),
+      el('p', { class: 'muted' }, 'Loading voices...'),
+    ]);
+    root.appendChild(voiceCatalogHost);
+    paintVoiceCatalogPanel(voiceCatalogHost).catch((e) => {
+      voiceCatalogHost.innerHTML = '';
+      voiceCatalogHost.appendChild(el('h3', { class: 't-h3' }, 'Voice catalog'));
+      voiceCatalogHost.appendChild(el('p', { class: 'muted' }, 'Could not load voice catalog. ' + esc(e.message)));
+    });
+  }
 }
 
 async function loadByon(host) {
@@ -5894,6 +5922,256 @@ function provCard(p) {
           ? ['To enable, add ', ...needs.flatMap((n, i) => i ? [document.createTextNode(', '), el('code', {}, n)] : [el('code', {}, n)]), document.createTextNode(' to your .env.')]
           : 'Adapter is implemented but not configured.')
   ]);
+}
+
+/**
+ * Voice catalog panel (Settings). Provider / Language / Voice / Preview /
+ * Default / Fallback. Loads Sarvam voices from GET /api/tts/voices.
+ * Saves draft prefs only. Live apply stays disabled.
+ */
+async function paintVoiceCatalogPanel(host) {
+  const [catalog, draftRes] = await Promise.all([
+    api('/api/tts/voices'),
+    api('/api/tts/draft-prefs').catch(() => ({ prefs: null })),
+  ]);
+  const prefs = draftRes.prefs || {};
+  const providers = catalog.providers || [
+    { id: 'sarvam', label: 'Sarvam' },
+    { id: 'deepgram', label: 'Deepgram Aura' },
+    { id: 'rumik', label: 'Rumik' },
+  ];
+  let allVoices = Array.isArray(catalog.voices) ? catalog.voices.slice() : [];
+  const languagesByProvider = catalog.languages || {};
+
+  const st = {
+    provider: prefs.provider || 'rumik',
+    language: prefs.language || 'en-IN',
+    voice_id: prefs.voice_id || 'speaker_2',
+    model: prefs.model || 'mulberry',
+    default_voice: prefs.default_voice || null,
+    fallback_voice: prefs.fallback_voice || null,
+  };
+
+  function languagesFor(provider) {
+    const list = languagesByProvider[provider] || [];
+    if (list.length) return list;
+    if (provider === 'sarvam') {
+      return [
+        { id: 'en-IN', label: 'English (India)' },
+        { id: 'hi-IN', label: 'Hindi' },
+        { id: 'te-IN', label: 'Telugu' },
+        { id: 'ta-IN', label: 'Tamil' },
+      ];
+    }
+    if (provider === 'deepgram') return [{ id: 'en', label: 'English' }];
+    return [{ id: 'en-IN', label: 'English (India)' }];
+  }
+
+  function voicesFor(provider, language) {
+    return allVoices.filter((v) => {
+      if (v.provider !== provider) return false;
+      if (!v.language) return true;
+      if (!language) return true;
+      if (v.language === language) return true;
+      if (v.language === 'en' && /^en([-_]|$)/i.test(language)) return true;
+      return false;
+    });
+  }
+
+  function voiceLabel(v) {
+    if (!v) return '';
+    const bits = [v.display_name || v.voice_id];
+    if (v.gender) bits.push(v.gender);
+    if (v.model) bits.push(v.model);
+    if (v.status && v.status !== 'available') bits.push(v.status);
+    return bits.join(' · ');
+  }
+
+  function refillSelect(sel, options, value) {
+    sel.innerHTML = '';
+    options.forEach((o) => {
+      sel.appendChild(el('option', {
+        value: o.value,
+        selected: o.value === value ? 'selected' : null,
+      }, o.label));
+    });
+    if (options.length && !options.some((o) => o.value === value)) {
+      sel.value = options[0].value;
+    } else {
+      sel.value = value;
+    }
+  }
+
+  host.innerHTML = '';
+  host.appendChild(el('h3', { class: 't-h3', style: 'margin-bottom:8px' }, 'Voice catalog'));
+  host.appendChild(el('p', { class: 'muted', style: 'margin-bottom:14px' },
+    'Draft preferences for Sarvam, Deepgram Aura, and Rumik. Preview uses the selected provider when its server key is configured. Live production TTS and Dograh workflows stay on the current default until an explicit apply ships later.'));
+
+  const providerSel = el('select', { class: 'select', id: 'vc_provider' });
+  const languageSel = el('select', { class: 'select', id: 'vc_language' });
+  const voiceSel = el('select', { class: 'select', id: 'vc_voice' });
+  const defaultSel = el('select', { class: 'select', id: 'vc_default' });
+  const fallbackSel = el('select', { class: 'select', id: 'vc_fallback' });
+  const previewBtn = el('button', { class: 'btn btn-ghost' }, 'Preview');
+  const canEditDraft = !!(State.me && State.me.user && ['super_admin', 'admin', 'owner'].includes(State.me.user.role));
+  const saveBtn = el('button', { class: 'btn btn-primary' }, 'Save draft prefs');
+  if (!canEditDraft) {
+    saveBtn.disabled = true;
+    saveBtn.title = 'Owner or admin role required to save draft prefs';
+  }
+  const applyBtn = el('button', { class: 'btn btn-ghost', disabled: 'disabled', title: 'Live apply is disabled in this release' }, 'Apply to live TTS (disabled)');
+  const statusLine = el('p', { class: 'muted', style: 'margin-top:10px' },
+    canEditDraft
+      ? ''
+      : 'Browse and preview freely. Saving draft prefs requires an owner or admin.');
+
+  function syncLanguageOptions() {
+    const langs = languagesFor(st.provider);
+    refillSelect(languageSel, langs.map((l) => ({ value: l.id, label: l.label })), st.language);
+    st.language = languageSel.value;
+  }
+
+  function syncVoiceOptions() {
+    const list = voicesFor(st.provider, st.language);
+    const opts = list.map((v) => ({ value: v.voice_id, label: voiceLabel(v) }));
+    if (!opts.length) opts.push({ value: '', label: 'No voices for this selection' });
+    refillSelect(voiceSel, opts, st.voice_id);
+    st.voice_id = voiceSel.value;
+    const chosen = list.find((v) => v.voice_id === st.voice_id);
+    if (chosen) st.model = chosen.model;
+    // Default / fallback pick from same provider pool (plus current drafts).
+    const defOpts = list.map((v) => ({ value: v.provider + '::' + v.voice_id, label: voiceLabel(v) }));
+    const defVal = (st.default_voice && st.default_voice.provider + '::' + st.default_voice.voice_id)
+      || (st.provider + '::' + st.voice_id);
+    const fbVal = (st.fallback_voice && st.fallback_voice.provider + '::' + st.fallback_voice.voice_id)
+      || 'rumik::speaker_1';
+    refillSelect(defaultSel, defOpts.length ? defOpts : [{ value: '', label: 'None' }], defVal);
+    // Fallback can come from full catalog for resilience.
+    const fbOpts = allVoices.map((v) => ({
+      value: v.provider + '::' + v.voice_id,
+      label: (v.provider + ' · ' + voiceLabel(v)),
+    }));
+    refillSelect(fallbackSel, fbOpts, fbVal);
+  }
+
+  function parseRef(value) {
+    const parts = String(value || '').split('::');
+    if (parts.length < 2) return null;
+    const provider = parts[0];
+    const voice_id = parts.slice(1).join('::');
+    const known = allVoices.find((v) => v.provider === provider && v.voice_id === voice_id);
+    return {
+      provider,
+      voice_id,
+      model: known ? known.model : '',
+      language: st.language,
+      display_name: known ? known.display_name : voice_id,
+      gender: known ? known.gender : '',
+      status: known ? known.status : 'available',
+    };
+  }
+
+  providerSel.addEventListener('change', () => {
+    st.provider = providerSel.value;
+    syncLanguageOptions();
+    syncVoiceOptions();
+  });
+  languageSel.addEventListener('change', () => {
+    st.language = languageSel.value;
+    syncVoiceOptions();
+  });
+  voiceSel.addEventListener('change', () => {
+    st.voice_id = voiceSel.value;
+    const chosen = voicesFor(st.provider, st.language).find((v) => v.voice_id === st.voice_id);
+    if (chosen) st.model = chosen.model;
+  });
+
+  refillSelect(providerSel, providers.map((p) => ({ value: p.id, label: p.label })), st.provider);
+  syncLanguageOptions();
+  syncVoiceOptions();
+
+  previewBtn.onclick = async () => {
+    previewBtn.disabled = true;
+    previewBtn.textContent = 'Previewing...';
+    statusLine.textContent = '';
+    try {
+      const body = {
+        text: 'Welcome to Astra Voice. This is a short draft voice preview.',
+        provider: st.provider,
+        language: st.language,
+        speaker: st.voice_id,
+        voice_id: st.voice_id,
+      };
+      if (st.provider === 'deepgram') {
+        body.model = st.voice_id;
+      } else if (st.provider === 'sarvam') {
+        body.model = st.model || 'bulbul:v3';
+      } else {
+        body.model = st.model === 'muga' ? 'muga' : 'mulberry';
+        if (body.model === 'mulberry') body.speaker = st.voice_id;
+      }
+      const res = await api('/api/tts', { method: 'POST', body: body, timeoutMs: 60000 });
+      const buf = await res.arrayBuffer();
+      const url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      await audio.play();
+      toast('Preview playing.', 'ok');
+      statusLine.textContent = 'Preview synthesized via ' + st.provider + '. API keys never leave the server.';
+    } catch (e) {
+      toast(e.message || 'Preview failed.', 'err');
+      statusLine.textContent = e.message || 'Preview failed. Configure the provider key in server .env for live preview audio.';
+    } finally {
+      previewBtn.disabled = false;
+      previewBtn.textContent = 'Preview';
+    }
+  };
+
+  saveBtn.onclick = async () => {
+    if (!canEditDraft) {
+      toast('Owner or admin role required.', 'err');
+      return;
+    }
+    saveBtn.disabled = true;
+    try {
+      const default_voice = parseRef(defaultSel.value) || {
+        provider: st.provider, voice_id: st.voice_id, model: st.model, language: st.language,
+      };
+      const fallback_voice = parseRef(fallbackSel.value) || {
+        provider: 'rumik', voice_id: 'speaker_1', model: 'mulberry', language: 'en-IN',
+      };
+      const out = await api('/api/tts/draft-prefs', {
+        method: 'PUT',
+        body: {
+          provider: st.provider,
+          language: st.language,
+          voice_id: st.voice_id,
+          model: st.provider === 'deepgram' ? st.voice_id : st.model,
+          default_voice,
+          fallback_voice,
+          apply_live: false,
+        },
+      });
+      st.default_voice = out.prefs && out.prefs.default_voice;
+      st.fallback_voice = out.prefs && out.prefs.fallback_voice;
+      toast('Draft voice prefs saved. Live TTS unchanged.', 'ok');
+      statusLine.textContent = 'Saved as draft only. apply_live remains false.';
+    } catch (e) {
+      toast(e.message || 'Save failed.', 'err');
+    } finally {
+      saveBtn.disabled = !canEditDraft ? true : false;
+    }
+  };
+
+  host.appendChild(el('div', { class: 'settings-form voice-catalog-form' }, [
+    field('Provider', providerSel),
+    field('Language', languageSel),
+    field('Voice', voiceSel),
+    field('Default voice', defaultSel),
+    field('Fallback voice', fallbackSel),
+    el('div', { class: 'flex gap-2', style: 'flex-wrap:wrap;margin-top:6px' }, [previewBtn, saveBtn, applyBtn]),
+    statusLine,
+  ]));
 }
 
 /* ===========================================================================

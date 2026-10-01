@@ -54,6 +54,7 @@ const leads = require('./lib/leads');
 const callJobs = require('./lib/call-jobs');
 const employees = require('./lib/employees');
 const timeline = require('./lib/timeline');
+const voiceCatalog = require('./lib/tts-voice-catalog');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
@@ -531,7 +532,9 @@ async function apiAgentsDelete(req, res, ctx) {
   core.sendJson(res, 200, { ok: true });
 }
 
-// POST /api/tts -> Rumik WAV bytes. Increments tenant usage.chars.
+// POST /api/tts -> WAV bytes from the selected TTS adapter (default: Rumik).
+// Optional body.provider may target Sarvam / Deepgram Aura for preview only.
+// Never returns API keys. Does not mutate TTS_PROVIDER or Dograh workflows.
 async function apiTts(req, res, ctx) {
   const b = ctx.body || {};
   try {
@@ -539,7 +542,10 @@ async function apiTts(req, res, ctx) {
     const out = await selected.adapter.synthesize({
       text: b.text,
       model: selected.model,
-      speaker: b.speaker,
+      speaker: b.speaker || b.voice_id,
+      voice_id: b.voice_id || b.speaker,
+      language: b.language || b.language_code,
+      language_code: b.language_code || b.language,
       f0_up_key: b.f0_up_key,
       description: b.description,
     });
@@ -549,14 +555,61 @@ async function apiTts(req, res, ctx) {
       plans.debitUsage(d, ctx.tenant.id, { chars: out.chars, calls: 0 }, ctx.user.id, addLedgerEntry);
     }).catch(() => {});
     core.send(res, 200, out.buffer, {
-      'Content-Type': 'audio/wav',
+      'Content-Type': out.contentType || 'audio/wav',
       'Content-Length': out.buffer.length,
-      'X-Credits-Used': out.credits,
+      'X-Credits-Used': out.credits || '',
       'X-Chars': String(out.chars),
+      'X-TTS-Provider': selected.provider,
+      'X-TTS-Model': selected.model,
     });
   } catch (e) {
     handleProviderError(res, e);
   }
+}
+
+// GET /api/tts/voices -> normalized voice catalog (Sarvam + Deepgram Aura + Rumik).
+// Auth required. Built from backend config (no Sarvam voice-list API). Never secrets.
+function apiTtsVoices(req, res) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const catalog = voiceCatalog.getCatalog({
+    provider: url.searchParams.get('provider') || '',
+    language: url.searchParams.get('language') || '',
+    model: url.searchParams.get('model') || '',
+  });
+  const check = org.assertNoSecretValues(catalog);
+  if (!check.ok) {
+    return core.sendJson(res, 500, { error: 'voice catalog refused to leak secrets', code: 'secret_guard' });
+  }
+  core.sendJson(res, 200, catalog);
+}
+
+// GET /api/tts/draft-prefs -> tenant draft voice prefs (never live apply).
+function apiTtsDraftPrefsGet(req, res, ctx) {
+  core.sendJson(res, 200, {
+    prefs: voiceCatalog.getTenantDraftPrefs(ctx.tenant),
+    live_apply_enabled: false,
+  });
+}
+
+// PUT /api/tts/draft-prefs -> save draft prefs only. Never flips production TTS.
+async function apiTtsDraftPrefsPut(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const role = ctx.user && ctx.user.role;
+  if (!['super_admin', 'admin', 'owner'].includes(role)) {
+    return core.sendJson(res, 403, { error: 'owner role required', code: 'forbidden' });
+  }
+  let prefs;
+  await core.mutate((d) => {
+    const tenant = d.tenants.find((t) => t.id === ctx.tenant.id);
+    if (!tenant) throw Object.assign(new Error('tenant not found'), { status: 404, code: 'not_found' });
+    prefs = voiceCatalog.setTenantDraftPrefs(tenant, ctx.body || {});
+    addAudit(d, ctx, 'tts.draft_prefs_updated', 'tenant', tenant.id, {
+      provider: prefs.provider,
+      voice_id: prefs.voice_id,
+      apply_live: false,
+    });
+  });
+  core.sendJson(res, 200, { prefs, live_apply_enabled: false });
 }
 
 // POST /api/ws-connect -> { ws_url, token, model } (streaming voice mint).
@@ -3337,6 +3390,8 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/me') return core.requireAuth(req, res, apiMe);
         if (route === '/api/version') return core.requireAuth(req, res, apiVersion);
         if (route === '/api/providers') return core.requireAuth(req, res, apiProviders);
+        if (route === '/api/tts/voices') return core.requireAuth(req, res, apiTtsVoices);
+        if (route === '/api/tts/draft-prefs') return core.requireAuth(req, res, apiTtsDraftPrefsGet);
         if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsList);
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);
         if (route === '/api/telephony/status') return core.requireAuth(req, res, apiTelephonyStatus);
@@ -3514,6 +3569,15 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (req.method === 'PUT') {
+        if (route === '/api/tts/draft-prefs') {
+          let body;
+          try { body = await core.readBody(req, 64 * 1024); }
+          catch (e) {
+            const tooBig = /too large/.test(String(e.message));
+            return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          return core.requireAuth(req, res, apiTtsDraftPrefsPut, body);
+        }
         const pnPut = matchPhoneNumberRoute(route);
         if (pnPut && pnPut.action === 'inbound') {
           let body;
@@ -3630,6 +3694,7 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/agents/update') return core.requireAuth(req, res, apiAgentsUpdate, body);
       if (route === '/api/agents/delete') return core.requireAuth(req, res, apiAgentsDelete, body);
       if (route === '/api/tts') return core.requireAuth(req, res, apiTts, body);
+      if (route === '/api/tts/draft-prefs') return core.requireAuth(req, res, apiTtsDraftPrefsPut, body);
       if (route === '/api/ws-connect') return core.requireAuth(req, res, apiWsConnect, body);
       if (route === '/api/chat') return core.requireAuth(req, res, apiChat, body);
       if (route === '/api/stt') return core.requireAuth(req, res, apiStt, body);

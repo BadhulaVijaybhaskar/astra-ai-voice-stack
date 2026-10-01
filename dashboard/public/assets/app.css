@@ -712,7 +712,9 @@
 .badge-live .d, .badge-ready .d { width: 6px; height: 6px; border-radius: 50%; }
 .badge-live .d { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .badge-ready .d { background: var(--ink-faint); }
-.settings-form { max-width: 480px; display: flex; flex-direction: column; gap: 16px; }
+.voice-catalog-panel .voice-catalog-form { max-width: 560px; }
+.voice-catalog-panel .select { width: 100%; }
+
 .color-row { display: flex; align-items: center; gap: 12px; }
 .color-row input[type="color"] { width: 46px; height: 38px; padding: 0; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg-2); cursor: pointer; }
 
