@@ -1181,12 +1181,13 @@ class SarvamTTSConfiguration(BaseTTSConfiguration):
         description="Speech speed multiplier.",
     )
     min_buffer_size: int = Field(
-        default=20,
-        ge=1,
+        default=50,
+        ge=50,
         le=500,
         description=(
             "Sarvam WebSocket minimum buffer (chars) before first synthesis. "
-            "Lower values reduce first-audio TTFB. Production default is 20."
+            "Must be ≥50 (Sarvam API minimum); values below 50 cause HTTP 422 "
+            "and kill the TTS WebSocket (PSTN silence). Default is 50 for TTFB."
         ),
     )
 

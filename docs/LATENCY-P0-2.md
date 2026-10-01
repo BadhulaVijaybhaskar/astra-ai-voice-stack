@@ -22,7 +22,7 @@ sentence boundary before synthesis, which delays first-frame forward.
 | Fix | Where |
 |---|---|
 | `text_aggregation_mode=TOKEN` (fallback `aggregate_sentences=False`) | `rumik-overlay-local/service_factory.py` Sarvam branch |
-| `min_buffer_size=20` | Sarvam settings (+ registry field) |
+| `min_buffer_size≥50` (Sarvam API floor; &lt;50 → 422 / PSTN silence) | Sarvam settings (+ registry field) |
 | Keep `silence_time_s=0.2` | Already from P0 (#52) |
 | Dashboard TLS keep-alive agent | `dashboard/lib/core.js` (`KEEP_ALIVE_AGENT`) |
 

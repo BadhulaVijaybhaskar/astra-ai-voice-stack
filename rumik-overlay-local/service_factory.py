@@ -742,12 +742,12 @@ def create_tts_service(
         }
         if speed and speed != 1.0:
             settings_kwargs["pace"] = speed
-        # Low WS min buffer so the first audio frame forwards sooner (TTFB).
+        # Low WS min buffer for TTFB but must be ≥50 or Sarvam 422 kills the WS (PSTN silence).
         # Voice id remains employee-configured (Maya fixture: bulbul:v3 / priya). This only tunes the shared TTS path.
         min_buf = getattr(user_config.tts, "min_buffer_size", None)
         try:
             settings_kwargs["min_buffer_size"] = (
-                int(min_buf) if min_buf is not None else 20
+                max(50, int(min_buf)) if min_buf is not None else 50
             )
             settings = SarvamTTSSettings(**settings_kwargs)
         except (TypeError, ValueError):
