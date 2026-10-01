@@ -1436,12 +1436,12 @@ async function renderLiveDemoWorkspace(host, emp, id) {
 
   host.appendChild(el('div', { class: 'live-mode-banner' }, [
     el('span', { class: 'live-mode-chip is-browser' }, 'Browser Test'),
-    el('span', { class: 'live-mode-chip is-muted' }, 'Not PSTN'),
+    el('span', { class: 'live-mode-chip is-muted' }, 'Browser only'),
     dataModeBadge(),
     el('span', { class: 'muted', style: 'font-size:0.78rem' },
       preview
-        ? 'Demo Preview walkthrough. Start a Browser Test to use real mic + Talk APIs.'
-        : 'Live Browser Test. Uses real mic and Talk session APIs. For phone dials, use PSTN Test.'),
+        ? 'Demo Preview walkthrough. Start a Browser Test to speak with mic and live transcript.'
+        : 'Live Browser Test with mic and transcript. For phone dials, use PSTN Test.'),
   ]));
 
   const stage = el('div', { class: 'live-demo-stage' });
