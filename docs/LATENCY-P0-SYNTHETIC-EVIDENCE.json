@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-01T12:06:47.729Z",
+  "generated_at": "2026-10-01T12:40:59.029Z",
   "mode": "synthetic_designed_budgets",
   "note": "Replace AFTER_* with live Hostinger Browser Talk measurements before PSTN QA.",
   "report": {
@@ -180,9 +180,9 @@
         "required_for_first_response": "YES_COMPACT",
         "defer_until_after_first_audio": false,
         "add_global_prompt": false,
-        "prompt_chars": 2478,
-        "approx_tokens": 620,
-        "rationale": "Identity + booking/end-call safety needed. Defer long qualification banks until after first phrase."
+        "prompt_chars": 865,
+        "approx_tokens": 217,
+        "rationale": "Identity + booking/end-call safety needed (HOT prompt). Defer qualification bank to Qualify stage."
       },
       {
         "node_id": "1",
@@ -191,9 +191,9 @@
         "required_for_first_response": "YES",
         "defer_until_after_first_audio": false,
         "add_global_prompt": true,
-        "prompt_chars": 163,
-        "approx_tokens": 41,
-        "rationale": "Greeting / start stage can produce first audio."
+        "prompt_chars": 244,
+        "approx_tokens": 61,
+        "rationale": "Greeting / start stage can produce first audio. No lang/intent classifier before speech."
       },
       {
         "node_id": "2",
@@ -202,8 +202,8 @@
         "required_for_first_response": "YES_COMPACT",
         "defer_until_after_first_audio": false,
         "add_global_prompt": true,
-        "prompt_chars": 175,
-        "approx_tokens": 44,
+        "prompt_chars": 711,
+        "approx_tokens": 178,
         "rationale": "Qualification answers need the stage, but one question at a time. Do not preload all 4 questions into first TTS."
       },
       {
@@ -235,6 +235,7 @@
         "source": "1",
         "target": "2",
         "label": "Start qualifying",
+        "prefer_local_policy": true,
         "required_for_first_response": "ROUTER_OK_AFTER_FIRST_AUDIO",
         "condition_chars": 84
       },
@@ -243,6 +244,7 @@
         "source": "1",
         "target": "3",
         "label": "Direct to booking",
+        "prefer_local_policy": true,
         "required_for_first_response": "LOCAL_POLICY_PREFERRED",
         "condition_chars": 209
       },
@@ -251,6 +253,7 @@
         "source": "2",
         "target": "3",
         "label": "Enter booking",
+        "prefer_local_policy": true,
         "required_for_first_response": "LOCAL_POLICY_PREFERRED",
         "condition_chars": 209
       },
@@ -259,6 +262,7 @@
         "source": "1",
         "target": "4",
         "label": "End call",
+        "prefer_local_policy": true,
         "required_for_first_response": "ROUTER_OK_AFTER_FIRST_AUDIO",
         "condition_chars": 306
       },
@@ -267,6 +271,7 @@
         "source": "2",
         "target": "4",
         "label": "End call",
+        "prefer_local_policy": true,
         "required_for_first_response": "ROUTER_OK_AFTER_FIRST_AUDIO",
         "condition_chars": 306
       },
@@ -275,15 +280,63 @@
         "source": "3",
         "target": "4",
         "label": "End after booking",
+        "prefer_local_policy": true,
         "required_for_first_response": "LOCAL_POLICY_PREFERRED",
         "condition_chars": 429
       }
     ],
-    "hot_path_approx_tokens": 978,
+    "hot_path_approx_tokens": 729,
+    "pre_speech_policy": {
+      "defer_edge_router_llm_before_first_audio": true,
+      "defer_end_call_eligibility_llm": true,
+      "defer_language_classifier_llm": true,
+      "defer_qualification_bank": true,
+      "defer_summarizer_llm": true,
+      "defer_calcom_tools": true,
+      "use_local_booking_and_hangup_policy": true,
+      "required_before_first_audio": [
+        "global_hot",
+        "active_stage_compact"
+      ],
+      "note": "Dograh natural-language edge routers and extra Groq hops (lang/qual/summarizer) inflate speech_end→first_audio. Prefer local ASR/booking/hangup policy for routing until after first spoken."
+    },
+    "deferred_pre_speech_groq_hops": [
+      {
+        "hop": "edge_router_llm",
+        "defer": true,
+        "rationale": "NL edge conditions must not run a Groq hop before first audible."
+      },
+      {
+        "hop": "language_classifier_llm",
+        "defer": true,
+        "rationale": "No separate lang classifier before first speech; Maya speaks in caller language from the main turn."
+      },
+      {
+        "hop": "qualification_bank_preload",
+        "defer": true,
+        "rationale": "Qualification themes live on Qualify stage; do not preload into hot TTFT."
+      },
+      {
+        "hop": "summarizer_llm",
+        "defer": true,
+        "rationale": "Summarizer is a later-turn concern, not first audio."
+      },
+      {
+        "hop": "end_call_eligibility_llm",
+        "defer": true,
+        "rationale": "Use local hangup/booking policy instead of an LLM hop before speech."
+      },
+      {
+        "hop": "calcom_tools",
+        "defer": true,
+        "rationale": "Tools stay background after spoken ack."
+      }
+    ],
     "recommendations": [
       "Speak booking ack before any Cal.com tool node.",
       "Do not run End Call eligibility LLM hop before first audio on booking language (use local policy).",
-      "Keep Global prompt compacted for TTFT; full qualification bank can ride after first phrase.",
+      "Keep Global HOT prompt for TTFT; qualification bank rides on Qualify after first phrase.",
+      "Defer edge-router / lang / summarizer Groq hops until after first spoken.",
       "WF8 id stays 8. Manual Hostinger import only."
     ]
   },

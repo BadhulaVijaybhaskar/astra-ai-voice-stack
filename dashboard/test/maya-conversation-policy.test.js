@@ -67,10 +67,14 @@ test('workflow graph end-call edges forbid booking language', () => {
   assert.ok(endEdges.length >= 2);
   for (const edge of endEdges) {
     assert.match(edge.data.condition, /NEVER choose End Call for booking/i);
+    assert.equal(edge.data.prefer_local_policy, true);
   }
   assert.equal(g.meta.dograh_workflow_id, '8');
   assert.equal(g.meta.protected, true);
   assert.equal(g.meta.employee_id, maya.MAYA_EMPLOYEE_ID);
+  assert.equal(g.meta.tts.voice_id, 'priya');
+  assert.ok(g.meta.pre_speech_policy.defer_calcom_tools);
+  assert.equal(g.nodes[0].data.prompt, maya.GLOBAL_PROMPT_HOT);
 });
 
 test('isMayaEmployee matches protected id', () => {

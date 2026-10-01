@@ -121,8 +121,12 @@ READY FOR PSTN QA: NO_PENDING_HOSTINGER_MEASUREMENT
 
 ```sh
 cd dashboard && node --test \
+  test/latency-p0-2.test.js \
   test/turn-latency.test.js \
   test/latency-evidence-harness.test.js \
   test/maya-conversation-policy.test.js \
   test/asr-sanity-guard.test.js
 ```
+
+See also `docs/LATENCY-P0-2.md` for Sarvam TOKEN aggregation, WF8 pre-speech Groq
+deferrals, generalized first-audio plan, and Groq 429 bounded fallback.
