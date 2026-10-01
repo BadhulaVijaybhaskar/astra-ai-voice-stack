@@ -49,7 +49,7 @@ function addLedgerEntry(d, tenantId, amountPaise, type, reference, actorUserId, 
   return entry;
 }
 
-test('schema v13 migrates inbound config, actions, language, plan entitlements', () => {
+test('schema v14 migrates inbound config, actions, language, plan entitlements, runtimeConfig', () => {
   const migrated = core.migrateDb({
     schemaVersion: 12,
     tenants: [{ id: 't_a', name: 'A', plan: 'growth' }],
@@ -63,12 +63,14 @@ test('schema v13 migrates inbound config, actions, language, plan entitlements',
       voice: { language: 'hindi', model: 'mulberry', speaker: 'speaker_1' },
     }],
   });
-  assert.equal(migrated.schemaVersion, 13);
+  assert.equal(migrated.schemaVersion, 14);
   assert.equal(migrated.phoneNumbers[0].inboundGreeting, null);
   assert.equal(migrated.phoneNumbers[0].inboundHours.timezone, 'Asia/Kolkata');
   assert.equal(migrated.phoneNumbers[0].inboundHours.mode, 'always');
   assert.deepEqual(migrated.employees[0].actions, []);
   assert.equal(migrated.employees[0].voice.language, 'hi-IN');
+  assert.ok(migrated.employees[0].runtimeConfig);
+  assert.equal(migrated.employees[0].runtimeConfig.draft, null);
   assert.equal(migrated.tenants[0].includedNumbers, 3);
   assert.equal(migrated.tenants[0].includedEmployees, 10);
   assert.equal(migrated.tenants[0].includedMinutes, 1000);

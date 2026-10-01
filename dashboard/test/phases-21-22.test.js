@@ -23,7 +23,7 @@ const PROVIDER_BRAND_RE = /vobiz|dograh|deepgram|rumik|groq/i;
 
 function baseDb() {
   return {
-    schemaVersion: 13,
+    schemaVersion: 14,
     tenants: [
       { id: 't_a', name: 'Acme Voice', status: 'active', plan: 'starter' },
       { id: 't_b', name: 'Other Co', status: 'active', plan: 'starter' },
@@ -99,7 +99,7 @@ test('Phase 21: buildDiagnosticsConsole is Super Admin scoped and leak-safe', ()
   assert.equal(payload.customerVisible, false);
   assert.equal(payload.overview.suspendedTenants, 1);
   assert.equal(payload.overview.tenants, 2);
-  assert.equal(payload.schemaVersion, 13);
+  assert.equal(payload.schemaVersion, 14);
   assert.equal(payload.deploy.gitSha, 'abc123');
   assert.equal(payload.deploy.uptimeSec, 12);
   assert.ok(payload.providers.stt || payload.providers.tts || payload.providers.llm);

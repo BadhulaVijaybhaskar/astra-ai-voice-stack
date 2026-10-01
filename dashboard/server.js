@@ -53,6 +53,7 @@ const workflows = require('./lib/workflows');
 const leads = require('./lib/leads');
 const callJobs = require('./lib/call-jobs');
 const employees = require('./lib/employees');
+const employeeRuntimeConfig = require('./lib/employee-runtime-config');
 const timeline = require('./lib/timeline');
 const voiceCatalog = require('./lib/tts-voice-catalog');
 const unifiedVoiceCatalog = require('./lib/voice-catalog');
@@ -951,6 +952,33 @@ async function mintDograhVoiceSession(req, context) {
     contextVariables.workflow_id = String(providerWorkflowId);
   }
 
+  // Attach employee runtime model selection (never secrets) so Browser Talk
+  // sessions are attributable to the selected employee config.
+  if (employee) {
+    const resolved = employeeRuntimeConfig.resolveEmployeePipeline(
+      db, tenantId, employee.id, context.preferDraft ? 'draft' : 'auto',
+    );
+    if (resolved.ok && resolved.pipeline) {
+      const p = resolved.pipeline;
+      contextVariables.astra_runtime_source = resolved.source;
+      if (p.llm) {
+        contextVariables.astra_llm_provider = p.llm.provider;
+        contextVariables.astra_llm_model = p.llm.model;
+      }
+      if (p.stt) {
+        contextVariables.astra_stt_provider = p.stt.provider;
+        contextVariables.astra_stt_model = p.stt.model;
+        contextVariables.astra_stt_language = p.stt.language;
+      }
+      if (p.tts) {
+        contextVariables.astra_tts_provider = p.tts.provider;
+        contextVariables.astra_tts_voice = p.tts.voice_id;
+        contextVariables.astra_tts_language = p.tts.language;
+        contextVariables.astra_tts_speed = String(p.tts.speed);
+      }
+    }
+  }
+
   const upstream = await fetch(base + '/api/v1/public/embed/init', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Origin: requestOrigin },
     body: JSON.stringify({ token, context_variables: contextVariables }),
@@ -997,6 +1025,9 @@ async function mintDograhVoiceSession(req, context) {
     signalingUrl: base.replace(/^http/, 'ws') + '/api/v1/ws/public/signaling/' + encodeURIComponent(data.session_token),
     turnCredentials,
     runtime: 'Astra Voice Runtime',
+    runtimeConfigSource: employee
+      ? (employeeRuntimeConfig.resolveEmployeePipeline(db, tenantId, employee.id, 'auto').source || null)
+      : null,
   };
 }
 
@@ -2990,6 +3021,16 @@ function matchEmployeesRoute(route) {
   if (language) return { action: 'language', id: decodeURIComponent(language[1]) };
   const voiceTier = route.match(/^\/api\/employees\/([^/]+)\/voice-tier$/);
   if (voiceTier) return { action: 'voice_tier', id: decodeURIComponent(voiceTier[1]) };
+  const runtimeEffective = route.match(/^\/api\/employees\/([^/]+)\/runtime-config\/effective$/);
+  if (runtimeEffective) return { action: 'runtime_config_effective', id: decodeURIComponent(runtimeEffective[1]) };
+  const runtimeDraft = route.match(/^\/api\/employees\/([^/]+)\/runtime-config\/draft$/);
+  if (runtimeDraft) return { action: 'runtime_config_draft', id: decodeURIComponent(runtimeDraft[1]) };
+  const runtimeActivate = route.match(/^\/api\/employees\/([^/]+)\/runtime-config\/activate$/);
+  if (runtimeActivate) return { action: 'runtime_config_activate', id: decodeURIComponent(runtimeActivate[1]) };
+  const runtimePstnProof = route.match(/^\/api\/employees\/([^/]+)\/runtime-config\/pstn-proof$/);
+  if (runtimePstnProof) return { action: 'runtime_config_pstn_proof', id: decodeURIComponent(runtimePstnProof[1]) };
+  const runtimeConfig = route.match(/^\/api\/employees\/([^/]+)\/runtime-config$/);
+  if (runtimeConfig) return { action: 'runtime_config', id: decodeURIComponent(runtimeConfig[1]) };
   const empLeads = route.match(/^\/api\/employees\/([^/]+)\/leads$/);
   if (empLeads) return { action: 'leads', id: decodeURIComponent(empLeads[1]) };
   const one = route.match(/^\/api\/employees\/([^/]+)$/);
@@ -3294,6 +3335,174 @@ async function apiEmployeesVoiceTierPut(req, res, ctx) {
     voiceTier: result.voiceTier,
     tiers: result.tiers,
   });
+}
+
+function apiEmployeesRuntimeConfigGet(req, res, ctx) {
+  const row = employees.findEmployee(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!row) return core.sendJson(res, 404, { error: 'employee not found', code: 'not_found' });
+  const includeProviderIds = !!(ctx.user && (ctx.user.role === 'super_admin' || ctx.isSuperAdmin));
+  const view = employeeRuntimeConfig.getRuntimeConfigView(core.db(), row, { includeProviderIds });
+  core.sendJson(res, 200, view);
+}
+
+async function apiEmployeesRuntimeConfigDraft(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  // Accept either { llm, stt, tts, embedding } or { draft: { ... } } or flat voice fields.
+  const patch = b.draft && typeof b.draft === 'object' ? b.draft : b;
+  if (b.tts_provider || b.provider || b.voice_id || b.speed != null) {
+    patch.tts = Object.assign({}, patch.tts || {}, {
+      provider: b.tts_provider || b.provider || (patch.tts && patch.tts.provider),
+      voice_id: b.voice_id || b.voice || (patch.tts && patch.tts.voice_id),
+      language: b.language || b.tts_language || (patch.tts && patch.tts.language),
+      speed: b.speed != null ? b.speed : (patch.tts && patch.tts.speed),
+      model: b.tts_model || b.model || (patch.tts && patch.tts.model),
+      credentials_ref: b.tts_credentials_ref || (patch.tts && patch.tts.credentials_ref),
+    });
+  }
+  let result;
+  await core.mutate((d) => {
+    result = employeeRuntimeConfig.saveDraft(d, ctx.tenant.id, ctx.params.id, patch);
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.runtime_config_draft', 'employee', ctx.params.id, {
+        llm: result.runtimeConfig.draft && result.runtimeConfig.draft.llm
+          ? result.runtimeConfig.draft.llm.provider : null,
+        stt: result.runtimeConfig.draft && result.runtimeConfig.draft.stt
+          ? result.runtimeConfig.draft.stt.provider : null,
+        tts: result.runtimeConfig.draft && result.runtimeConfig.draft.tts
+          ? result.runtimeConfig.draft.tts.provider : null,
+      });
+    }
+  });
+  if (!result.ok) {
+    return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  }
+  core.sendJson(res, 200, result.runtimeConfig);
+}
+
+async function apiEmployeesRuntimeConfigActivate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const includeProviderIds = !!(ctx.user && (ctx.user.role === 'super_admin' || ctx.isSuperAdmin));
+
+  // 1) Promote Astra-side active from draft (source of truth). Skip Dograh here
+  // because mutate() is synchronous and must not hold the write lock on HTTP.
+  let promote;
+  await core.mutate((d) => {
+    promote = employeeRuntimeConfig.activate(d, ctx.tenant.id, ctx.params.id, {
+      skipDograh: true,
+      includeProviderIds,
+      from: b.from,
+    });
+  });
+  if (!promote.ok) {
+    return core.sendJson(res, promote.status, {
+      error: promote.error,
+      code: promote.code,
+      runtimeConfig: promote.runtimeConfig || null,
+    });
+  }
+
+  const row = employees.findEmployee(core.db(), ctx.tenant.id, ctx.params.id);
+  const dograhWorkflowId = employeeRuntimeConfig.resolveDograhWorkflowId(core.db(), row);
+  const mayaProtected = employeeRuntimeConfig.isMayaProtected(row, dograhWorkflowId);
+  let dograhSync;
+
+  if (mayaProtected) {
+    dograhSync = {
+      ok: false,
+      skipped: true,
+      reason: 'maya_production_protected',
+      at: new Date().toISOString(),
+      verified: false,
+      error: 'Maya production Dograh workflow is protected. Astra active saved locally only.',
+    };
+  } else if (!dograhWorkflowId) {
+    dograhSync = {
+      ok: false,
+      skipped: true,
+      reason: 'no_dograh_workflow',
+      at: new Date().toISOString(),
+      verified: false,
+      error: 'Employee has no Dograh workflow binding. Per-workflow model config cannot sync yet.',
+    };
+  } else {
+    const built = employeeRuntimeConfig.buildDograhV2Override(promote.employee.runtimeConfig.active);
+    if (!built.ok) {
+      dograhSync = {
+        ok: false,
+        skipped: false,
+        reason: built.code,
+        at: new Date().toISOString(),
+        verified: false,
+        error: built.error,
+      };
+      await core.mutate((d) => {
+        const emp = employees.findEmployee(d, ctx.tenant.id, ctx.params.id);
+        if (emp && emp.runtimeConfig) emp.runtimeConfig.dograhSync = dograhSync;
+      });
+      return core.sendJson(res, built.status, {
+        error: built.error,
+        code: built.code,
+        runtimeConfig: employeeRuntimeConfig.getRuntimeConfigView(core.db(), row, { includeProviderIds }),
+        dograhSync,
+      });
+    }
+    dograhSync = await employeeRuntimeConfig.syncDograhWorkflowModelConfig(
+      dograhWorkflowId,
+      built.override,
+    );
+    dograhSync.at = dograhSync.at || new Date().toISOString();
+  }
+
+  await core.mutate((d) => {
+    const emp = employees.findEmployee(d, ctx.tenant.id, ctx.params.id);
+    if (emp && emp.runtimeConfig) emp.runtimeConfig.dograhSync = dograhSync;
+    addAudit(d, ctx, 'employee.runtime_config_activated', 'employee', ctx.params.id, {
+      dograhSyncOk: !!dograhSync.ok,
+      dograhSyncSkipped: !!dograhSync.skipped,
+      dograhSyncReason: dograhSync.reason || null,
+    });
+  });
+
+  const fresh = employees.findEmployee(core.db(), ctx.tenant.id, ctx.params.id);
+  const view = employeeRuntimeConfig.getRuntimeConfigView(core.db(), fresh, { includeProviderIds });
+  core.sendJson(res, 200, {
+    ...view,
+    dograhSync,
+    effective: (dograhSync && dograhSync.effective)
+      || view.active,
+  });
+}
+
+async function apiEmployeesRuntimeConfigEffective(req, res, ctx) {
+  const row = employees.findEmployee(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!row) return core.sendJson(res, 404, { error: 'employee not found', code: 'not_found' });
+  const dograhWorkflowId = employeeRuntimeConfig.resolveDograhWorkflowId(core.db(), row);
+  const astraView = employeeRuntimeConfig.getRuntimeConfigView(core.db(), row, {
+    includeProviderIds: !!(ctx.user && ctx.user.role === 'super_admin'),
+  });
+  const dograhEffective = await employeeRuntimeConfig.fetchEffectiveFromDograh(dograhWorkflowId);
+  core.sendJson(res, 200, {
+    employee_id: row.id,
+    astra: {
+      draft: astraView.draft,
+      active: astraView.active,
+      dograh_sync: astraView.dograh_sync,
+    },
+    dograh: dograhEffective,
+    org_level_only_fields: employeeRuntimeConfig.ORG_LEVEL_ONLY_FIELDS.slice(),
+  });
+}
+
+function apiEmployeesRuntimeConfigPstnProof(req, res, ctx) {
+  const proof = employeeRuntimeConfig.provePstnUsesEmployeeConfig(
+    core.db(), ctx.tenant.id, ctx.params.id,
+  );
+  if (!proof.ok) {
+    return core.sendJson(res, proof.status, { error: proof.error, code: proof.code });
+  }
+  core.sendJson(res, 200, proof);
 }
 
 function apiEmployeesLeadsList(req, res, ctx) {
@@ -3796,6 +4005,15 @@ const server = http.createServer(async (req, res) => {
           if (empGet.action === 'leads') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLeadsList(rq, rs, { ...ctx, params: { id: empGet.id } }));
           }
+          if (empGet.action === 'runtime_config') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
+          if (empGet.action === 'runtime_config_effective') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigEffective(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
+          if (empGet.action === 'runtime_config_pstn_proof') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigPstnProof(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
         if (route === '/api/hvac/desk') return core.requireAuth(req, res, apiHvacDesk);
@@ -3865,6 +4083,9 @@ const server = http.createServer(async (req, res) => {
           if (empPatch.action === 'language') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguagePut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
           }
+          if (empPatch.action === 'runtime_config' || empPatch.action === 'runtime_config_draft') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigDraft(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
+          }
         }
         return core.sendJson(res, 405, { error: 'method not allowed', code: 'method' });
       }
@@ -3895,7 +4116,8 @@ const server = http.createServer(async (req, res) => {
         const empPut = matchEmployeesRoute(route);
         if (empPut && (empPut.action === 'instructions' || empPut.action === 'outcomes' || empPut.action === 'workflow'
           || empPut.action === 'actions' || empPut.action === 'language'
-          || empPut.action === 'voice_tier')) {
+          || empPut.action === 'voice_tier'
+          || empPut.action === 'runtime_config' || empPut.action === 'runtime_config_draft')) {
           let body;
           try { body = await core.readBody(req, 256 * 1024); }
           catch (e) {
@@ -3916,6 +4138,9 @@ const server = http.createServer(async (req, res) => {
           }
           if (empPut.action === 'voice_tier') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesVoiceTierPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
+          }
+          if (empPut.action === 'runtime_config' || empPut.action === 'runtime_config_draft') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigDraft(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
           }
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
         }
@@ -4092,6 +4317,12 @@ const server = http.createServer(async (req, res) => {
         }
         if (empPost.action === 'voice_tier') {
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesVoiceTierPut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'runtime_config_draft' || empPost.action === 'runtime_config') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigDraft(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'runtime_config_activate') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigActivate(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
         }
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }

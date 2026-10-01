@@ -598,6 +598,16 @@ function publicEmployee(row, db, opts = {}) {
     assignedNumber: number,
     agentName: names.agentName,
     workflowName: names.workflowName,
+    runtimeConfig: row.runtimeConfig ? {
+      hasDraft: !!(row.runtimeConfig.draft),
+      hasActive: !!(row.runtimeConfig.active),
+      activatedAt: row.runtimeConfig.active && row.runtimeConfig.active.activatedAt
+        ? row.runtimeConfig.active.activatedAt : null,
+      draftUpdatedAt: row.runtimeConfig.draft && row.runtimeConfig.draft.updatedAt
+        ? row.runtimeConfig.draft.updatedAt : null,
+      dograhSyncOk: !!(row.runtimeConfig.dograhSync && row.runtimeConfig.dograhSync.ok),
+      dograhSyncSkipped: !!(row.runtimeConfig.dograhSync && row.runtimeConfig.dograhSync.skipped),
+    } : null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

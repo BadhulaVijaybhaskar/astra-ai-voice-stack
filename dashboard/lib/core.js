@@ -116,8 +116,23 @@ function httpsPost(host, pathname, headers, bodyBuf) {
 
 // Generic HTTPS GET. Resolves { status, headers, buffer }. Times out at 20s.
 function httpsGet(host, pathname, headers) {
+  return httpsRequest(host, pathname, { method: 'GET', headers, timeoutMs: 20000 });
+}
+
+/**
+ * Generic HTTPS request. Supports GET/POST/PUT/PATCH/DELETE.
+ * Resolves { status, headers, buffer }.
+ */
+function httpsRequest(host, pathname, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const headers = Object.assign({}, options.headers || {});
+  const bodyBuf = options.bodyBuf || null;
+  const timeoutMs = Number(options.timeoutMs) || (method === 'GET' ? 20000 : 60000);
+  if (bodyBuf && !headers['Content-Length'] && !headers['content-length']) {
+    headers['Content-Length'] = bodyBuf.length;
+  }
   return new Promise((resolve, reject) => {
-    const r = https.request({ host, path: pathname, method: 'GET', headers }, (resp) => {
+    const r = https.request({ host, path: pathname, method, headers }, (resp) => {
       const parts = [];
       resp.on('data', (d) => parts.push(d));
       resp.on('end', () => resolve({
@@ -127,9 +142,18 @@ function httpsGet(host, pathname, headers) {
       }));
     });
     r.on('error', reject);
-    r.setTimeout(20000, () => r.destroy(new Error('upstream timeout')));
+    r.setTimeout(timeoutMs, () => r.destroy(new Error('upstream timeout')));
+    if (bodyBuf) r.write(bodyBuf);
     r.end();
   });
+}
+
+function httpsPut(host, pathname, headers, bodyBuf) {
+  return httpsRequest(host, pathname, { method: 'PUT', headers, bodyBuf, timeoutMs: 60000 });
+}
+
+function httpsPatch(host, pathname, headers, bodyBuf) {
+  return httpsRequest(host, pathname, { method: 'PATCH', headers, bodyBuf, timeoutMs: 60000 });
 }
 
 /* ==========================================================================
@@ -161,7 +185,7 @@ const DB_TMP = `${DB_FILE}.tmp`;
 
 function defaultDb() {
   return {
-    schemaVersion: 13,
+    schemaVersion: 14,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
@@ -207,7 +231,7 @@ function normalizeOutcomeDef(raw) {
 function migrateDb(parsed) {
   const out = Object.assign(defaultDb(), parsed || {});
   for (const k of COLLECTIONS) if (!Array.isArray(out[k])) out[k] = [];
-  out.schemaVersion = Math.max(13, Number(out.schemaVersion) || 0);
+  out.schemaVersion = Math.max(14, Number(out.schemaVersion) || 0);
   for (const tenant of out.tenants) {
     if (!tenant.status) tenant.status = 'active';
     if (!tenant.privacyMode) tenant.privacyMode = 'standard';
@@ -305,14 +329,24 @@ function migrateDb(parsed) {
     } else {
       if (!emp.voice.tier) emp.voice.tier = 'standard';
       const lang = String(emp.voice.language || 'en-IN');
-      const allowed = new Set(['en-IN', 'hi-IN', 'te-IN', 'ta-IN']);
+      const allowed = new Set(['en-IN', 'hi-IN', 'te-IN', 'ta-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'bn-IN', 'gu-IN', 'pa-IN']);
       if (!allowed.has(lang)) {
         const lower = lang.toLowerCase();
         if (lower.startsWith('hi')) emp.voice.language = 'hi-IN';
         else if (lower.startsWith('te')) emp.voice.language = 'te-IN';
         else if (lower.startsWith('ta')) emp.voice.language = 'ta-IN';
+        else if (lower.startsWith('kn')) emp.voice.language = 'kn-IN';
+        else if (lower.startsWith('ml')) emp.voice.language = 'ml-IN';
+        else if (lower.startsWith('mr')) emp.voice.language = 'mr-IN';
+        else if (lower.startsWith('bn')) emp.voice.language = 'bn-IN';
+        else if (lower.startsWith('gu')) emp.voice.language = 'gu-IN';
+        else if (lower.startsWith('pa')) emp.voice.language = 'pa-IN';
         else emp.voice.language = 'en-IN';
       }
+    }
+    // v14: per-employee runtime model config (draft / active).
+    if (!emp.runtimeConfig || typeof emp.runtimeConfig !== 'object') {
+      emp.runtimeConfig = { draft: null, active: null, dograhSync: null };
     }
   }
   return out;
@@ -593,7 +627,7 @@ function genId(prefix) {
 module.exports = {
   ROOT, DATA_DIR, DB_FILE, PUBLIC_DIR,
   loadEnv,
-  send, sendJson, readBody, httpsPost, httpsGet,
+  send, sendJson, readBody, httpsPost, httpsGet, httpsRequest, httpsPut, httpsPatch,
   htmlEscape,
   db, mutate, loadDb, defaultDb, migrateDb,
   hashPassword, verifyPassword,
