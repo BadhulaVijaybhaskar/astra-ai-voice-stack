@@ -3234,29 +3234,46 @@ async function viewEmployeeStudio(root, id) {
               : 'Provider catalog from Astra Voice. Keys never appear in this UI.')),
       ]));
 
-      // 3. Curated language
+      // 3. Curated language — sticky segmented chips (mutually exclusive), not a select
       const langs = languagesForSelection();
-      const langSel = el('select', { class: 'select' },
-        langs.map((l) => el('option', {
-          value: l.id,
-          selected: l.id === selectedLanguage ? 'selected' : null,
-        }, l.label + (l.statusLabel ? ' · ' + l.statusLabel : '')))
-      );
-      langSel.onchange = () => {
-        selectedLanguage = langSel.value;
-        const voices = voicesForSelection();
-        if (!voices.some((vv) => (vv.id || vv.voice_id) === selectedVoiceId) && voices[0]) {
-          selectedVoiceId = voices[0].id || voices[0].voice_id || '';
-        }
-        renderCascade();
-      };
+      if (!langs.some((l) => l.id === selectedLanguage) && langs[0]) {
+        selectedLanguage = langs[0].id;
+      }
+      const langBar = el('div', { class: 'emp-lang-chips', role: 'group', 'aria-label': 'Language' });
+      langs.forEach((l) => {
+        const raw = String(l.statusLabel || l.status || '').toLowerCase();
+        let tone = 'available';
+        if (/tested/.test(raw)) tone = 'tested';
+        else if (/validation|ready/.test(raw)) tone = 'validation';
+        const isActive = l.id === selectedLanguage;
+        langBar.appendChild(el('button', {
+          class: 'emp-lang-chip is-' + tone + (isActive ? ' is-active' : ''),
+          type: 'button',
+          'aria-pressed': isActive ? 'true' : 'false',
+          title: l.statusLabel || l.status || '',
+          onclick: () => {
+            if (selectedLanguage === l.id) return;
+            selectedLanguage = l.id;
+            const voices = voicesForSelection();
+            if (!voices.some((vv) => (vv.id || vv.voice_id) === selectedVoiceId) && voices[0]) {
+              selectedVoiceId = voices[0].id || voices[0].voice_id || '';
+            }
+            renderCascade();
+          },
+        }, [
+          el('span', { class: 'emp-lang-chip-label' }, l.label || l.id),
+          el('span', { class: 'emp-lang-status' },
+            tone === 'tested' ? 'Tested'
+              : (tone === 'validation' ? 'Ready for validation' : 'Available')),
+        ]));
+      });
       const saveLang = el('button', { class: 'btn btn-primary btn-sm' }, 'Save language');
       saveLang.onclick = async () => {
         saveLang.disabled = true;
         try {
           await api('/api/employees/' + encodeURIComponent(emp.id) + '/language', {
             method: 'PUT',
-            body: { language: langSel.value },
+            body: { language: selectedLanguage },
           });
           State.loaded.employees = false;
           toast('Language saved.', 'ok');
@@ -3267,36 +3284,13 @@ async function viewEmployeeStudio(root, id) {
       cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
         el('h4', { class: 't-h4' }, 'Language'),
         el('p', { class: 'muted' }, 'Curated Astra languages only. Provider extras stay under Advanced.'),
-        field('Language', langSel),
+        langBar,
+        el('div', { class: 'emp-lang-legend' }, [
+          el('span', {}, 'Tested'),
+          el('span', {}, 'Ready for validation'),
+          el('span', {}, 'Available'),
+        ]),
         saveLang,
-      ]));
-
-      const chipHost = el('div', { class: 'emp-lang-chips', style: 'margin-top:8px' });
-      curatedLanguages().forEach((l) => {
-        const raw = String(l.statusLabel || l.status || '').toLowerCase();
-        let tone = 'available';
-        if (/tested/.test(raw)) tone = 'tested';
-        else if (/validation|ready/.test(raw)) tone = 'validation';
-        else if (/available/.test(raw)) tone = 'available';
-        chipHost.appendChild(el('span', {
-          class: 'emp-lang-chip is-' + (tone === 'available' ? 'validation' : tone)
-            + (l.id === selectedLanguage ? ' is-selected' : ''),
-          onclick: () => {
-            selectedLanguage = l.id;
-            renderCascade();
-          },
-        }, [
-          el('span', {}, l.label || l.id),
-          el('span', { class: 'emp-lang-status' },
-            tone === 'tested' ? '✓ Tested'
-              : (tone === 'validation' ? '◐ Ready for validation' : '○ Available')),
-        ]));
-      });
-      cascadeHost.appendChild(chipHost);
-      cascadeHost.appendChild(el('div', { class: 'emp-lang-legend' }, [
-        el('span', {}, '✓ Tested'),
-        el('span', {}, '◐ Ready for validation'),
-        el('span', {}, '○ Available'),
       ]));
 
       // 4. Filtered voice
@@ -6218,13 +6212,38 @@ function renderCampaignCreateWizard(host, listHost) {
   ].concat((State.employees || []).filter((e) => e.status !== 'ARCHIVED').map((e) =>
     el('option', { value: e.id }, e.name || e.id))));
   const concurrency = el('input', { class: 'input', type: 'number', min: '1', max: '10', value: '2' });
-  const language = el('select', { class: 'select' }, [
-    el('option', { value: '' }, 'Default'),
-    el('option', { value: 'en-IN' }, 'English (India)'),
-    el('option', { value: 'hi-IN' }, 'Hindi'),
-    el('option', { value: 'te-IN' }, 'Telugu'),
-    el('option', { value: 'ta-IN' }, 'Tamil'),
+  let selectedCampaignLang = '';
+  const langHost = el('div', { class: 'emp-lang-chips', role: 'group', 'aria-label': 'Language' });
+  function paintCampaignLangChips(langs) {
+    langHost.innerHTML = '';
+    const rows = [{ id: '', label: 'Default' }].concat(langs || []);
+    if (!rows.some((l) => l.id === selectedCampaignLang)) selectedCampaignLang = rows[0].id;
+    rows.forEach((l) => {
+      const isActive = l.id === selectedCampaignLang;
+      langHost.appendChild(el('button', {
+        class: 'emp-lang-chip' + (isActive ? ' is-active' : ''),
+        type: 'button',
+        'aria-pressed': isActive ? 'true' : 'false',
+        onclick: () => {
+          if (selectedCampaignLang === l.id) return;
+          selectedCampaignLang = l.id;
+          paintCampaignLangChips(langs);
+        },
+      }, [
+        el('span', { class: 'emp-lang-chip-label' }, l.label || l.id || 'Default'),
+      ]));
+    });
+  }
+  paintCampaignLangChips([
+    { id: 'en-IN', label: 'English (India)' },
+    { id: 'hi-IN', label: 'Hindi' },
+    { id: 'te-IN', label: 'Telugu' },
+    { id: 'ta-IN', label: 'Tamil' },
   ]);
+  api('/api/voice/catalog').then((catalog) => {
+    const curated = (catalog && (catalog.astra_supported_languages || catalog.languages_product)) || [];
+    if (Array.isArray(curated) && curated.length) paintCampaignLangChips(curated);
+  }).catch(() => {});
   const mode = el('select', { class: 'select' }, [
     el('option', { value: 'now' }, 'Start now'),
     el('option', { value: 'schedule' }, 'Schedule'),
@@ -6243,7 +6262,7 @@ function renderCampaignCreateWizard(host, listHost) {
         name: name.value.trim(),
         employeeId: empSel.value || null,
         concurrency: Number(concurrency.value) || 2,
-        language: language.value || null,
+        language: selectedCampaignLang || null,
         mode: mode.value,
       };
       if (mode.value === 'schedule') {
@@ -6368,7 +6387,10 @@ function renderCampaignCreateWizard(host, listHost) {
   ]));
   host.appendChild(field('Name', name));
   host.appendChild(field('AI Employee', empSel));
-  host.appendChild(field('Language', language));
+  host.appendChild(el('div', { class: 'field' }, [
+    el('label', {}, 'Language'),
+    langHost,
+  ]));
   host.appendChild(field('Concurrency', concurrency));
   host.appendChild(field('Launch', mode));
   host.appendChild(field('Schedule (if scheduled)', scheduledAt));
