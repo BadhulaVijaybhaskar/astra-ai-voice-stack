@@ -1782,9 +1782,10 @@ async function mintDograhVoiceSession(req, context) {
     }
   }
 
-  // Call-level voice lock. Persona / languageVoiceConfig pick STARTING voice only.
-  // Mid-call language switches keep provider + speaker. Never persist lock across calls.
-  // Does not mutate Maya production TTS / Dograh WF8 (priya frozen; language_code only).
+  // Call-level voice lock. UI-selected voice (languageVoiceConfig / selected_voice_id)
+  // picks STARTING speaker. Mid-call language switches keep provider + speaker;
+  // only language_code updates. Never persist lock across calls. No employee-name
+  // speaker freezes in platform logic.
   let voiceSession = null;
   if (employee) {
     const preferredLanguage = context.preferredLanguage || context.preferred_language || null;

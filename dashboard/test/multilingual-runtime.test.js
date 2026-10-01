@@ -123,11 +123,11 @@ test('primary_language + allowed_languages never null on session', () => {
   assert.equal(s.stt.language, 'multi');
 });
 
-test('locked Sarvam speaker: mid-call EN↔TE updates language_code only (no tanya swap)', () => {
+test('locked Sarvam speaker: mid-call EN↔TE keeps UI-selected Tanya (no priya freeze)', () => {
   callVoice.clearAllCallVoiceSessions();
   const emp = {
-    id: 'emp_prot',
-    name: 'Protected Emp',
+    id: 'emp_ui',
+    name: 'Any Employee',
     voice: {
       language: 'te-IN',
       languageVoiceConfig: {
@@ -136,7 +136,7 @@ test('locked Sarvam speaker: mid-call EN↔TE updates language_code only (no tan
       },
     },
   };
-  // Maya production_protected path freezes priya.
+  // Maya persona must behave like any other: UI Tanya wins (no production_protected→priya).
   const started = callVoice.startCallVoiceSession({
     employee: emp,
     persona: 'maya',
@@ -145,23 +145,23 @@ test('locked Sarvam speaker: mid-call EN↔TE updates language_code only (no tan
   });
   assert.equal(started.ok, true);
   assert.equal(started.voice_lock.provider, 'sarvam');
-  assert.equal(started.voice_lock.speaker, 'priya');
+  assert.equal(started.voice_lock.speaker, 'tanya');
   assert.equal(started.current_language, 'te-IN');
 
   const toEn = callVoice.applyCallLanguage(started.call_session_id, 'en-IN');
   assert.equal(toEn.ok, true);
-  assert.equal(toEn.voice_lock.speaker, 'priya');
+  assert.equal(toEn.voice_lock.speaker, 'tanya');
   assert.equal(toEn.current_language, 'en-IN');
   assert.equal(toEn.tts_language, 'en-IN');
   assert.equal(toEn.speaker_unchanged, true);
 
   const backTe = callVoice.applyCallLanguage(started.call_session_id, 'te-IN');
   assert.equal(backTe.ok, true);
-  assert.equal(backTe.voice_lock.speaker, 'priya');
+  assert.equal(backTe.voice_lock.speaker, 'tanya');
   assert.equal(backTe.current_language, 'te-IN');
 });
 
-test('multilingual employee never locks English-only engine when Indic allowed', () => {
+test('UI-selected Rumik speaker is locked as-is (no silent Sarvam remount)', () => {
   const lock = personaRouter.createSessionVoiceLock({
     employee: {
       id: 'emp_vaani_like',
@@ -179,13 +179,15 @@ test('multilingual employee never locks English-only engine when Indic allowed',
     mode: 'astra_auto',
   });
   assert.equal(lock.ok, true);
-  assert.equal(lock.voice_lock.provider, 'sarvam');
-  assert.ok(lock.voice_lock.speaker);
-  // Mid-call TE must succeed under locked policy (language_code only).
+  assert.equal(lock.source, 'language_voice_config');
+  assert.equal(lock.voice_lock.provider, 'rumik');
+  assert.equal(lock.voice_lock.speaker, 'speaker_2');
+  // Mid-call TE fails under locked policy — do not silently swap to neha/priya.
   const mid = personaRouter.resolveLockedVoice(lock.voice_lock, 'te-IN', { policy: 'locked' });
-  assert.equal(mid.ok, true);
-  assert.equal(mid.language, 'te-IN');
-  assert.equal(mid.speaker_unchanged, true);
+  assert.equal(mid.ok, false);
+  assert.equal(mid.code, 'locked_voice_language_unsupported');
+  assert.ok(lock.multilingual_compat);
+  assert.equal(lock.multilingual_compat.speaker_compatible, false);
 });
 
 test('Dograh language=multi must NOT use Flux (overlay ban)', () => {

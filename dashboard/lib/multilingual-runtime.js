@@ -409,107 +409,102 @@ function multilingualContextVariables(runtime) {
 }
 
 /**
- * Prefer a multilingual-capable (Sarvam) TTS lock when the employee allows
- * Indic languages, so mid-call language_code switches never hit English-only
- * engines (Rumik / Deepgram Aura). Speaker still comes from languageVoiceConfig.
- *
- * Does not rename speakers. Does not touch Maya WF8 production config blobs.
+ * Assess whether a locked speaker can cover the employee's allowed languages.
+ * Does NOT remount or suggest a different speaker. Validation / observability only.
+ * Deliberate configured fallback remains a product policy elsewhere
+ * (voice_switch_policy=fallback_allowed), never a silent swap here.
  */
-function preferMultilingualVoiceLock(employee, initialLanguage, opts = {}) {
+function assessMultilingualVoiceCompatibility(voiceLock, employee, opts = {}) {
+  const lock = voiceLock && typeof voiceLock === 'object' ? voiceLock : null;
+  const provider = String((lock && lock.provider) || '').toLowerCase();
+  const speaker = String((lock && (lock.speaker || lock.voice_id)) || '').trim();
   const runtime = opts.runtime || buildSessionMultilingualRuntime(employee, {
-    language: initialLanguage,
-    primary_language: initialLanguage,
+    language: opts.initial_language,
+    primary_language: opts.initial_language,
     languageVoiceConfig: opts.languageVoiceConfig,
     allowed_languages: opts.allowed_languages,
     persona_language_routes: opts.persona_language_routes,
   });
-  // Ensure persona routes expand allowed when languageVoiceConfig absent.
-  if (opts.persona_language_routes && (!runtime.allowed_languages || runtime.allowed_languages.length <= 1)) {
+  if (opts.persona_language_routes
+    && (!runtime.allowed_languages || runtime.allowed_languages.length <= 1)) {
     runtime.allowed_languages = resolveAllowedLanguages(employee, {
       primary_language: runtime.primary_language,
-      languageVoiceConfig: opts.languageVoiceConfig || (employee && employee.voice && employee.voice.languageVoiceConfig),
+      languageVoiceConfig: opts.languageVoiceConfig
+        || (employee && employee.voice && employee.voice.languageVoiceConfig),
       persona_language_routes: opts.persona_language_routes,
       allowed_languages: opts.allowed_languages,
     });
     runtime.multilingual = runtime.allowed_languages.length > 1
       || runtime.allowed_languages.some(isIndicLanguage);
   }
-  if (!runtime.multilingual) {
-    return { prefer_sarvam: false, reason: 'single_or_english_only_allowed' };
-  }
-  const hasIndic = runtime.allowed_languages.some(isIndicLanguage);
-  if (!hasIndic) {
-    return { prefer_sarvam: false, reason: 'no_indic_in_allowed' };
+
+  const incompatible = [];
+  for (const lang of runtime.allowed_languages || []) {
+    if (!personaRouterLockedSupports(provider, speaker, lang)) {
+      incompatible.push(lang);
+    }
   }
 
-  const cfg = runtime.languageVoiceConfig || {};
-  const lang = normalizeLanguageCode(initialLanguage) || runtime.primary_language;
-
-  function rowProvider(row) {
-    if (!row) return '';
-    if (row.provider) return String(row.provider).toLowerCase();
-    const vid = String(row.voice_id || row.speaker || '').trim();
-    if (!vid) return '';
-    if (voiceCatalog.findVoice('sarvam', vid)) return 'sarvam';
-    if (voiceCatalog.findVoice('rumik', vid)) return 'rumik';
-    if (voiceCatalog.findVoice('deepgram', vid)) return 'deepgram';
-    if (/^speaker_\d+$/i.test(vid) || /^aura-/i.test(vid)) return 'rumik';
-    return 'sarvam';
-  }
-
-  const primaryRow = cfg[lang] || cfg[runtime.primary_language] || null;
-  const primaryProv = rowProvider(primaryRow);
-  if (primaryProv === 'sarvam' && primaryRow && (primaryRow.voice_id || primaryRow.speaker)) {
-    return {
-      prefer_sarvam: true,
-      reason: 'language_voice_config_sarvam',
-      voice_id: String(primaryRow.voice_id || primaryRow.speaker),
-      provider: 'sarvam',
-      model: String(primaryRow.model || 'bulbul:v3'),
-      speed: primaryRow.speed,
-      language: lang,
-    };
-  }
-
-  for (const id of [runtime.primary_language, ...runtime.allowed_languages]) {
-    const row = cfg[id];
-    if (!row) continue;
-    if (rowProvider(row) !== 'sarvam') continue;
-    const vid = String(row.voice_id || row.speaker || '').trim();
-    if (!vid) continue;
-    return {
-      prefer_sarvam: true,
-      reason: 'multilingual_employee_sarvam_anchor',
-      voice_id: vid,
-      provider: 'sarvam',
-      model: String(row.model || 'bulbul:v3'),
-      speed: row.speed,
-      language: lang,
-      anchored_from_language: id,
-    };
-  }
-
-  // Persona Indic route speaker when available.
-  const personaRoutes = opts.persona_language_routes || {};
-  const teRoute = personaRoutes['te-IN'] || personaRoutes['hi-IN'] || null;
-  if (teRoute && String(teRoute.provider || '').toLowerCase() === 'sarvam' && teRoute.voice_id) {
-    return {
-      prefer_sarvam: true,
-      reason: 'persona_indic_sarvam_anchor',
-      voice_id: String(teRoute.voice_id),
-      provider: 'sarvam',
-      model: String(teRoute.model || 'bulbul:v3'),
-      language: lang,
-    };
-  }
+  const multilingualNeedsSarvam = runtime.multilingual
+    && (runtime.allowed_languages || []).some(isIndicLanguage);
+  const englishOnlyLocked = provider === 'rumik' || provider === 'deepgram';
 
   return {
-    prefer_sarvam: true,
-    reason: 'multilingual_default_sarvam_priya',
-    voice_id: 'priya',
-    provider: 'sarvam',
-    model: 'bulbul:v3',
-    language: lang,
+    prefer_sarvam: multilingualNeedsSarvam,
+    speaker_compatible: incompatible.length === 0,
+    incompatible_languages: incompatible,
+    locked_provider: provider || null,
+    locked_speaker: speaker || null,
+    warning: (multilingualNeedsSarvam && englishOnlyLocked)
+      ? 'Selected speaker is English-only while employee allows Indic languages. Mid-call Indic will fail under locked policy. Choose a multilingual Sarvam speaker in UI.'
+      : (incompatible.length
+        ? `Selected speaker does not support: ${incompatible.join(', ')}`
+        : null),
+    reason: incompatible.length === 0
+      ? 'speaker_covers_allowed_languages'
+      : 'speaker_incompatible_with_some_allowed',
+  };
+}
+
+/** Local support check without circular require on voice-persona-router. */
+function personaRouterLockedSupports(provider, speaker, language) {
+  const pid = String(provider || '').toLowerCase();
+  const lang = normalizeLanguageCode(language);
+  if (!pid || !lang) return false;
+  if (pid === 'sarvam') {
+    // Bulbul speakers are multilingual via language_code.
+    return true;
+  }
+  if (pid === 'rumik' || pid === 'deepgram') {
+    return !isIndicLanguage(lang) && (lang === 'en-IN' || lang === 'en-US' || /^en([-_]|$)/i.test(lang));
+  }
+  return false;
+}
+
+/**
+ * @deprecated Prefer assessMultilingualVoiceCompatibility. Kept for callers that
+ * only need a boolean "employee is multilingual with Indic" signal. Never returns
+ * a forced voice_id swap (no silent priya remount).
+ */
+function preferMultilingualVoiceLock(employee, initialLanguage, opts = {}) {
+  const assessment = assessMultilingualVoiceCompatibility(
+    opts.voice_lock || opts.proposed_lock || null,
+    employee,
+    {
+      initial_language: initialLanguage,
+      languageVoiceConfig: opts.languageVoiceConfig,
+      allowed_languages: opts.allowed_languages,
+      persona_language_routes: opts.persona_language_routes,
+      runtime: opts.runtime,
+    },
+  );
+  return {
+    prefer_sarvam: !!assessment.prefer_sarvam,
+    reason: assessment.reason,
+    warning: assessment.warning,
+    speaker_compatible: assessment.speaker_compatible,
+    incompatible_languages: assessment.incompatible_languages,
+    // Intentionally omit voice_id / provider remount fields.
   };
 }
 
@@ -583,5 +578,6 @@ module.exports = {
   buildSessionMultilingualRuntime,
   multilingualContextVariables,
   preferMultilingualVoiceLock,
+  assessMultilingualVoiceCompatibility,
   processUserTurn,
 };
