@@ -3835,26 +3835,6 @@ async function viewEmployeeStudio(root, id) {
           : null,
       ]));
 
-      // Advanced: persona route debug (provider stays internal branding for ops).
-      const personaIdDbg = employeePersonaId(emp);
-      const dbgRoutes = (catalog && catalog.persona_routes_debug && personaIdDbg)
-        ? (catalog.persona_routes_debug[personaIdDbg] || [])
-        : [];
-      if (dbgRoutes.length && !isInvestorDemo()) {
-        const advRoutes = el('details', { class: 'emp-panel', style: 'margin-top:14px' });
-        advRoutes.appendChild(el('summary', { class: 't-h4', style: 'cursor:pointer' }, 'Advanced · Persona starting voices'));
-        advRoutes.appendChild(el('p', { class: 'muted' },
-          'Starting-voice map for new calls only (not mid-call speaker switches). Internal Astra Voice routing for '
-          + employeeVoiceIdentity(emp)
-          + '. Customer identity stays the persona. Engines are not customer-facing labels.'));
-        const list = el('ul', { class: 'emp-persona-route-list' });
-        dbgRoutes.forEach((r) => {
-          list.appendChild(el('li', {}, r.summary || (r.language + ' → ' + r.provider + ' / ' + r.voice_id)));
-        });
-        advRoutes.appendChild(list);
-        cascadeHost.appendChild(advRoutes);
-      }
-
       // Advanced AI Settings (LLM / Transcriber / Embedding) — employee scoped
       const adv = el('div', { class: 'emp-panel', style: 'margin-top:18px' });
       adv.appendChild(el('h4', { class: 't-h4' }, 'Advanced AI Settings'));

@@ -1315,11 +1315,6 @@
   padding: 8px 14px;
 }
 .emp-persona-preview-chip .emp-lang-chip-label { font-weight: 600; }
-.emp-persona-route-list {
-  margin: 8px 0 0; padding-left: 18px; color: var(--ink-soft); font-size: 0.86rem;
-  line-height: 1.55;
-}
-.emp-persona-route-list li { margin: 2px 0; }
 
 /* Compact Language | Voice | Speed | TTS Test Text | Preview | Status table */
 .emp-lang-voice-table-wrap {
