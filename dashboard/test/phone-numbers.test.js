@@ -122,20 +122,29 @@ test('tenant isolation on unassign and patch', () => {
   assert.equal(patched.number.outboundEnabled, true);
 });
 
-test('DograhVobizProvider.purchaseNumber returns 501 purchase_deferred', async () => {
-  const provider = new DograhVobizProvider({ core: null });
+test('DograhVobizProvider.purchaseNumber requires confirm (no auto-buy)', async () => {
+  const provider = new DograhVobizProvider({
+    core: {
+      db: () => ({ phoneNumbers: [], providerResources: [], agents: [], employees: [], workflows: [], calls: [] }),
+      async mutate(fn) { fn(this.db()); },
+    },
+    useMockVobiz: true,
+    mockInventory: [],
+    simulatePurchases: true,
+    telephony: { live: false },
+  });
   await assert.rejects(
-    () => provider.purchaseNumber({ e164: '+919999999999' }),
+    () => provider.purchaseNumber({ tenantId: 't1', e164: '+918045670099' }),
     (err) => {
       assert.ok(err instanceof TelephonyProviderError);
-      assert.equal(err.status, 501);
-      assert.equal(err.code, 'purchase_deferred');
+      assert.equal(err.status, 400);
+      assert.equal(err.code, 'needs_confirm');
       return true;
     },
   );
 });
 
-test('HTTP phone-numbers routes: available, assign, unassign, purchase 501, tenant isolation', async (t) => {
+test('HTTP phone-numbers routes: available, assign, unassign, purchase gated, tenant isolation', async (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'astra-pn-'));
   const dbFile = path.join(tmpDir, 'db.json');
   process.env.RAPIDX_DB_FILE = dbFile;
@@ -208,13 +217,19 @@ test('HTTP phone-numbers routes: available, assign, unassign, purchase 501, tena
       });
     }
     if (req.method === 'POST' && matched && matched.action === 'purchase') {
-      return core.requireAuth(req, res, async (rq, rs) => {
+      const body = await core.readBody(req);
+      return core.requireAuth(req, res, async (rq, rs, ctx) => {
         try {
-          await telephonyProvider.purchaseNumber();
+          const b = ctx.body || {};
+          await telephonyProvider.purchaseNumber({
+            tenantId: ctx.tenant.id,
+            e164: b.e164,
+            confirm: b.confirm === true,
+          });
         } catch (e) {
           core.sendJson(rs, e.status || 502, { error: e.message, code: e.code });
         }
-      });
+      }, body);
     }
     if (req.method === 'POST' && matched && matched.action === 'assign') {
       const body = await core.readBody(req);
@@ -303,8 +318,8 @@ test('HTTP phone-numbers routes: available, assign, unassign, purchase 501, tena
   const numberId = available.body.numbers[0].id;
 
   const purchase = await request('POST', '/api/phone-numbers/purchase', { country: 'IN' }, cookieA);
-  assert.equal(purchase.status, 501);
-  assert.equal(purchase.body.code, 'purchase_deferred');
+  assert.equal(purchase.status, 400);
+  assert.equal(purchase.body.code, 'needs_confirm');
 
   const assigned = await request('POST', '/api/phone-numbers/' + numberId + '/assign', {
     agentId: agentA, inboundEnabled: true, outboundEnabled: true,

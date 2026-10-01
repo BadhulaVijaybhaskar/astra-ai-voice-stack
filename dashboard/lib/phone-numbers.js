@@ -1,10 +1,9 @@
 /**
- * Astra AI. First-class phone number resources (tenant-scoped JSON store).
+ * Astra Voice. First-class phone number resources (tenant-scoped JSON store).
  *
- * Numbers are Astra resources. Customers never see Dograh or VoBiz branding.
- * Provider mapping (dograhTelephonyConfigId, dograhPhoneNumberId, etc.) stays
- * server-side in providerMetadata. Purchase is out of scope for the V1 test
- * inventory phase.
+ * Numbers are Astra resources. Customers never see Dograh or VoBiz branding
+ * in normal UI (Advanced / Super Admin only). Provider mapping stays
+ * server-side in providerMetadata.
  *
  * No em dashes anywhere. Commas and periods only.
  */
@@ -14,10 +13,11 @@ const crypto = require('crypto');
 
 const PROVIDER_ID = 'dograh_vobiz';
 const PLATFORM_SEED_ID = 'pn_platform_astranova_main';
+const MAYA_PROTECTED_E164 = '+918065353938';
 
 const SEED_INVENTORY = Object.freeze({
   id: PLATFORM_SEED_ID,
-  e164: '+918065353938',
+  e164: MAYA_PROTECTED_E164,
   label: 'AstraNova Main Line',
   country: 'IN',
   numberType: 'local',
@@ -69,7 +69,18 @@ function seedPlatformInventory(db) {
       dograhPhoneNumberId: SEED_INVENTORY.dograhPhoneNumberId,
       inboundWorkflowId: SEED_INVENTORY.inboundWorkflowId,
       label: SEED_INVENTORY.label,
+      // Known live platform DID is already provisioned end-to-end.
+      providerVerified: true,
+      dograhMapped: true,
+      callbacksConfigured: true,
+      answerUrlConfigured: true,
+      hangupUrlConfigured: true,
+      websocketConfigured: true,
+      verifiedAt: existing.providerMetadata && existing.providerMetadata.verifiedAt
+        ? existing.providerMetadata.verifiedAt
+        : ts,
     };
+    existing.connectionStatus = 'connected';
     existing.updatedAt = ts;
     upsertProviderResource(db, existing);
     return existing;
@@ -86,6 +97,7 @@ function seedPlatformInventory(db) {
     numberType: SEED_INVENTORY.numberType,
     capabilities: [...SEED_INVENTORY.capabilities],
     status: 'available',
+    connectionStatus: 'connected',
     assignedAgentId: null,
     assignedEmployeeId: null,
     inboundEnabled: true,
@@ -95,6 +107,13 @@ function seedPlatformInventory(db) {
       dograhPhoneNumberId: SEED_INVENTORY.dograhPhoneNumberId,
       inboundWorkflowId: SEED_INVENTORY.inboundWorkflowId,
       label: SEED_INVENTORY.label,
+      providerVerified: true,
+      dograhMapped: true,
+      callbacksConfigured: true,
+      answerUrlConfigured: true,
+      hangupUrlConfigured: true,
+      websocketConfigured: true,
+      verifiedAt: ts,
     },
     createdAt: ts,
     updatedAt: ts,
@@ -192,8 +211,45 @@ function publicInboundConfig(number, agent) {
   return normalizeInboundConfig(number, agent);
 }
 
+function connectionSnapshot(n) {
+  const meta = (n && n.providerMetadata) || {};
+  const providerVerified = meta.providerVerified === true;
+  const dograhMapped = !!(meta.dograhTelephonyConfigId && meta.dograhPhoneNumberId)
+    || meta.dograhMapped === true;
+  const callbacksConfigured = meta.callbacksConfigured === true
+    || !!(meta.answerUrlConfigured && meta.hangupUrlConfigured);
+  const connected = providerVerified && dograhMapped && callbacksConfigured;
+  let connectionStatus = n && n.connectionStatus;
+  if (!connectionStatus) {
+    if (connected) connectionStatus = 'connected';
+    else if (n && n.status === 'available' && !n.tenantId) connectionStatus = 'available';
+    else if (meta.provisioning || n && n.status === 'provisioning') connectionStatus = 'provisioning';
+    else if (dograhMapped && !providerVerified) connectionStatus = 'mapping_pending';
+    else if (n && n.status === 'assigned') connectionStatus = 'mapping_pending';
+    else connectionStatus = 'available';
+  }
+  if (connected) connectionStatus = 'connected';
+  return {
+    connectionStatus,
+    connected,
+    providerVerified,
+    mappingVerified: dograhMapped,
+    callbacksConfigured,
+    verifiedAt: meta.verifiedAt || null,
+  };
+}
+
+function directionLabel(n) {
+  const inbound = !n || n.inboundEnabled !== false;
+  const outbound = !n || n.outboundEnabled !== false;
+  if (inbound && outbound) return 'inbound_outbound';
+  if (inbound) return 'inbound';
+  if (outbound) return 'outbound';
+  return 'none';
+}
+
 /** Client-safe shape. Never includes API keys or raw Dograh resource ids. */
-function publicPhoneNumber(n, agentsById, workflowsById, employeesById) {
+function publicPhoneNumber(n, agentsById, workflowsById, employeesById, usageByNumberId) {
   if (!n) return null;
   const agent = n.assignedAgentId && agentsById ? agentsById.get(n.assignedAgentId) : null;
   const employee = n.assignedEmployeeId && employeesById
@@ -202,14 +258,33 @@ function publicPhoneNumber(n, agentsById, workflowsById, employeesById) {
   const inboundWf = n.inboundWorkflowId && workflowsById ? workflowsById.get(n.inboundWorkflowId) : null;
   const outboundWf = n.outboundWorkflowId && workflowsById ? workflowsById.get(n.outboundWorkflowId) : null;
   const inbound = publicInboundConfig(n, agent);
+  const conn = connectionSnapshot(n);
+  const usage = usageByNumberId && usageByNumberId.get ? usageByNumberId.get(n.id) : null;
+  const pricing = n.pricing && typeof n.pricing === 'object' ? {
+    monthlyFee: n.pricing.monthlyFee != null ? Number(n.pricing.monthlyFee) : null,
+    setupFee: n.pricing.setupFee != null ? Number(n.pricing.setupFee) : null,
+    taxes: n.pricing.taxes != null ? Number(n.pricing.taxes) : null,
+    currency: n.pricing.currency || null,
+  } : null;
   return {
     id: n.id,
     e164: n.e164,
     label: n.label || null,
     country: n.country || null,
+    region: n.region || null,
+    city: n.city || null,
     numberType: n.numberType || 'local',
     capabilities: Array.isArray(n.capabilities) ? [...n.capabilities] : [],
     status: n.status,
+    connectionStatus: conn.connectionStatus,
+    connected: conn.connected,
+    connection: {
+      providerVerified: conn.providerVerified,
+      mappingVerified: conn.mappingVerified,
+      callbacksConfigured: conn.callbacksConfigured,
+      verifiedAt: conn.verifiedAt,
+    },
+    direction: directionLabel(n),
     assignedEmployeeId: n.assignedEmployeeId || null,
     assignedEmployeeName: employee ? employee.name : null,
     assignedAgentId: n.assignedAgentId || null,
@@ -221,9 +296,53 @@ function publicPhoneNumber(n, agentsById, workflowsById, employeesById) {
     inboundWorkflowName: inboundWf ? inboundWf.name : null,
     outboundWorkflowName: outboundWf ? outboundWf.name : null,
     inbound,
+    pricing,
+    // Today metrics: only real aggregates. Null means unknown, never invent.
+    todayCalls: usage && usage.calls != null ? usage.calls : null,
+    todayMinutes: usage && usage.minutes != null ? usage.minutes : null,
+    isProtected: isProtectedPlatformNumber(n),
     createdAt: n.createdAt,
     updatedAt: n.updatedAt,
   };
+}
+
+function isProtectedPlatformNumber(n) {
+  if (!n) return false;
+  if (n.id === PLATFORM_SEED_ID) return true;
+  return normalizeE164(n.e164) === MAYA_PROTECTED_E164;
+}
+
+/**
+ * Aggregate today's call counts/minutes from Astra calls store only.
+ * Returns null metrics when no real rows exist (UI shows —).
+ */
+function usageTodayByNumberId(db, tenantId) {
+  const map = new Map();
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const startMs = start.getTime();
+  const rows = (db.calls || []).filter((c) => c.tenantId === tenantId && c.phoneNumberId);
+  for (const c of rows) {
+    const ts = Date.parse(c.startedAt || c.createdAt || '');
+    if (!Number.isFinite(ts) || ts < startMs) continue;
+    let agg = map.get(c.phoneNumberId);
+    if (!agg) {
+      agg = { calls: 0, minutes: 0, hasDuration: false };
+      map.set(c.phoneNumberId, agg);
+    }
+    agg.calls += 1;
+    if (c.durationSec != null && Number.isFinite(Number(c.durationSec))) {
+      agg.minutes += Number(c.durationSec) / 60;
+      agg.hasDuration = true;
+    }
+  }
+  for (const [id, agg] of map) {
+    map.set(id, {
+      calls: agg.calls,
+      minutes: agg.hasDuration ? Math.round(agg.minutes * 10) / 10 : null,
+    });
+  }
+  return map;
 }
 
 function matchesNumberQuery(n, q, agentsById, employeesById) {
@@ -327,6 +446,7 @@ function applyWorkflowBindings(db, number, tenantId, {
 function assignNumber(db, {
   numberId, tenantId, agentId, employeeId, inboundEnabled, outboundEnabled,
   inboundWorkflowId, outboundWorkflowId, resolveProviderWorkflowId,
+  confirmReassign, allowReassign,
 }) {
   const number = findNumber(db, numberId);
   if (!number || number.status === 'released') {
@@ -361,14 +481,43 @@ function assignNumber(db, {
     }
   }
 
+  const reassignOk = confirmReassign === true || allowReassign === true;
+
   if (number.status === 'assigned' && number.tenantId === tenantId
     && number.assignedAgentId === resolvedAgentId
     && (!resolvedEmployeeId || number.assignedEmployeeId === resolvedEmployeeId)) {
     // Idempotent re-assign of same employee/agent. Allow toggle updates.
   } else if (number.status === 'assigned' && number.tenantId === tenantId) {
-    // Reassign within the same tenant is allowed.
+    // Moving a live number between employees requires explicit confirmReassign.
+    const movingEmployee = number.assignedEmployeeId
+      && resolvedEmployeeId
+      && number.assignedEmployeeId !== resolvedEmployeeId;
+    const movingAgent = number.assignedAgentId && number.assignedAgentId !== resolvedAgentId;
+    if ((movingEmployee || movingAgent) && !reassignOk) {
+      return {
+        ok: false,
+        status: 409,
+        code: 'reassign_confirm_required',
+        error: 'This number is already assigned. Confirm reassignment to move it.',
+      };
+    }
   } else if (number.status !== 'available' && !(number.tenantId === tenantId)) {
     return { ok: false, status: 409, code: 'not_available', error: 'phone number is not available to assign' };
+  }
+
+  // Do not silently steal Maya's protected DID onto another employee unless
+  // the caller explicitly confirmed a reassignment.
+  if (isProtectedPlatformNumber(number)
+    && number.assignedEmployeeId
+    && resolvedEmployeeId
+    && number.assignedEmployeeId !== resolvedEmployeeId
+    && !reassignOk) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'protected_number',
+      error: 'This platform number is protected. Confirm reassignment to move it.',
+    };
   }
 
   if (!resolvedAgentId) {
@@ -615,13 +764,29 @@ function setInboundConfig(db, tenantId, numberId, body) {
   return getInboundConfig(db, tenantId, numberId);
 }
 
-function softReleaseNumber(db, { numberId, tenantId }) {
+function softReleaseNumber(db, { numberId, tenantId, confirm }) {
   const number = findNumber(db, numberId);
   if (!number) {
     return { ok: false, status: 404, code: 'not_found', error: 'phone number not found' };
   }
   if (number.tenantId && number.tenantId !== tenantId) {
     return { ok: false, status: 403, code: 'forbidden', error: 'phone number belongs to another workspace' };
+  }
+  if (isProtectedPlatformNumber(number)) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'protected_number',
+      error: 'The platform Maya number cannot be released.',
+    };
+  }
+  if (confirm !== true) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'needs_confirm',
+      error: 'confirm required: releasing a Phone Number is permanent for this workspace',
+    };
   }
   if (number.assignedAgentId || number.assignedEmployeeId) {
     const un = unassignNumber(db, { numberId, tenantId: number.tenantId || tenantId });
@@ -633,6 +798,154 @@ function softReleaseNumber(db, { numberId, tenantId }) {
   number.assignedEmployeeId = null;
   number.updatedAt = nowIso();
   return { ok: true, number };
+}
+
+/**
+ * Persist a newly purchased (or simulated) number into Astra inventory.
+ */
+function persistPurchasedNumber(db, {
+  tenantId,
+  e164,
+  label,
+  country,
+  region,
+  city,
+  numberType,
+  capabilities,
+  pricing,
+  providerMetadata,
+  employeeId,
+  agentId,
+  inboundEnabled,
+  outboundEnabled,
+  simulated,
+}) {
+  if (!Array.isArray(db.phoneNumbers)) db.phoneNumbers = [];
+  const normalized = normalizeE164(e164);
+  if (!/^\+[1-9]\d{6,14}$/.test(normalized)) {
+    return { ok: false, status: 422, code: 'bad_number', error: 'e164 must be valid E.164' };
+  }
+  if (normalized === MAYA_PROTECTED_E164) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'protected_number',
+      error: 'Cannot purchase or overwrite the protected Maya platform number',
+    };
+  }
+  const existing = db.phoneNumbers.find(
+    (n) => normalizeE164(n.e164) === normalized && n.status !== 'released',
+  );
+  if (existing) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'already_exists',
+      error: 'This Phone Number already exists in Astra',
+      number: existing,
+    };
+  }
+  const ts = nowIso();
+  const meta = {
+    ...(providerMetadata || {}),
+    simulated: simulated === true,
+    purchasedAt: ts,
+    providerVerified: !!(providerMetadata && providerMetadata.providerVerified),
+    dograhMapped: !!(providerMetadata && providerMetadata.dograhMapped),
+    callbacksConfigured: !!(providerMetadata && providerMetadata.callbacksConfigured),
+    answerUrlConfigured: !!(providerMetadata && providerMetadata.answerUrlConfigured),
+    hangupUrlConfigured: !!(providerMetadata && providerMetadata.hangupUrlConfigured),
+    websocketConfigured: !!(providerMetadata && providerMetadata.websocketConfigured),
+  };
+  const row = {
+    id: genId('pn_'),
+    tenantId: tenantId || null,
+    provider: PROVIDER_ID,
+    providerNumberId: meta.dograhPhoneNumberId != null
+      ? String(meta.dograhPhoneNumberId)
+      : (meta.providerInventoryId || null),
+    e164: normalized,
+    label: label || null,
+    country: country || null,
+    region: region || null,
+    city: city || null,
+    numberType: numberType || 'local',
+    capabilities: Array.isArray(capabilities) && capabilities.length
+      ? capabilities.slice(0, 8)
+      : ['inbound', 'outbound'],
+    status: 'available',
+    connectionStatus: 'provisioning',
+    assignedAgentId: null,
+    assignedEmployeeId: null,
+    inboundEnabled: inboundEnabled !== false,
+    outboundEnabled: outboundEnabled !== false,
+    pricing: pricing && typeof pricing === 'object' ? {
+      monthlyFee: pricing.monthlyFee != null ? Number(pricing.monthlyFee) : null,
+      setupFee: pricing.setupFee != null ? Number(pricing.setupFee) : null,
+      taxes: pricing.taxes != null ? Number(pricing.taxes) : null,
+      currency: pricing.currency || null,
+    } : null,
+    providerMetadata: meta,
+    createdAt: ts,
+    updatedAt: ts,
+  };
+  db.phoneNumbers.push(row);
+  upsertProviderResource(db, row);
+
+  if (employeeId || agentId) {
+    const assigned = assignNumber(db, {
+      numberId: row.id,
+      tenantId,
+      employeeId,
+      agentId,
+      inboundEnabled: row.inboundEnabled,
+      outboundEnabled: row.outboundEnabled,
+      confirmReassign: true,
+    });
+    if (!assigned.ok) return assigned;
+    return { ok: true, number: assigned.number, created: true };
+  }
+  return { ok: true, number: row, created: true };
+}
+
+/**
+ * Mark connection verification flags after provider + Dograh checks.
+ * Connected only when all three gates pass.
+ */
+function markConnectionVerified(db, numberId, flags = {}) {
+  const number = findNumber(db, numberId);
+  if (!number) return { ok: false, status: 404, code: 'not_found', error: 'phone number not found' };
+  const meta = { ...(number.providerMetadata || {}) };
+  if (flags.providerVerified !== undefined) meta.providerVerified = !!flags.providerVerified;
+  if (flags.dograhMapped !== undefined) meta.dograhMapped = !!flags.dograhMapped;
+  if (flags.dograhTelephonyConfigId != null) meta.dograhTelephonyConfigId = flags.dograhTelephonyConfigId;
+  if (flags.dograhPhoneNumberId != null) {
+    meta.dograhPhoneNumberId = flags.dograhPhoneNumberId;
+    number.providerNumberId = String(flags.dograhPhoneNumberId);
+  }
+  if (flags.callbacksConfigured !== undefined) meta.callbacksConfigured = !!flags.callbacksConfigured;
+  if (flags.answerUrlConfigured !== undefined) meta.answerUrlConfigured = !!flags.answerUrlConfigured;
+  if (flags.hangupUrlConfigured !== undefined) meta.hangupUrlConfigured = !!flags.hangupUrlConfigured;
+  if (flags.websocketConfigured !== undefined) meta.websocketConfigured = !!flags.websocketConfigured;
+  if (flags.inboundWorkflowId != null) meta.inboundWorkflowId = flags.inboundWorkflowId;
+  const snap = {
+    providerVerified: meta.providerVerified === true,
+    dograhMapped: !!(meta.dograhMapped || (meta.dograhTelephonyConfigId && meta.dograhPhoneNumberId)),
+    callbacksConfigured: meta.callbacksConfigured === true
+      || !!(meta.answerUrlConfigured && meta.hangupUrlConfigured),
+  };
+  if (snap.providerVerified && snap.dograhMapped && snap.callbacksConfigured) {
+    meta.verifiedAt = nowIso();
+    number.connectionStatus = 'connected';
+  } else if (flags.failed) {
+    number.connectionStatus = 'verification_failed';
+  } else {
+    number.connectionStatus = snap.dograhMapped ? 'mapping_pending' : 'provisioning';
+  }
+  number.providerMetadata = meta;
+  number.updatedAt = nowIso();
+  upsertProviderResource(db, number);
+  return { ok: true, number, connection: connectionSnapshot(number) };
 }
 
 /**
@@ -675,6 +988,7 @@ function outboundDialContext(db, tenantId) {
 module.exports = {
   PROVIDER_ID,
   PLATFORM_SEED_ID,
+  MAYA_PROTECTED_E164,
   SEED_INVENTORY,
   seedPlatformInventory,
   publicPhoneNumber,
@@ -691,6 +1005,12 @@ module.exports = {
   unassignNumber,
   patchNumber,
   softReleaseNumber,
+  persistPurchasedNumber,
+  markConnectionVerified,
+  connectionSnapshot,
+  usageTodayByNumberId,
+  isProtectedPlatformNumber,
+  directionLabel,
   outboundDialContext,
   applyWorkflowBindings,
   matchesNumberQuery,
