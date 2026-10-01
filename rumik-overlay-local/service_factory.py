@@ -742,13 +742,37 @@ def create_tts_service(
         }
         if speed and speed != 1.0:
             settings_kwargs["pace"] = speed
-        return SarvamTTSService(
-            api_key=user_config.tts.api_key,
-            settings=SarvamTTSSettings(**settings_kwargs),
-            text_filters=[xml_function_tag_filter],
-            skip_aggregator_types=["recording_router", "recording"],
-            silence_time_s=0.2,
-        )
+        # Low WS min buffer so the first audio frame forwards sooner (TTFB).
+        # Voice id remains employee-configured (Maya fixture: bulbul:v3 / priya). This only tunes the shared TTS path.
+        min_buf = getattr(user_config.tts, "min_buffer_size", None)
+        try:
+            settings_kwargs["min_buffer_size"] = (
+                int(min_buf) if min_buf is not None else 20
+            )
+            settings = SarvamTTSSettings(**settings_kwargs)
+        except (TypeError, ValueError):
+            settings_kwargs.pop("min_buffer_size", None)
+            settings = SarvamTTSSettings(**settings_kwargs)
+
+        tts_kwargs = {
+            "api_key": user_config.tts.api_key,
+            "settings": settings,
+            "text_filters": [xml_function_tag_filter],
+            "skip_aggregator_types": ["recording_router", "recording"],
+            # Pad after speech end only; 1.0s previously inflated first-audio.
+            "silence_time_s": 0.2,
+        }
+        # Pipecat default text_aggregation_mode=SENTENCE buffers until a
+        # sentence boundary before synthesis, which delays first-frame TTFB.
+        # TOKEN streams as tokens arrive. Fall back for older Dograh forks.
+        try:
+            from pipecat.services.tts_service import TextAggregationMode
+
+            tts_kwargs["text_aggregation_mode"] = TextAggregationMode.TOKEN
+        except Exception:
+            tts_kwargs["aggregate_sentences"] = False
+
+        return SarvamTTSService(**tts_kwargs)
     elif user_config.tts.provider == ServiceProviders.MINIMAX.value:
         group_id = getattr(user_config.tts, "group_id", None)
         if not group_id:
@@ -1234,109 +1258,85 @@ def create_realtime_llm_service(user_config, audio_config: "AudioConfig"):
         )
 
 
+def _llm_provider_kwargs_from_user_config(user_config, provider: str) -> dict:
+    """Extract provider-specific kwargs from user_config.llm without mutating it."""
+    kwargs = {}
+    if provider in (
+        ServiceProviders.OPENAI.value,
+        ServiceProviders.ATLASCLOUD.value,
+    ):
+        kwargs["base_url"] = user_config.llm.base_url
+    elif provider == ServiceProviders.OPENROUTER.value:
+        kwargs["base_url"] = user_config.llm.base_url
+    elif provider == ServiceProviders.AZURE.value:
+        kwargs["endpoint"] = user_config.llm.endpoint
+    elif provider == ServiceProviders.SPEACHES.value:
+        kwargs["base_url"] = user_config.llm.base_url
+    elif provider == ServiceProviders.HUGGINGFACE.value:
+        kwargs["base_url"] = user_config.llm.base_url
+        kwargs["bill_to"] = user_config.llm.bill_to
+    elif provider == ServiceProviders.AWS_BEDROCK.value:
+        kwargs["aws_access_key"] = user_config.llm.aws_access_key
+        kwargs["aws_secret_key"] = user_config.llm.aws_secret_key
+        kwargs["aws_region"] = user_config.llm.aws_region
+    elif provider == ServiceProviders.GOOGLE_VERTEX.value:
+        kwargs["project_id"] = user_config.llm.project_id
+        kwargs["location"] = user_config.llm.location
+        kwargs["credentials"] = user_config.llm.credentials
+    elif provider == ServiceProviders.MINIMAX.value:
+        kwargs["base_url"] = user_config.llm.base_url
+        kwargs["temperature"] = user_config.llm.temperature
+    elif provider == ServiceProviders.SARVAM.value:
+        kwargs["temperature"] = user_config.llm.temperature
+    return kwargs
+
+
+def create_llm_service_with_model_override(
+    user_config,
+    model_override: str | None = None,
+    *,
+    correlation_id: str | None = None,
+    usage_context: str | None = None,
+    provider_override: str | None = None,
+):
+    """Create an LLM service with an optional per-call model/provider override.
+
+    Used by Dograh workflow nodes (classifiers, voicemail, etc.) that need a
+    different model than ``user_config.llm.model`` without mutating the config.
+    Delegates to ``create_llm_service_from_provider`` so all providers stay
+    consistent with ``create_llm_service``.
+
+    Args:
+        user_config: Runtime user configuration (llm.provider/model/api_key).
+        model_override: Optional model id; falls back to user_config.llm.model.
+        correlation_id: Optional request correlation id.
+        usage_context: Optional Dograh usage tag (e.g. voicemail_detection).
+        provider_override: Optional provider id; falls back to user_config.llm.provider.
+    """
+    provider = provider_override or user_config.llm.provider
+    model = model_override or user_config.llm.model
+    api_key = user_config.llm.api_key
+    kwargs = _llm_provider_kwargs_from_user_config(user_config, provider)
+    return create_llm_service_from_provider(
+        provider,
+        model,
+        api_key,
+        correlation_id=correlation_id,
+        usage_context=usage_context,
+        **kwargs,
+    )
+
+
 def create_llm_service(
     user_config,
     correlation_id: str | None = None,
     usage_context: str | None = None,
 ):
     """Create and return appropriate LLM service based on user configuration."""
-    provider = user_config.llm.provider
-    model = user_config.llm.model
-    api_key = user_config.llm.api_key
-
-    kwargs = {}
-    if provider in (
-        ServiceProviders.OPENAI.value,
-        ServiceProviders.ATLASCLOUD.value,
-    ):
-        kwargs["base_url"] = user_config.llm.base_url
-    elif provider == ServiceProviders.OPENROUTER.value:
-        kwargs["base_url"] = user_config.llm.base_url
-    elif provider == ServiceProviders.AZURE.value:
-        kwargs["endpoint"] = user_config.llm.endpoint
-    elif provider == ServiceProviders.SPEACHES.value:
-        kwargs["base_url"] = user_config.llm.base_url
-    elif provider == ServiceProviders.HUGGINGFACE.value:
-        kwargs["base_url"] = user_config.llm.base_url
-        kwargs["bill_to"] = user_config.llm.bill_to
-    elif provider == ServiceProviders.AWS_BEDROCK.value:
-        kwargs["aws_access_key"] = user_config.llm.aws_access_key
-        kwargs["aws_secret_key"] = user_config.llm.aws_secret_key
-        kwargs["aws_region"] = user_config.llm.aws_region
-    elif provider == ServiceProviders.GOOGLE_VERTEX.value:
-        kwargs["project_id"] = user_config.llm.project_id
-        kwargs["location"] = user_config.llm.location
-        kwargs["credentials"] = user_config.llm.credentials
-    elif provider == ServiceProviders.MINIMAX.value:
-        kwargs["base_url"] = user_config.llm.base_url
-        kwargs["temperature"] = user_config.llm.temperature
-    elif provider == ServiceProviders.SARVAM.value:
-        kwargs["temperature"] = user_config.llm.temperature
-
-    return create_llm_service_from_provider(
-        provider,
-        model,
-        api_key,
+    return create_llm_service_with_model_override(
+        user_config,
+        model_override=None,
         correlation_id=correlation_id,
         usage_context=usage_context,
-        **kwargs,
-    )
-
-
-def create_llm_service_with_model_override(
-    user_config,
-    model_override: str,
-    correlation_id: str | None = None,
-    usage_context: str | None = None,
-):
-    """Dograh entrypoint for per-node / rate-limit model overrides.
-
-    Overlay patches MUST preserve this symbol (P0.1 lesson). It wraps
-    create_llm_service_from_provider with an explicit model while keeping the
-    same provider credentials and kwargs as create_llm_service.
-    Used for Groq fallback (e.g. llama-3.1-8b-instant) without leaving Groq.
-    """
-    provider = user_config.llm.provider
-    api_key = user_config.llm.api_key
-    model = model_override or user_config.llm.model
-
-    kwargs = {}
-    if provider in (
-        ServiceProviders.OPENAI.value,
-        ServiceProviders.ATLASCLOUD.value,
-    ):
-        kwargs["base_url"] = user_config.llm.base_url
-    elif provider == ServiceProviders.OPENROUTER.value:
-        kwargs["base_url"] = user_config.llm.base_url
-    elif provider == ServiceProviders.AZURE.value:
-        kwargs["endpoint"] = user_config.llm.endpoint
-    elif provider == ServiceProviders.SPEACHES.value:
-        kwargs["base_url"] = user_config.llm.base_url
-    elif provider == ServiceProviders.HUGGINGFACE.value:
-        kwargs["base_url"] = user_config.llm.base_url
-        kwargs["bill_to"] = user_config.llm.bill_to
-    elif provider == ServiceProviders.AWS_BEDROCK.value:
-        kwargs["aws_access_key"] = user_config.llm.aws_access_key
-        kwargs["aws_secret_key"] = user_config.llm.aws_secret_key
-        kwargs["aws_region"] = user_config.llm.aws_region
-    elif provider == ServiceProviders.GOOGLE_VERTEX.value:
-        kwargs["project_id"] = user_config.llm.project_id
-        kwargs["location"] = user_config.llm.location
-        kwargs["credentials"] = user_config.llm.credentials
-    elif provider == ServiceProviders.MINIMAX.value:
-        kwargs["base_url"] = user_config.llm.base_url
-        kwargs["temperature"] = user_config.llm.temperature
-    elif provider == ServiceProviders.SARVAM.value:
-        kwargs["temperature"] = user_config.llm.temperature
-
-    logger.info(
-        f"Creating LLM service with model override: provider={provider}, model={model}"
-    )
-    return create_llm_service_from_provider(
-        provider,
-        model,
-        api_key,
-        correlation_id=correlation_id,
-        usage_context=usage_context,
-        **kwargs,
+        provider_override=None,
     )

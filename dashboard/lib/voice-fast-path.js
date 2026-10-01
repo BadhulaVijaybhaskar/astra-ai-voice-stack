@@ -27,6 +27,11 @@ const TOOL_ACK_TARGET_MS = 1200;
 const STT_FINAL_TARGET_MS = 250;
 const MAX_LLM_BEFORE_FIRST_SPEECH = 1;
 
+/** Aggressive first-phrase flush for ordinary turns (language-agnostic, employee-agnostic). */
+const ORDINARY_PHRASE_OPTS = Object.freeze({ minChars: 16, minWords: 3 });
+/** Tool-path continue phrase after ack (language-agnostic). */
+const CONTINUE_PHRASE_OPTS = Object.freeze({ minChars: 12, minWords: 2 });
+
 const BOOKING_ACK = Object.freeze({
   hi: 'Haan, bilkul. Demo book karte hain.',
   en: 'Yes. Let us book a short demo.',
@@ -74,11 +79,13 @@ function classifyTurnPath(userText, opts = {}) {
       max_llm_before_first_speech: 0,
       defer_secondary_llms: true,
       force_tools: !!opts.forceTools,
+      emit_before_llm: true,
+      phrase_opts: CONTINUE_PHRASE_OPTS,
     };
   }
   return {
     path: 'fast',
-    reason: 'ordinary_dialogue',
+    reason: opts.forceTools ? 'forced_tools_without_booking' : 'ordinary_dialogue',
     first_audio_strategy: 'stream_first_safe_phrase',
     ack: null,
     tools_block_first_audio: false,
@@ -86,6 +93,27 @@ function classifyTurnPath(userText, opts = {}) {
     // One conversational Groq stream only before first speech.
     max_llm_before_first_speech: MAX_LLM_BEFORE_FIRST_SPEECH,
     defer_secondary_llms: true,
+    emit_before_llm: false,
+    phrase_opts: ORDINARY_PHRASE_OPTS,
+  };
+}
+
+/**
+ * Language-agnostic, employee-agnostic first-audio plan.
+ * Shared runtime: speak early, stream/continue, never block on tools.
+ * Employee config (instructions, voice, tools) is injected elsewhere.
+ */
+function planFirstAudio(userText, opts = {}) {
+  const classified = classifyTurnPath(userText, opts);
+  return {
+    ...classified,
+    stream_tts_on_first_phrase: true,
+    wait_for_llm_complete: false,
+    wait_for_tools: false,
+    architecture: classified.emit_before_llm
+      ? 'ack_before_llm_then_stream'
+      : 'stream_first_safe_phrase',
+    platform: 'shared_realtime_path',
   };
 }
 
@@ -211,7 +239,9 @@ function compactContextForFirstResponse(injection, opts = {}) {
  */
 function buildFirstResponseSystem(opts = {}) {
   const parts = [];
-  if (opts.mayaCore) parts.push(String(opts.mayaCore).trim());
+  // Employee-agnostic: core instructions from employee config (not a named employee branch).
+  const core = opts.systemCore || opts.employeeCore || opts.mayaCore || '';
+  if (core) parts.push(String(core).trim());
   if (opts.customerContext) {
     const compact = compactContextForFirstResponse(opts.customerContext, {
       maxChars: opts.contextMaxChars || 420,
@@ -233,13 +263,13 @@ function buildFirstResponseSystem(opts = {}) {
     chars: system.length,
     approx_tokens: Math.ceil(system.length / 4),
     audit: auditPromptTokens({
-      maya_core: opts.mayaCore || '',
+      employee_core: core,
       customer: opts.customerContext || '',
       kb: opts.kbSnippet || '',
       language: opts.languageNote || '',
       tools: opts.relevantToolsNote || '',
       __required: {
-        maya_core: true,
+        employee_core: true,
         customer: true,
         kb: false,
         language: true,
@@ -327,6 +357,10 @@ function latencyBudgets() {
     max_llm_before_first_speech: MAX_LLM_BEFORE_FIRST_SPEECH,
     primary_metric: 'speech_end → first audible',
     note: 'Do not shorten useful answers to hit these budgets',
+    architecture: 'ack_before_llm OR stream_first_safe_phrase; language-agnostic; employee-agnostic shared runtime',
+    barge_in_playback_stop_target_ms: 200,
+    barge_in_playback_stop_ok_ms: 300,
+    barge_in_playback_stop_fail_ms: 500,
   };
 }
 
@@ -350,10 +384,13 @@ module.exports = {
   TOOL_ACK_TARGET_MS,
   STT_FINAL_TARGET_MS,
   MAX_LLM_BEFORE_FIRST_SPEECH,
+  ORDINARY_PHRASE_OPTS,
+  CONTINUE_PHRASE_OPTS,
   BOOKING_ACK,
   detectAckLanguage,
   bookingAckSpeech,
   classifyTurnPath,
+  planFirstAudio,
   planPreSpeechLlm,
   assertSingleLlmBeforeFirstSpeech,
   hiVsOrdinaryArchitectureDiff,

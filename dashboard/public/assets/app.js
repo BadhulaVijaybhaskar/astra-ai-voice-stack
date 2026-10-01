@@ -5091,6 +5091,9 @@ async function viewTalkLegacy(root) {
   let discardCapture = false;
   let currentAudio = null;
   let activeSpeechSources = [];
+  /** Platform barge-in: text the caller actually heard before interrupt. */
+  let lastSpokenText = '';
+  let bargeInWatcher = null;
   let liveBubble = null;
   let turnId = 0;
   const turnTiming = { stt: null, llm: null, tts: null, ttft: null, tts_ttfb: null, total: null };
@@ -5100,6 +5103,70 @@ async function viewTalkLegacy(root) {
   /** Warm Rumik WS mint reused across first-phrase TTS (avoid TLS+mint per phrase). */
   let warmTtsMint = null;
   let warmTtsMintAt = 0;
+
+  /**
+   * Platform-wide barge-in: stop playback ASAP (target ≤200ms, ok ≤300ms).
+   * Interrupt context keeps spoken_text only. Employee-agnostic.
+   */
+  function stopAgentPlayback(reason) {
+    const t0 = (typeof performance !== 'undefined' && performance.now)
+      ? performance.now()
+      : Date.now();
+    if (currentAudio) {
+      try { currentAudio.pause(); } catch (_) {}
+      currentAudio = null;
+    }
+    activeSpeechSources.forEach((source) => { try { source.stop(); } catch (_) {} });
+    activeSpeechSources = [];
+    const elapsed = Math.round(
+      ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0
+    );
+    if (activeLatency) {
+      activeLatency.barge_in = {
+        reason: reason || 'user_speech',
+        playback_stop_ms: elapsed,
+        spoken_text: lastSpokenText || '',
+        interrupt_context: 'spoken_text_only',
+        target_ms: 200,
+        ok_ms: 300,
+        fail_ms: 500,
+        status: elapsed <= 200 ? 'PASS' : (elapsed <= 300 ? 'OK' : (elapsed <= 500 ? 'MISS' : 'HARD_FAIL')),
+      };
+      markLatency('barge_in_playback_stop');
+    }
+    return elapsed;
+  }
+
+  function clearBargeInWatcher() {
+    if (bargeInWatcher) {
+      clearInterval(bargeInWatcher);
+      bargeInWatcher = null;
+    }
+  }
+
+  /** Watch mic RMS while agent speaks; stop playback on barge-in. */
+  function startBargeInWatcher() {
+    clearBargeInWatcher();
+    if (!analyser || !sessionActive) return;
+    const samples = new Uint8Array(analyser.fftSize);
+    let armedAt = Date.now() + 180; // ignore residual TTS echo briefly
+    bargeInWatcher = setInterval(() => {
+      if (!sessionActive) { clearBargeInWatcher(); return; }
+      if (!activeSpeechSources.length && !currentAudio) return;
+      if (Date.now() < armedAt) return;
+      analyser.getByteTimeDomainData(samples);
+      let sum = 0;
+      for (let i = 0; i < samples.length; i++) {
+        const v = (samples[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / samples.length);
+      if (rms >= 0.028) {
+        stopAgentPlayback('barge_in');
+        clearBargeInWatcher();
+      }
+    }, 40);
+  }
 
   function newLatencyTurn() {
     activeLatency = {
@@ -5619,6 +5686,8 @@ async function viewTalkLegacy(root) {
       ? performance.now()
       : Date.now();
     if (!opts.continuation) markLatency('tts_request');
+    lastSpokenText = String(text || '').trim();
+    startBargeInWatcher();
     try {
       let mint = opts.continuation ? null : consumeWarmTtsMint();
       if (!mint) {
@@ -5730,6 +5799,8 @@ async function viewTalkLegacy(root) {
       } catch (_) {
         toast('Voice playback failed, the transcript is still available.', 'err');
       }
+    } finally {
+      if (!opts.partial && !activeSpeechSources.length && !currentAudio) clearBargeInWatcher();
     }
   }
 
@@ -5890,9 +5961,8 @@ async function viewTalkLegacy(root) {
     sessionActive = false;
     turnId += 1;
     cancelCapture();
-    if (currentAudio) { try { currentAudio.pause(); } catch (e) {} currentAudio = null; }
-    activeSpeechSources.forEach((source) => { try { source.stop(); } catch (_) {} });
-    activeSpeechSources = [];
+    clearBargeInWatcher();
+    stopAgentPlayback('session_end');
     if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
     mediaStream = null;
     analyser = null;

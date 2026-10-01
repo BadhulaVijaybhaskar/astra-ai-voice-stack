@@ -5,6 +5,9 @@
  * operators can remove or defer extras that do not need to run before the
  * first audible syllable. Does not auto-write Dograh WF8.
  *
+ * Also audits pre-speech Groq hops (edge routers, lang/qual/summarizer) that
+ * must be deferred until after first spoken.
+ *
  * No em dashes. Commas and periods only.
  */
 'use strict';
@@ -18,6 +21,7 @@ function buildWf8NodeTrace(graph) {
   const g = graph || maya.buildMayaWorkflowGraph();
   const nodes = Array.isArray(g.nodes) ? g.nodes : [];
   const edges = Array.isArray(g.edges) ? g.edges : [];
+  const preSpeech = (g.meta && g.meta.pre_speech_policy) || maya.PRE_SPEECH_POLICY;
 
   const rows = nodes.map((node) => {
     const id = String(node.id);
@@ -31,16 +35,14 @@ function buildWf8NodeTrace(graph) {
     let rationale = '';
 
     if (type === 'globalNode') {
-      // Global policy is needed for correct behaviour, but the FULL global
-      // prompt does not all need to be in the hot TTFT path. Mark YES with
-      // compaction note.
+      // Global HOT policy is needed; full qualification bank is deferred.
       required = 'YES_COMPACT';
       defer = false;
-      rationale = 'Identity + booking/end-call safety needed. Defer long qualification banks until after first phrase.';
+      rationale = 'Identity + booking/end-call safety needed (HOT prompt). Defer qualification bank to Qualify stage.';
     } else if (type === 'startCall') {
       required = 'YES';
       defer = false;
-      rationale = 'Greeting / start stage can produce first audio.';
+      rationale = 'Greeting / start stage can produce first audio. No lang/intent classifier before speech.';
     } else if (type === 'agentNode' && /qualify/i.test(name)) {
       required = 'YES_COMPACT';
       defer = false;
@@ -77,6 +79,7 @@ function buildWf8NodeTrace(graph) {
     source: e.source,
     target: e.target,
     label: e.data && e.data.label,
+    prefer_local_policy: !!(e.data && e.data.prefer_local_policy),
     // Natural-language edge routers cost an LLM decision. Prefer local policy
     // for booking vs end-call when possible to avoid an extra hop before speech.
     required_for_first_response: /book/i.test(String((e.data && e.data.label) || ''))
@@ -89,6 +92,39 @@ function buildWf8NodeTrace(graph) {
     .filter((r) => r.required_for_first_response === 'YES' || r.required_for_first_response === 'YES_COMPACT' || r.required_for_first_response === 'ACK_ONLY')
     .reduce((n, r) => n + r.approx_tokens, 0);
 
+  const deferredGroqHops = [
+    {
+      hop: 'edge_router_llm',
+      defer: !!preSpeech.defer_edge_router_llm_before_first_audio,
+      rationale: 'NL edge conditions must not run a Groq hop before first audible.',
+    },
+    {
+      hop: 'language_classifier_llm',
+      defer: !!preSpeech.defer_language_classifier_llm,
+      rationale: 'No separate lang classifier before first speech; Maya speaks in caller language from the main turn.',
+    },
+    {
+      hop: 'qualification_bank_preload',
+      defer: !!preSpeech.defer_qualification_bank,
+      rationale: 'Qualification themes live on Qualify stage; do not preload into hot TTFT.',
+    },
+    {
+      hop: 'summarizer_llm',
+      defer: !!preSpeech.defer_summarizer_llm,
+      rationale: 'Summarizer is a later-turn concern, not first audio.',
+    },
+    {
+      hop: 'end_call_eligibility_llm',
+      defer: !!preSpeech.defer_end_call_eligibility_llm,
+      rationale: 'Use local hangup/booking policy instead of an LLM hop before speech.',
+    },
+    {
+      hop: 'calcom_tools',
+      defer: !!preSpeech.defer_calcom_tools,
+      rationale: 'Tools stay background after spoken ack.',
+    },
+  ];
+
   return {
     employee_id: maya.MAYA_EMPLOYEE_ID,
     dograh_workflow_id: maya.MAYA_DOGRAH_WORKFLOW_ID,
@@ -98,18 +134,27 @@ function buildWf8NodeTrace(graph) {
     nodes: rows,
     edges: edgeRows,
     hot_path_approx_tokens: hotTokens,
+    pre_speech_policy: preSpeech,
+    deferred_pre_speech_groq_hops: deferredGroqHops,
     recommendations: [
       'Speak booking ack before any Cal.com tool node.',
       'Do not run End Call eligibility LLM hop before first audio on booking language (use local policy).',
-      'Keep Global prompt compacted for TTFT; full qualification bank can ride after first phrase.',
-      'P0.2: at most one conversational LLM before first audible. Defer edge-router / language / summarizer LLMs until after first speech.',
+      'Keep Global HOT prompt for TTFT; qualification bank rides on Qualify after first phrase.',
+      'Defer edge-router / lang / summarizer Groq hops until after first spoken.',
       'NL edge conditions are LOCAL_POLICY_PREFERRED for booking. Avoid Dograh edge-router LLM before first syllable.',
       'WF8 id stays 8. Manual Hostinger import only.',
     ],
+    // P0.2 budget (kept for Hostinger / Voice Eng reports). Folded #54 policy
+    // lives in pre_speech_policy + deferred_pre_speech_groq_hops above.
     pre_speech_llm_budget: {
       max_llm_before_first_speech: 1,
       booking_ack_llm_before_first_speech: 0,
-      deferred: ['edge_router_classifier', 'language_detect_llm', 'qualification_bank_preload', 'call_summarizer'],
+      deferred: [
+        'edge_router_classifier',
+        'language_detect_llm',
+        'qualification_bank_preload',
+        'call_summarizer',
+      ],
     },
   };
 }
