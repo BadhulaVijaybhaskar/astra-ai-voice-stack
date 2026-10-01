@@ -299,6 +299,79 @@ function listVoiceTiers() {
   }));
 }
 
+/** Clamp per-language TTS speed for languageVoiceConfig rows. */
+function clampVoiceSpeed(raw, fallback = 1) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return Number.isFinite(Number(fallback)) ? Number(fallback) : 1;
+  return Math.max(0.7, Math.min(1.2, Math.round(n * 100) / 100));
+}
+
+/**
+ * Per-language starting voice map (call-start only).
+ * Preview TTS test text is NEVER stored here.
+ * Public shape: { 'hi-IN': { voice_id, speed }, ... }
+ * Internal may keep provider / provider_voice_id / model (hidden in publicVoice).
+ */
+function normalizeLanguageVoiceConfig(input, existing) {
+  const src = input && typeof input === 'object' && !Array.isArray(input) ? input : null;
+  const base = existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {};
+  if (!src && !Object.keys(base).length) return {};
+  const out = {};
+  const keys = new Set([...Object.keys(base), ...(src ? Object.keys(src) : [])]);
+  for (const key of keys) {
+    const lang = normalizeLanguage(key, '');
+    if (!lang || !LANGUAGE_BY_ID.has(lang)) continue;
+    // Allow explicit null delete when patching a single language.
+    if (src && Object.prototype.hasOwnProperty.call(src, key) && src[key] == null) {
+      continue;
+    }
+    const rowIn = src && src[key] != null ? src[key] : base[key];
+    if (rowIn == null) continue;
+    if (typeof rowIn === 'string') {
+      const voice_id = String(rowIn).trim().slice(0, 64);
+      if (!voice_id) continue;
+      out[lang] = { voice_id, speed: 1 };
+      continue;
+    }
+    if (typeof rowIn !== 'object') continue;
+    const voice_id = String(
+      rowIn.voice_id || rowIn.voiceId || rowIn.speaker || '',
+    ).trim().slice(0, 64);
+    if (!voice_id) continue;
+    const row = {
+      voice_id,
+      speed: clampVoiceSpeed(rowIn.speed, (base[lang] && base[lang].speed) || 1),
+    };
+    // Internal resolution hints (never exposed by publicLanguageVoiceConfig).
+    const provider = String(rowIn.provider || (base[lang] && base[lang].provider) || '')
+      .trim().toLowerCase().slice(0, 40);
+    const providerVoiceId = String(
+      rowIn.provider_voice_id || rowIn.providerVoiceId
+        || (base[lang] && base[lang].provider_voice_id) || voice_id,
+    ).trim().slice(0, 64);
+    const model = String(rowIn.model || (base[lang] && base[lang].model) || '')
+      .trim().slice(0, 64);
+    if (provider) row.provider = provider;
+    if (providerVoiceId) row.provider_voice_id = providerVoiceId;
+    if (model) row.model = model;
+    out[lang] = row;
+  }
+  return out;
+}
+
+function publicLanguageVoiceConfig(cfg) {
+  const normalized = normalizeLanguageVoiceConfig(cfg);
+  const out = {};
+  for (const [lang, row] of Object.entries(normalized)) {
+    // Hide provider / model / provider_voice_id from normal UI payload.
+    out[lang] = {
+      voice_id: row.voice_id,
+      speed: row.speed,
+    };
+  }
+  return out;
+}
+
 function publicVoice(voice) {
   const v = normalizeVoice(voice);
   const tier = VOICE_TIER_BY_ID.get(v.tier) || VOICE_TIER_BY_ID.get(DEFAULT_VOICE_TIER);
@@ -307,8 +380,10 @@ function publicVoice(voice) {
     tier: v.tier,
     tierLabel: tier ? tier.label : 'Standard',
     tierAvailable: !!(tier && tier.available),
-    // Customer UI never sees raw TTS model / speaker provider ids.
+    // Customer UI never sees raw TTS model / speaker provider ids on primary profile.
     profileLabel: v.tier === 'standard' ? 'Standard voice profile' : (tier ? tier.label : 'Voice profile'),
+    // Per-language starting voices (voice_id + speed only). No preview text.
+    languageVoiceConfig: publicLanguageVoiceConfig(v.languageVoiceConfig),
   };
 }
 
@@ -329,7 +404,12 @@ function normalizeVoice(input, existing) {
   if (b.f0_up_key != null && Number.isFinite(Number(b.f0_up_key))) {
     f0 = Math.max(-12, Math.min(12, Number(b.f0_up_key) | 0));
   }
-  return { language, tier, model, speaker, f0_up_key: f0 };
+  const languageVoiceConfig = normalizeLanguageVoiceConfig(
+    b.languageVoiceConfig != null ? b.languageVoiceConfig
+      : (b.language_voice_config != null ? b.language_voice_config : undefined),
+    base.languageVoiceConfig,
+  );
+  return { language, tier, model, speaker, f0_up_key: f0, languageVoiceConfig };
 }
 
 /**
@@ -1294,6 +1374,175 @@ function setEmployeeLanguage(db, tenantId, id, language) {
 }
 
 /**
+ * Save per-language starting voices (voice_id + speed).
+ * Preview / TTS test text is rejected and never persisted.
+ * Does not mutate Maya production auto / Dograh WF8 / active runtime.
+ *
+ * Options:
+ *   merge: true → patch into existing languageVoiceConfig (per-row save)
+ *   seed_from_persona: true → if empty, seed draft from validated persona routes
+ */
+function setEmployeeLanguageVoiceConfig(db, tenantId, id, input) {
+  const row = findEmployee(db, tenantId, id);
+  if (!row) return { ok: false, status: 404, error: 'employee not found', code: 'not_found' };
+  const body = input && typeof input === 'object' ? input : {};
+  const personaRouter = require('./voice-persona-router');
+  const voiceCatalog = require('./tts-voice-catalog');
+
+  // Optional draft seed for Maya / persona employees without overwriting production.
+  if (body.seed_from_persona === true || body.seedFromPersona === true) {
+    const personaId = personaRouter.resolvePersonaId(row);
+    const existing = (row.voice && row.voice.languageVoiceConfig) || {};
+    const seeded = personaRouter.seedLanguageVoiceConfigFromPersona(personaId, existing);
+    if (seeded.ok && seeded.seeded) {
+      row.voice = normalizeVoice({
+        ...(row.voice || {}),
+        languageVoiceConfig: seeded.languageVoiceConfig,
+      }, row.voice);
+      row.updatedAt = nowIso();
+      return {
+        ok: true,
+        employee: row,
+        language: row.voice.language,
+        languageVoiceConfig: publicLanguageVoiceConfig(row.voice.languageVoiceConfig),
+        seeded: true,
+        production_protected: !!seeded.production_protected,
+        preview_text_saved: false,
+        note: seeded.note,
+      };
+    }
+    if (seeded.ok && !seeded.seeded) {
+      return {
+        ok: true,
+        employee: row,
+        language: row.voice.language,
+        languageVoiceConfig: publicLanguageVoiceConfig(existing),
+        seeded: false,
+        preview_text_saved: false,
+        reason: seeded.reason || 'already_configured',
+      };
+    }
+  }
+
+  // Accept languageVoiceConfig map, or { configs: [...] } / { rows: [...] }.
+  let rawMap = body.languageVoiceConfig || body.language_voice_config || null;
+  if (!rawMap && Array.isArray(body.configs || body.rows)) {
+    rawMap = {};
+    for (const item of (body.configs || body.rows)) {
+      if (!item || typeof item !== 'object') continue;
+      const lang = normalizeLanguage(item.language || item.id || item.lang, '');
+      if (!lang) continue;
+      rawMap[lang] = {
+        voice_id: item.voice_id || item.voiceId || item.speaker || item.voice,
+        speed: item.speed,
+      };
+    }
+  }
+  // Single-row patch: { language, voice_id, speed }
+  if (!rawMap && (body.voice_id || body.voiceId || body.speaker) && body.language) {
+    rawMap = {
+      [body.language]: {
+        voice_id: body.voice_id || body.voiceId || body.speaker,
+        speed: body.speed,
+      },
+    };
+  }
+  if (!rawMap || typeof rawMap !== 'object') {
+    return {
+      ok: false,
+      status: 422,
+      error: 'languageVoiceConfig required',
+      code: 'missing_language_voice_config',
+    };
+  }
+
+  // Strip preview text; attach internal provider/model resolution hints.
+  const cleaned = {};
+  for (const [k, v] of Object.entries(rawMap)) {
+    if (v == null) continue;
+    if (typeof v === 'string') {
+      cleaned[k] = { voice_id: v, speed: 1 };
+    } else {
+      cleaned[k] = {
+        voice_id: v.voice_id || v.voiceId || v.speaker || v.voice,
+        speed: v.speed,
+      };
+    }
+    const lang = normalizeLanguage(k, '');
+    const voiceId = cleaned[k].voice_id;
+    if (!voiceId) continue;
+    // Resolve internal provider/model from catalog or persona route.
+    let provider = '';
+    let model = '';
+    for (const pid of ['sarvam', 'rumik', 'deepgram']) {
+      const hit = voiceCatalog.findVoice(pid, voiceId);
+      if (hit) {
+        provider = pid;
+        model = hit.model || '';
+        break;
+      }
+    }
+    if (!provider) {
+      const personaId = personaRouter.resolvePersonaId(row);
+      const persona = personaId ? personaRouter.getPersona(personaId) : null;
+      const route = persona && persona.language_routes && persona.language_routes[lang];
+      if (route) {
+        provider = route.provider;
+        model = route.model || '';
+      }
+    }
+    if (provider) {
+      cleaned[k].provider = provider;
+      cleaned[k].provider_voice_id = voiceId;
+      cleaned[k].model = model;
+    }
+  }
+
+  const merge = body.merge === true || body.patch === true
+    || (
+      !body.languageVoiceConfig && !body.language_voice_config
+      && !body.configs && !body.rows
+      && !!(body.voice_id || body.voiceId || body.speaker)
+    );
+  const existingCfg = (row.voice && row.voice.languageVoiceConfig) || {};
+  const nextCfg = merge
+    ? normalizeLanguageVoiceConfig(cleaned, existingCfg)
+    : normalizeLanguageVoiceConfig(cleaned, {});
+  if (!Object.keys(nextCfg).length) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'languageVoiceConfig has no valid language rows',
+      code: 'empty_language_voice_config',
+    };
+  }
+  const primaryLanguage = body.primary_language != null
+    ? normalizeLanguage(body.primary_language, '')
+    : (body.language != null ? normalizeLanguage(body.language, '') : null);
+  const voicePatch = {
+    ...(row.voice || {}),
+    languageVoiceConfig: nextCfg,
+  };
+  if (primaryLanguage && LANGUAGE_BY_ID.has(primaryLanguage)) {
+    voicePatch.language = primaryLanguage;
+    if (nextCfg[primaryLanguage] && nextCfg[primaryLanguage].voice_id) {
+      voicePatch.speaker = nextCfg[primaryLanguage].voice_id;
+    }
+  }
+  row.voice = normalizeVoice(voicePatch, row.voice);
+  row.updatedAt = nowIso();
+  return {
+    ok: true,
+    employee: row,
+    language: row.voice.language,
+    languageVoiceConfig: publicLanguageVoiceConfig(row.voice.languageVoiceConfig),
+    merged: !!merge,
+    preview_text_saved: false,
+    maya_production_untouched: true,
+  };
+}
+
+/**
  * Set Employee voice tier. Non-Standard tiers are catalog stubs only and
  * fail closed (cannot be selected for live dials in this release).
  */
@@ -1507,6 +1756,10 @@ module.exports = {
   setActions,
   executeActionHook,
   setEmployeeLanguage,
+  setEmployeeLanguageVoiceConfig,
+  normalizeLanguageVoiceConfig,
+  publicLanguageVoiceConfig,
+  clampVoiceSpeed,
   setEmployeeVoiceTier,
   getWorkflow,
   updateWorkflow,

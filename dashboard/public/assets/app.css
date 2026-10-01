@@ -1320,6 +1320,97 @@
   line-height: 1.55;
 }
 .emp-persona-route-list li { margin: 2px 0; }
+
+/* Compact Language | Voice | Speed | TTS Test Text | Preview | Status table */
+.emp-lang-voice-table-wrap {
+  overflow-x: auto;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+.emp-lang-voice-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+  min-width: 760px;
+}
+.emp-lang-voice-table th,
+.emp-lang-voice-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.emp-lang-voice-table th {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  background: #F7F8FA;
+  white-space: nowrap;
+}
+.emp-lang-voice-table tr:last-child td { border-bottom: 0; }
+.emp-lvt-lang { display: flex; flex-direction: column; gap: 4px; min-width: 120px; }
+.emp-lvt-primary-pill {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--voice);
+  background: var(--voice-soft);
+  border-radius: 6px;
+  padding: 2px 6px;
+  width: fit-content;
+}
+.emp-lvt-voice { min-width: 112px; max-width: 150px; }
+.emp-lvt-speed-td { white-space: nowrap; min-width: 110px; }
+.emp-lvt-speed { width: 88px; display: inline-block; vertical-align: middle; }
+.emp-lvt-speed-x { margin-left: 6px; font-variant-numeric: tabular-nums; }
+.emp-lvt-status-cell { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.emp-lvt-save-state { margin-top: 10px; font-size: 0.8rem; }
+.emp-lvt-save-state.is-dirty { color: #B45309; }
+.emp-lvt-text-cell { min-width: 220px; max-width: 320px; }
+.emp-lvt-text {
+  width: 100%;
+  min-height: 52px;
+  resize: vertical;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+.emp-lvt-text-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+}
+.emp-lvt-chars { font-size: 0.72rem; margin-left: auto; }
+.emp-lvt-preview { white-space: nowrap; }
+.emp-lvt-status {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+}
+.emp-lvt-status.is-ready { background: #EAF8F1; border-color: rgba(34,160,107,0.32); color: #22A06B; }
+.emp-lvt-status.is-funding { background: #FFF6E5; border-color: rgba(217,119,6,0.28); color: #B45309; }
+.emp-lvt-status.is-creds { background: #EEF2FF; border-color: rgba(79,70,229,0.25); color: #4338CA; }
+.emp-lvt-status.is-unavailable { background: #F4F4F5; color: #71717A; }
+.btn-xs {
+  padding: 0.25em 0.55em;
+  font-size: 0.72rem;
+  border-radius: 6px;
+}
+@media (max-width: 720px) {
+  .emp-lang-voice-table { font-size: 0.78rem; }
+  .emp-lvt-text-cell { min-width: 180px; }
+}
+
 .emp-lang-legend {
   display:flex; flex-wrap:wrap; gap:12px; margin:10px 0 12px; font-size:0.76rem; color: var(--ink-dim);
 }

@@ -709,6 +709,21 @@ function testInbound(db, tenantId, employeeId) {
   const mappingOk = !!(number && number.providerMetadata
     && (number.providerMetadata.inboundWorkflowId || number.providerMetadata.providerInboundWorkflowId));
   const pass = verify.ok && workflowBound;
+  let voiceRouting = null;
+  try {
+    const callVoiceSession = require('./call-voice-session');
+    const personaRouter = require('./voice-persona-router');
+    voiceRouting = callVoiceSession.resolveChannelVoice({
+      employee,
+      channel: callVoiceSession.CHANNELS.INBOUND_PSTN,
+      preferred_language: (employee.voice && employee.voice.language) || null,
+      mode: 'astra_auto',
+      voice_switch_policy: personaRouter.DEFAULT_VOICE_SWITCH_POLICY,
+      forceLocked: true,
+    });
+  } catch (_) {
+    voiceRouting = null;
+  }
   return {
     ok: pass,
     status: pass ? 200 : 422,
@@ -726,6 +741,12 @@ function testInbound(db, tenantId, employeeId) {
       workflowBound,
       mappingOk,
       callbackVerify: verify,
+      voice_lock: voiceRouting && voiceRouting.ok ? voiceRouting.voice_lock : null,
+      initial_language: voiceRouting && voiceRouting.ok ? voiceRouting.initial_language : null,
+      voice_switch_policy: voiceRouting && voiceRouting.ok
+        ? voiceRouting.voice_switch_policy
+        : null,
+      same_voice_logic_as_browser: true,
       isolation: {
         employeeId: employee.id,
         numberId: pub.phoneNumberId,
@@ -779,6 +800,21 @@ function testOutbound(db, tenantId, employeeId, opts = {}) {
   const callerIdOk = !!(pub.callerId || pub.businessNumber);
   const telephonyIdsOk = !!(meta.dograhTelephonyConfigId && (meta.dograhPhoneNumberId || number.providerNumberId));
   const pass = callerIdOk && telephonyIdsOk;
+  let voiceRouting = null;
+  try {
+    const callVoiceSession = require('./call-voice-session');
+    const personaRouter = require('./voice-persona-router');
+    voiceRouting = callVoiceSession.resolveChannelVoice({
+      employee,
+      channel: callVoiceSession.CHANNELS.OUTBOUND_PSTN,
+      preferred_language: (employee.voice && employee.voice.language) || null,
+      mode: 'astra_auto',
+      voice_switch_policy: personaRouter.DEFAULT_VOICE_SWITCH_POLICY,
+      forceLocked: true,
+    });
+  } catch (_) {
+    voiceRouting = null;
+  }
   return {
     ok: pass,
     status: pass ? 200 : 422,
@@ -793,6 +829,12 @@ function testOutbound(db, tenantId, employeeId, opts = {}) {
       callerIdOk,
       telephonyIdsOk,
       workflowName: pub.workflowName,
+      voice_lock: voiceRouting && voiceRouting.ok ? voiceRouting.voice_lock : null,
+      initial_language: voiceRouting && voiceRouting.ok ? voiceRouting.initial_language : null,
+      voice_switch_policy: voiceRouting && voiceRouting.ok
+        ? voiceRouting.voice_switch_policy
+        : null,
+      same_voice_logic_as_browser: true,
       isolation: {
         employeeId: employee.id,
         numberId: pub.phoneNumberId,

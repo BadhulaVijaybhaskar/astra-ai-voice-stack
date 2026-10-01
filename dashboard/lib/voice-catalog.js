@@ -548,6 +548,20 @@ async function getUnifiedCatalog(opts = {}) {
     languages_product: astraLanguages,
     // Voice persona maps (Vaani / Maya). Provider credentials never included.
     voice_personas: personaRouter.listPersonas(),
+    // Per-language compatible voices (merged catalog). Normal UI uses these
+    // dropdowns; provider brands stay internal (_provider/_model stripped below).
+    language_voice_options: (() => {
+      const out = {};
+      for (const lang of (staticCatalog.listAstraSupportedLanguages() || [])) {
+        const rows = personaRouter.compatibleVoicesForLanguage(lang.id) || [];
+        out[lang.id] = rows.map((r) => ({
+          voice_id: r.voice_id,
+          display_name: r.display_name,
+          gender: r.gender || '',
+        }));
+      }
+      return out;
+    })(),
     persona_routes_debug: {
       vaani: personaRouter.debugRouteSummary('vaani'),
       maya: personaRouter.debugRouteSummary('maya'),

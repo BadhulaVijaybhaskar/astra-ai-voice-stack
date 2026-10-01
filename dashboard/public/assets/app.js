@@ -1189,7 +1189,7 @@ function employeePersonaId(emp) {
   return null;
 }
 
-/** Short chip labels for "Test {persona} in" multilingual preview. */
+/** Language labels for the Voice & Language table editor. */
 const PERSONA_PREVIEW_LANG_LABELS = {
   'en-IN': 'English',
   'hi-IN': 'Hindi',
@@ -1202,6 +1202,21 @@ const PERSONA_PREVIEW_LANG_LABELS = {
   'gu-IN': 'Gujarati',
   'pa-IN': 'Punjabi',
 };
+
+/** Native TTS preview samples. Preview-only. Never saved as prompt/knowledge. */
+const TTS_PREVIEW_SAMPLES = {
+  'en-IN': 'Hello, this is {name} from Astra Voice. How can I help you today?',
+  'hi-IN': 'नमस्ते, मैं Astra Voice से {name} हूँ। मैं आपकी कैसे मदद कर सकती हूँ?',
+  'te-IN': 'నమస్కారం, నేను Astra Voice నుండి {name}. నేను మీకు ఎలా సహాయం చేయగలను?',
+  'ta-IN': 'வணக்கம், நான் Astra Voice-இன் {name}. நான் உங்களுக்கு எப்படி உதவ முடியும்?',
+  'kn-IN': 'ನಮಸ್ಕಾರ, ನಾನು Astra Voice ನಿಂದ {name}. ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?',
+  'ml-IN': 'നമസ്കാരം, ഞാൻ Astra Voice-ലെ {name} ആണ്. ഞാൻ നിങ്ങളെ എങ്ങനെ സഹായിക്കാം?',
+  'mr-IN': 'नमस्कार, मी Astra Voice कडून {name} आहे. मी तुम्हाला कशी मदत करू शकते?',
+  'bn-IN': 'নমস্কার, আমি Astra Voice থেকে {name}। আমি আপনাকে কীভাবে সাহায্য করতে পারি?',
+  'gu-IN': 'નમસ્તે, હું Astra Voice તરફથી {name} છું. હું તમારી કેવી રીતે મદદ કરી શકું?',
+  'pa-IN': 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ, ਮੈਂ Astra Voice ਤੋਂ {name} ਹਾਂ। ਮੈਂ ਤੁਹਾਡੀ ਕਿਵੇਂ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?',
+};
+const TTS_PREVIEW_MAX_CHARS = 500;
 
 function demoOutcomeFixture(emp) {
   const who = (emp && emp.name) || 'Employee';
@@ -1665,6 +1680,13 @@ async function renderLiveDemoWorkspace(host, emp, id) {
         timeoutMs: 15000,
         body: { agentId: emp.agentId, employeeId: emp.id },
       });
+      if (session && session.sessionVoiceLocked && session.voiceLock) {
+        const lock = session.voiceLock;
+        const lang = session.currentLanguage || session.initialLanguage || emp.language || '';
+        tools.textContent = 'Session voice locked · '
+          + (lock.speaker || lock.voice_id || 'voice')
+          + (lang ? (' · Current language: ' + lang) : '');
+      }
       const iceServers = [{ urls: ['stun:stun.l.google.com:19302'] }];
       if (session.turnCredentials && session.turnCredentials.uris) {
         iceServers.push({
@@ -3237,6 +3259,22 @@ async function viewEmployeeStudio(root, id) {
       }
     }
 
+    async function ensureDraftLanguageVoiceSeed() {
+      const existing = (emp.voice && emp.voice.languageVoiceConfig) || {};
+      if (existing && Object.keys(existing).length) return;
+      if (!employeePersonaId(emp)) return;
+      try {
+        const res = await api('/api/employees/' + encodeURIComponent(emp.id) + '/language-voice-config', {
+          method: 'PUT',
+          body: { seed_from_persona: true },
+        });
+        if (res && res.languageVoiceConfig) {
+          emp.voice = emp.voice || {};
+          emp.voice.languageVoiceConfig = res.languageVoiceConfig;
+        }
+      } catch (_) { /* seed optional; never blocks UI */ }
+    }
+
     function renderCascade() {
       cascadeHost.innerHTML = '';
       const isMayaEmp = /^maya$/i.test(String(emp.name || '').trim())
@@ -3305,355 +3343,178 @@ async function viewEmployeeStudio(root, id) {
         ]);
         provBar.appendChild(btn);
       });
-      cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
-        el('h4', { class: 't-h4' }, 'Provider'),
-        provBar,
-        el('p', { class: 'muted', style: 'margin-top:8px' },
-          meta.state === 'needs_funding'
-            ? 'Needs funding. Catalog stays visible. Preview and Activate are disabled until funded.'
-            : (meta.state === 'needs_credentials'
-              ? 'Needs credentials on the server. Catalog stays visible. Preview and Activate are disabled.'
-              : 'Provider catalog from Astra Voice. Keys never appear in this UI.')),
-      ]));
+      // Provider picker hidden in normal Voice by Language UI.
+      // Engines stay internal; Advanced details may still show starting-route debug.
+      if (voiceMode !== 'astra_auto' && selectedProvider !== 'auto' && !isInvestorDemo()) {
+        cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
+          el('h4', { class: 't-h4' }, 'Provider (advanced)'),
+          provBar,
+          el('p', { class: 'muted', style: 'margin-top:8px' },
+            meta.state === 'needs_funding'
+              ? 'Needs funding. Catalog stays visible. Preview and Activate are disabled until funded.'
+              : (meta.state === 'needs_credentials'
+                ? 'Needs credentials on the server. Catalog stays visible. Preview and Activate are disabled.'
+                : 'Advanced engine override. Normal Voice by Language uses the merged Astra catalog.')),
+        ]));
+      } else {
+        // Keep Auto selected for the language table path.
+        selectedProvider = 'auto';
+      }
 
-      // 3. Curated language — sticky segmented chips (mutually exclusive), not a select
+      // 3. Compact language voice TABLE editor (replaces per-language cards / chips).
+      // Columns: Language | Voice | Speed | TTS Test Text | Preview | Status
+      // Preview text is ephemeral. Save only voice + speed (+ primary language) via languageVoiceConfig.
       const langs = languagesForSelection();
       if (!langs.some((l) => l.id === selectedLanguage) && langs[0]) {
         selectedLanguage = langs[0].id;
       }
-      const langBar = el('div', { class: 'emp-lang-chips', role: 'group', 'aria-label': 'Language' });
+
+      const savedCfg = (emp.voice && emp.voice.languageVoiceConfig) || {};
+      const personaName = (() => {
+        const pid = employeePersonaId(emp);
+        if (pid === 'vaani') return 'Vaani';
+        if (pid === 'maya') return 'Maya';
+        return emp.name || 'Astra';
+      })();
+
+      function titleCaseVoice(id) {
+        return String(id || '')
+          .replace(/^aura-2-/, '')
+          .replace(/-en$/, '')
+          .replace(/_/g, ' ')
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+      }
+
+      function voiceOptionsForLang(langId) {
+        const route = personaRouteForLanguage(langId);
+        const seen = new Set();
+        const opts = [];
+        function pushVoice(id, label) {
+          const vId = String(id || '').trim();
+          if (!vId || seen.has(vId)) return;
+          seen.add(vId);
+          opts.push({ id: vId, label: label || titleCaseVoice(vId) });
+        }
+        // Merged Astra catalog voices compatible with this language only.
+        // No provider picker — provider stays internal.
+        const catalogOpts = (catalog && catalog.language_voice_options
+          && catalog.language_voice_options[langId]) || [];
+        catalogOpts.forEach((vv) => {
+          pushVoice(vv.voice_id || vv.id, vv.display_name || titleCaseVoice(vv.voice_id || vv.id));
+        });
+        if (route && route.voice_id) pushVoice(route.voice_id, titleCaseVoice(route.voice_id));
+        if (savedCfg[langId] && savedCfg[langId].voice_id) {
+          pushVoice(savedCfg[langId].voice_id, titleCaseVoice(savedCfg[langId].voice_id));
+        }
+        return opts;
+      }
+
+      function seedSample(langId) {
+        const tpl = TTS_PREVIEW_SAMPLES[langId] || TTS_PREVIEW_SAMPLES['en-IN'];
+        return String(tpl).replace(/\{name\}/g, personaName).slice(0, TTS_PREVIEW_MAX_CHARS);
+      }
+
+      // Ephemeral per-render row state for preview text only (never persisted).
+      if (!cascadeHost._langVoiceRows) cascadeHost._langVoiceRows = {};
+      const rowState = cascadeHost._langVoiceRows;
       langs.forEach((l) => {
-        const raw = String(l.statusLabel || l.status || '').toLowerCase();
-        let tone = 'available';
-        if (/tested/.test(raw)) tone = 'tested';
-        else if (/validation|ready/.test(raw)) tone = 'validation';
-        const isActive = l.id === selectedLanguage;
-        langBar.appendChild(el('button', {
-          class: 'emp-lang-chip is-' + tone + (isActive ? ' is-active' : ''),
-          type: 'button',
-          'aria-pressed': isActive ? 'true' : 'false',
-          title: l.statusLabel || l.status || '',
-          onclick: () => {
-            if (selectedLanguage === l.id) return;
-            selectedLanguage = l.id;
-            const route = personaRouteForLanguage(l.id);
-            if ((selectedProvider === 'auto' || voiceMode === 'astra_auto') && route && route.voice_id) {
-              selectedVoiceId = route.voice_id;
-            } else {
-              const voices = voicesForSelection();
-              if (!voices.some((vv) => (vv.id || vv.voice_id) === selectedVoiceId) && voices[0]) {
-                selectedVoiceId = voices[0].id || voices[0].voice_id || '';
-              }
-            }
-            renderCascade();
-          },
-        }, [
-          el('span', { class: 'emp-lang-chip-label' }, l.label || l.id),
-          el('span', { class: 'emp-lang-status' },
-            tone === 'tested' ? 'Tested'
-              : (tone === 'validation' ? 'Ready for validation' : 'Available')),
-        ]));
-      });
-      const saveLang = el('button', { class: 'btn btn-primary btn-sm' }, 'Save language');
-      saveLang.onclick = async () => {
-        saveLang.disabled = true;
-        try {
-          await api('/api/employees/' + encodeURIComponent(emp.id) + '/language', {
-            method: 'PUT',
-            body: { language: selectedLanguage },
-          });
-          State.loaded.employees = false;
-          toast('Language saved.', 'ok');
-          onRoute();
-        } catch (e) { toast(e.message, 'err'); }
-        finally { saveLang.disabled = false; }
-      };
-      cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
-        el('h4', { class: 't-h4' }, 'Language'),
-        el('p', { class: 'muted' },
-          (selectedProvider === 'auto' || voiceMode === 'astra_auto')
-            ? 'Astra Auto uses this employee’s voice persona across Astra-supported languages. Engines stay internal.'
-            : (selectedProvider === 'rumik'
-              ? 'Rumik mode shows only languages Rumik genuinely supports.'
-              : 'Languages for the selected provider. Provider extras stay under Advanced.')),
-        langBar,
-        el('div', { class: 'emp-lang-legend' }, [
-          el('span', {}, 'Tested'),
-          el('span', {}, 'Ready for validation'),
-          el('span', {}, 'Available'),
-        ]),
-        saveLang,
-      ]));
-
-      // Multilingual persona preview: Test Vaani in [English ▶] … Does NOT change primary language.
-      const personaIdForPreview = employeePersonaId(emp);
-      const personaName = (personaIdForPreview === 'vaani') ? 'Vaani'
-        : (personaIdForPreview === 'maya') ? 'Maya'
-          : (emp.name || 'Employee');
-      if (personaIdForPreview || voiceMode === 'astra_auto' || selectedProvider === 'auto') {
-        const previewLangs = (selectedProvider === 'auto' || voiceMode === 'astra_auto')
-          ? languagesForSelection()
-          : curatedLanguages().filter((l) => {
-            if (selectedProvider === 'rumik' || selectedProvider === 'deepgram') return l.id === 'en-IN';
-            return true;
-          });
-        const multiBar = el('div', {
-          class: 'emp-lang-chips emp-persona-preview-chips',
-          role: 'group',
-          'aria-label': 'Test ' + personaName + ' in',
-        });
-        let multiBusy = null;
-        previewLangs.forEach((l) => {
-          const short = PERSONA_PREVIEW_LANG_LABELS[l.id] || l.nativeLabel || l.label || l.id;
-          const btn = el('button', {
-            class: 'emp-lang-chip emp-persona-preview-chip',
-            type: 'button',
-            title: 'Preview ' + personaName + ' in ' + short + ' without changing primary language',
-          }, [
-            el('span', { class: 'emp-lang-chip-label' }, short + ' ▶'),
-          ]);
-          btn.onclick = async () => {
-            if (multiBusy) return;
-            const route = personaRouteForLanguage(l.id);
-            const provider = (selectedProvider === 'auto' || voiceMode === 'astra_auto')
-              ? 'auto'
-              : selectedProvider;
-            if (provider === 'rumik' && l.id !== 'en-IN') {
-              toast('Language not supported by selected provider', 'err');
-              return;
-            }
-            if (provider === 'dograh') {
-              toast('Voice unavailable', 'err');
-              return;
-            }
-            const primaryBefore = (emp.voice && emp.voice.language) || emp.language || selectedLanguage;
-            multiBusy = l.id;
-            btn.classList.add('is-active');
-            btn.querySelector('.emp-lang-chip-label').textContent = short + ' …';
-            try {
-              const body = {
-                provider,
-                language: l.id,
-                employeeId: emp.id,
-                persona_id: personaIdForPreview || undefined,
-                voice_mode: voiceMode || 'astra_auto',
-                // Native-language text omitted: server fills persona preview copy.
-              };
-              if (route && route.voice_id && provider !== 'auto') {
-                body.voice_id = route.voice_id;
-              } else if (route && route.voice_id && provider === 'auto') {
-                // Auto resolves from persona routes; voice_id optional.
-              } else if (selectedVoiceId) {
-                body.voice_id = selectedVoiceId;
-              }
-              // When Auto, omit voice_id so persona router picks the mapped speaker.
-              if (provider === 'auto') delete body.voice_id;
-
-              const res = await api('/api/voice/preview', {
-                method: 'POST',
-                timeoutMs: 45000,
-                body,
-              });
-              // Primary language must remain unchanged by multilingual preview.
-              if (emp.voice && primaryBefore && emp.voice.language !== primaryBefore) {
-                emp.voice.language = primaryBefore;
-              }
-              if (!res || typeof res.blob !== 'function' || !res.ok) {
-                throw Object.assign(new Error('Audio generation failed'), {
-                  data: { code: 'audio_generation_failed' },
-                  status: res && res.status,
-                });
-              }
-              const ct = String(res.headers.get('content-type') || '').split(';')[0].trim();
-              if (!ct || ct.indexOf('audio/') !== 0) {
-                throw Object.assign(new Error('Audio generation failed'), {
-                  data: { code: 'audio_generation_failed' },
-                });
-              }
-              const blob = await res.blob();
-              if (!blob || !blob.size) {
-                throw Object.assign(new Error('Audio generation failed'), {
-                  data: { code: 'audio_generation_failed' },
-                });
-              }
-              const url = URL.createObjectURL(blob);
-              const audio = new Audio(url);
-              audio.onended = () => { try { URL.revokeObjectURL(url); } catch (_) {} };
-              await audio.play();
-              toast('Playing ' + personaName + ' · ' + short + ' · Primary language unchanged', 'ok');
-            } catch (e) {
-              const code = (e && e.data && (e.data.code || e.data.category)) || e.code || '';
-              const msg = code === 'needs_funding' ? 'Preview disabled — funding required'
-                : code === 'provider_language_unsupported' ? 'Language not supported by selected provider'
-                  : (e && e.message) || 'Audio generation failed';
-              toast(msg, 'err');
-            } finally {
-              multiBusy = null;
-              btn.classList.remove('is-active');
-              btn.querySelector('.emp-lang-chip-label').textContent = short + ' ▶';
-            }
-          };
-          multiBar.appendChild(btn);
-        });
-        cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
-          el('h4', { class: 't-h4' }, 'Test ' + personaName + ' in'),
-          el('p', { class: 'muted' },
-            'Preview the same voice identity in another language. Does not change the employee’s primary language ('
-            + (PERSONA_PREVIEW_LANG_LABELS[selectedLanguage] || selectedLanguage) + ').'),
-          multiBar,
-        ]));
-      }
-
-      // 4. Filtered voice
-      const voices = voicesForSelection();
-      if (!selectedVoiceId && voices[0]) selectedVoiceId = voices[0].id || voices[0].voice_id || '';
-      const voiceSel = el('select', { class: 'select' },
-        voices.length
-          ? voices.map((vv) => {
-            let label = String(vv.display_name || vv.name || vv.label || vv.id || 'Voice');
-            if (isInvestorDemo()) {
-              label = label.replace(/\bDograh\b/gi, 'Astra').replace(/\bRumik\b/gi, 'Astra');
-            }
-            const id = vv.id || vv.voice_id || vv.name;
-            return el('option', {
-              value: id,
-              selected: id === selectedVoiceId ? 'selected' : null,
-            }, label + (vv.gender ? ' · ' + vv.gender : ''));
-          })
-          : [el('option', { value: '' }, employeeVoiceIdentity(emp) + ' (default)')]
-      );
-      voiceSel.onchange = () => { selectedVoiceId = voiceSel.value; };
-
-      const speedIn = el('input', {
-        class: 'input', type: 'range', min: '0.7', max: '1.2', step: '0.05',
-        value: String(selectedSpeed),
-      });
-      const speedVal = el('span', { class: 'muted' }, String(selectedSpeed));
-      speedIn.oninput = () => {
-        selectedSpeed = Number(speedIn.value);
-        speedVal.textContent = speedIn.value;
-      };
-
-      const previewBtn = el('button', {
-        class: 'btn btn-ghost btn-sm',
-        disabled: canPreview ? null : 'disabled',
-        title: canPreview
-          ? 'Play draft preview for the selected provider, language, and voice'
-          : ('Preview disabled · ' + (meta.state_label || meta.state)),
-      }, canPreview ? 'Preview' : (meta.state === 'needs_funding'
-        ? 'Preview disabled — funding required'
-        : 'Preview disabled'));
-
-      let previewAudio = null;
-      let previewBlobUrl = null;
-      function stopPreviewPlayback() {
-        if (previewAudio) {
-          try { previewAudio.pause(); } catch (_) {}
-          previewAudio = null;
-        }
-        if (previewBlobUrl) {
-          try { URL.revokeObjectURL(previewBlobUrl); } catch (_) {}
-          previewBlobUrl = null;
-        }
-      }
-      function setPreviewLabel(label) {
-        if (!canPreview) return;
-        previewBtn.textContent = label;
-      }
-      function previewErrorMessage(err) {
-        const code = (err && err.data && (err.data.code || err.data.category))
-          || (err && err.code)
+        const route = personaRouteForLanguage(l.id);
+        const saved = savedCfg[l.id] || {};
+        const defaultVoice = saved.voice_id
+          || (route && route.voice_id)
+          || (voiceOptionsForLang(l.id)[0] && voiceOptionsForLang(l.id)[0].id)
           || '';
-        const map = {
-          needs_funding: 'Preview disabled — funding required',
-          needs_credentials: 'Needs credentials',
-          auth_failed: 'Auth failed',
-          voice_unavailable: 'Voice unavailable',
-          audio_generation_failed: 'Audio generation failed',
-          playback_blocked: 'Browser playback blocked',
-          network_error: 'Network error',
-          employee_not_found: 'Voice unavailable',
-        };
-        if (map[code]) return map[code];
-        if (err && err.status === 0) return 'Network error';
-        if (err && /NotAllowedError|play\(\)|autoplay/i.test(String(err.message || err.name || ''))) {
-          return 'Browser playback blocked';
+        const defaultSpeed = saved.speed != null ? Number(saved.speed) : 1;
+        if (!rowState[l.id]) {
+          rowState[l.id] = {
+            voice_id: defaultVoice,
+            speed: defaultSpeed,
+            text: seedSample(l.id),
+            sample: seedSample(l.id),
+          };
+        } else {
+          // Keep ephemeral text; refresh voice/speed defaults only when empty.
+          if (!rowState[l.id].voice_id) rowState[l.id].voice_id = defaultVoice;
+          if (rowState[l.id].speed == null) rowState[l.id].speed = defaultSpeed;
+          if (rowState[l.id].sample == null) rowState[l.id].sample = seedSample(l.id);
         }
-        return (err && err.message) || 'Audio generation failed';
+      });
+
+      function rowStatus(langId) {
+        const meta = currentProviderMeta();
+        const route = personaRouteForLanguage(langId);
+        const voiceId = rowState[langId] && rowState[langId].voice_id;
+        if (meta.state === 'needs_funding') return { label: 'Needs funding', tone: 'funding' };
+        if (meta.state === 'needs_credentials') return { label: 'Needs credentials', tone: 'creds' };
+        if (meta.state === 'unavailable') return { label: 'Unavailable', tone: 'unavailable' };
+        if (selectedProvider === 'rumik' && langId !== 'en-IN') {
+          return { label: 'Unsupported', tone: 'unavailable' };
+        }
+        if (!voiceId && !(route && route.voice_id)) {
+          return { label: 'No voice', tone: 'creds' };
+        }
+        return { label: 'Ready', tone: 'ready' };
       }
 
-      previewBtn.onclick = async () => {
-        if (!canPreview) {
-          toast(
-            meta.state === 'needs_funding'
-              ? 'Preview disabled — funding required'
-              : ('Preview disabled · ' + (meta.state_label || 'Unavailable')),
-            'info',
-          );
+      async function previewRow(langId, btn) {
+        const row = rowState[langId];
+        if (!row) return;
+        const st = rowStatus(langId);
+        if (st.tone !== 'ready') {
+          toast(st.label === 'Needs funding'
+            ? 'Preview disabled — funding required'
+            : ('Preview disabled · ' + st.label), 'info');
           return;
         }
-        // Stop / Replay when already playing from a prior successful play().
-        if (previewAudio && !previewAudio.paused) {
-          stopPreviewPlayback();
-          setPreviewLabel('Replay');
-          return;
-        }
-        if (previewBtn.dataset.busy === '1') return;
-
-        const provider = selectedProvider === 'auto' ? 'auto' : selectedProvider;
-        const language = String(selectedLanguage || '').trim();
-        // Astra Auto: omit voice_id so persona language_routes pick the mapped speaker.
-        let voice_id = String(selectedVoiceId || '').trim();
-        if (provider === 'auto') {
-          const route = personaRouteForLanguage(language);
-          voice_id = route && route.voice_id ? route.voice_id : voice_id;
-        }
-        if (!voice_id && provider !== 'auto') {
-          toast('Voice unavailable', 'err');
-          return;
-        }
-        // Never silent Maya fallback. Preview uses the currently selected chips.
+        const provider = (selectedProvider === 'auto' || voiceMode === 'astra_auto')
+          ? 'auto'
+          : selectedProvider;
         if (provider === 'dograh') {
           toast('Voice unavailable', 'err');
           return;
         }
-        if (provider === 'rumik' && language && language !== 'en-IN') {
+        if (provider === 'rumik' && langId !== 'en-IN') {
           toast('Language not supported by selected provider', 'err');
           return;
         }
-
-        previewBtn.dataset.busy = '1';
-        previewBtn.disabled = true;
-        setPreviewLabel('Loading…');
-        stopPreviewPlayback();
-
+        let text = String(row.text || '').trim();
+        if (!text) {
+          toast('TTS Test Text is empty. Use sample or enter text.', 'info');
+          return;
+        }
+        if (text.length > TTS_PREVIEW_MAX_CHARS) {
+          text = text.slice(0, TTS_PREVIEW_MAX_CHARS);
+          row.text = text;
+        }
+        const prevLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '…';
         try {
           const body = {
             provider,
-            language,
+            language: langId,
             employeeId: emp.id,
             persona_id: employeePersonaId(emp) || undefined,
             voice_mode: voiceMode || 'astra_auto',
-            text: 'Hello, this is a preview from Astra Voice.',
+            voice_id: row.voice_id || undefined,
+            speed: Number(row.speed) || 1,
+            text,
+            // Explicit: preview-only. Never treat as system prompt / knowledge.
+            preview_only: true,
           };
-          if (voice_id) body.voice_id = voice_id;
-          if (provider === 'auto' && !voice_id) {
-            // Server resolves from persona language_routes.
+          if (provider === 'auto' && !body.voice_id) {
+            const route = personaRouteForLanguage(langId);
+            if (route && route.voice_id) body.voice_id = route.voice_id;
           }
           const res = await api('/api/voice/preview', {
             method: 'POST',
             timeoutMs: 45000,
             body,
           });
-          if (!res || typeof res.blob !== 'function') {
+          if (!res || typeof res.blob !== 'function' || !res.ok) {
             throw Object.assign(new Error('Audio generation failed'), {
               data: { code: 'audio_generation_failed' },
-            });
-          }
-          if (!res.ok) {
-            throw Object.assign(new Error('Audio generation failed'), {
-              status: res.status,
-              data: { code: 'audio_generation_failed' },
+              status: res && res.status,
             });
           }
           const ct = String(res.headers.get('content-type') || '').split(';')[0].trim();
@@ -3668,37 +3529,242 @@ async function viewEmployeeStudio(root, id) {
               data: { code: 'audio_generation_failed' },
             });
           }
-          previewBlobUrl = URL.createObjectURL(blob);
-          const audio = new Audio(previewBlobUrl);
-          previewAudio = audio;
-          audio.onended = () => {
-            stopPreviewPlayback();
-            setPreviewLabel('Replay');
-            previewBtn.disabled = !canPreview;
-            previewBtn.dataset.busy = '';
-          };
-          // play() must stay inside the click gesture chain. Only show Playing after it starts.
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onended = () => { try { URL.revokeObjectURL(url); } catch (_) {} };
           await audio.play();
-          setPreviewLabel('Playing… · Stop');
-          toast('Playing draft preview · Draft voice · Not active', 'ok');
+          toast('Playing · ' + (PERSONA_PREVIEW_LANG_LABELS[langId] || langId)
+            + ' · ' + titleCaseVoice(row.voice_id)
+            + ' · Preview only (not saved)', 'ok');
         } catch (e) {
-          stopPreviewPlayback();
-          const msg = previewErrorMessage(e);
+          const code = (e && e.data && (e.data.code || e.data.category)) || e.code || '';
+          let msg = code === 'needs_funding' ? 'Preview disabled — funding required'
+            : code === 'provider_language_unsupported' ? 'Language not supported by selected provider'
+              : code === 'playback_blocked' ? 'Browser playback blocked'
+                : (e && e.message) || 'Audio generation failed';
+          if (e && /NotAllowedError|play\(\)|autoplay/i.test(String(e.message || e.name || ''))) {
+            msg = 'Browser playback blocked';
+          }
           toast(msg, 'err');
-          setPreviewLabel(canPreview ? 'Preview' : previewBtn.textContent);
-          if (msg.indexOf('funding') !== -1) {
-            setPreviewLabel('Preview disabled — funding required');
-            previewBtn.disabled = true;
-            previewBtn.title = msg;
-          }
         } finally {
-          previewBtn.dataset.busy = '';
-          if (previewBtn.textContent.indexOf('Playing') === -1
-            && previewBtn.textContent.indexOf('funding') === -1) {
-            previewBtn.disabled = !canPreview;
-          } else if (previewBtn.textContent.indexOf('Playing') !== -1) {
-            previewBtn.disabled = false;
+          btn.disabled = false;
+          btn.textContent = prevLabel;
+        }
+      }
+
+      const saveStateEl = el('p', { class: 'muted emp-lvt-save-state' }, 'All changes saved');
+      function updateSaveState() {
+        const dirty = Object.keys(rowState).some((k) => rowState[k] && rowState[k].dirty);
+        saveStateEl.textContent = dirty ? 'Unsaved changes' : 'All changes saved';
+        saveStateEl.classList.toggle('is-dirty', !!dirty);
+      }
+      async function persistLanguageVoiceConfig(partialLangId) {
+        const body = partialLangId
+          ? {
+            merge: true,
+            language: partialLangId,
+            voice_id: rowState[partialLangId] && rowState[partialLangId].voice_id,
+            speed: rowState[partialLangId] && rowState[partialLangId].speed,
+            primary_language: selectedLanguage,
           }
+          : {
+            language: selectedLanguage,
+            languageVoiceConfig: (() => {
+              const full = {};
+              langs.forEach((l) => {
+                const r = rowState[l.id];
+                if (!r || !r.voice_id) return;
+                full[l.id] = { voice_id: r.voice_id, speed: Number(r.speed) || 1 };
+              });
+              return full;
+            })(),
+          };
+        const res = await api('/api/employees/' + encodeURIComponent(emp.id) + '/language-voice-config', {
+          method: 'PUT',
+          body,
+        });
+        if (partialLangId && rowState[partialLangId]) rowState[partialLangId].dirty = false;
+        else Object.keys(rowState).forEach((k) => { if (rowState[k]) rowState[k].dirty = false; });
+        emp.voice = emp.voice || {};
+        if (res && res.languageVoiceConfig) emp.voice.languageVoiceConfig = res.languageVoiceConfig;
+        if (res && res.language) emp.voice.language = res.language;
+        updateSaveState();
+        return res;
+      }
+
+      const tableWrap = el('div', { class: 'emp-lang-voice-table-wrap' });
+      const table = el('table', {
+        class: 'emp-lang-voice-table',
+        role: 'table',
+        'aria-label': 'Voice by Language configuration',
+      });
+      table.appendChild(el('thead', {}, el('tr', {}, [
+        el('th', {}, 'Language'),
+        el('th', {}, 'Voice'),
+        el('th', {}, 'Speed'),
+        el('th', {}, 'TTS Test Text'),
+        el('th', {}, 'Preview'),
+        el('th', {}, 'Status'),
+      ])));
+      const tbody = el('tbody', {});
+      langs.forEach((l) => {
+        const row = rowState[l.id];
+        const opts = voiceOptionsForLang(l.id);
+        if (!opts.some((o) => o.id === row.voice_id) && opts[0]) row.voice_id = opts[0].id;
+        const voiceSel = el('select', { class: 'select emp-lvt-voice', 'aria-label': 'Voice for ' + (l.label || l.id) },
+          opts.map((o) => el('option', {
+            value: o.id,
+            selected: o.id === row.voice_id ? 'selected' : null,
+          }, o.label))
+        );
+        voiceSel.onchange = () => { row.voice_id = voiceSel.value; row.dirty = true; updateSaveState(); };
+
+        const speedVal = el('span', { class: 'muted emp-lvt-speed-x' },
+          Number(row.speed).toFixed(2) + 'x');
+        const speedIn = el('input', {
+          class: 'emp-lvt-speed',
+          type: 'range',
+          min: '0.7',
+          max: '1.2',
+          step: '0.05',
+          value: String(Number(row.speed) || 1),
+          'aria-label': 'Speed for ' + (l.label || l.id),
+        });
+        speedIn.oninput = () => {
+          let n = Number(speedIn.value);
+          if (!Number.isFinite(n)) n = 1;
+          n = Math.max(0.7, Math.min(1.2, Math.round(n * 100) / 100));
+          row.speed = n;
+          speedVal.textContent = n.toFixed(2) + 'x';
+          row.dirty = true;
+          updateSaveState();
+        };
+
+        const textArea = el('textarea', {
+          class: 'input emp-lvt-text',
+          rows: '2',
+          maxlength: String(TTS_PREVIEW_MAX_CHARS),
+          'aria-label': 'TTS test text for ' + (l.label || l.id),
+        });
+        textArea.value = row.text || '';
+        textArea.oninput = () => {
+          row.text = String(textArea.value || '').slice(0, TTS_PREVIEW_MAX_CHARS);
+          if (textArea.value.length > TTS_PREVIEW_MAX_CHARS) {
+            textArea.value = row.text;
+          }
+          charHint.textContent = String(row.text.length) + ' / ' + TTS_PREVIEW_MAX_CHARS;
+        };
+        const charHint = el('span', { class: 'muted emp-lvt-chars' },
+          String((row.text || '').length) + ' / ' + TTS_PREVIEW_MAX_CHARS);
+        const useSampleBtn = el('button', {
+          class: 'btn btn-ghost btn-xs', type: 'button',
+        }, 'Use sample');
+        useSampleBtn.onclick = () => {
+          const sample = seedSample(l.id);
+          row.sample = sample;
+          row.text = sample;
+          textArea.value = sample;
+          charHint.textContent = String(sample.length) + ' / ' + TTS_PREVIEW_MAX_CHARS;
+        };
+        const clearBtn = el('button', {
+          class: 'btn btn-ghost btn-xs', type: 'button',
+        }, 'Clear');
+        clearBtn.onclick = () => {
+          row.text = '';
+          textArea.value = '';
+          charHint.textContent = '0 / ' + TTS_PREVIEW_MAX_CHARS;
+        };
+        const textCell = el('div', { class: 'emp-lvt-text-cell' }, [
+          textArea,
+          el('div', { class: 'emp-lvt-text-actions' }, [useSampleBtn, clearBtn, charHint]),
+        ]);
+
+        const previewBtn = el('button', {
+          class: 'btn btn-ghost btn-sm emp-lvt-preview',
+          type: 'button',
+          title: 'Preview selected language + voice + speed + current text',
+        }, '▶ Preview');
+        previewBtn.onclick = () => previewRow(l.id, previewBtn);
+
+        const st = rowStatus(l.id);
+        const statusEl = el('span', {
+          class: 'emp-lvt-status is-' + st.tone,
+        }, st.label);
+        const rowSaveBtn = el('button', {
+          class: 'btn btn-ghost btn-xs emp-lvt-row-save',
+          type: 'button',
+          title: 'Save this language row',
+        }, 'Save');
+        rowSaveBtn.onclick = async () => {
+          rowSaveBtn.disabled = true;
+          try {
+            await persistLanguageVoiceConfig(l.id);
+            toast('Saved ' + (PERSONA_PREVIEW_LANG_LABELS[l.id] || l.id) + ' voice settings.', 'ok');
+          } catch (e) {
+            toast((e && e.message) || 'Save failed', 'err');
+          } finally {
+            rowSaveBtn.disabled = false;
+          }
+        };
+        const statusCell = el('div', { class: 'emp-lvt-status-cell' }, [statusEl, rowSaveBtn]);
+
+        const langLabel = el('div', { class: 'emp-lvt-lang' }, [
+          el('strong', {}, l.label || PERSONA_PREVIEW_LANG_LABELS[l.id] || l.id),
+          l.id === selectedLanguage
+            ? el('span', { class: 'emp-lvt-primary-pill' }, 'Primary')
+            : el('button', {
+              class: 'btn btn-ghost btn-xs',
+              type: 'button',
+              title: 'Set as primary language for new calls',
+              onclick: () => {
+                selectedLanguage = l.id;
+                selectedVoiceId = row.voice_id || selectedVoiceId;
+                selectedSpeed = Number(row.speed) || selectedSpeed;
+                renderCascade();
+              },
+            }, 'Set primary'),
+        ]);
+
+        tbody.appendChild(el('tr', { 'data-language': l.id }, [
+          el('td', {}, langLabel),
+          el('td', {}, voiceSel),
+          el('td', { class: 'emp-lvt-speed-td' }, [speedIn, speedVal]),
+          el('td', {}, textCell),
+          el('td', {}, previewBtn),
+          el('td', {}, statusCell),
+        ]));
+      });
+      table.appendChild(tbody);
+      tableWrap.appendChild(table);
+
+      const saveTableBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Save voice settings');
+      saveTableBtn.onclick = async () => {
+        saveTableBtn.disabled = true;
+        try {
+          await persistLanguageVoiceConfig();
+          const primaryRow = rowState[selectedLanguage];
+          // Draft mirror only for non-Maya. Maya production stays untouched.
+          if (primaryRow && primaryRow.voice_id && !isMayaEmp) {
+            try {
+              await api('/api/employees/' + encodeURIComponent(emp.id) + '/runtime-config/draft', {
+                method: 'POST',
+                body: {
+                  tts: {
+                    provider: 'auto',
+                    voice_id: primaryRow.voice_id,
+                    language: selectedLanguage,
+                    speed: Number(primaryRow.speed) || 1,
+                  },
+                },
+              });
+            } catch (_) { /* draft optional */ }
+          }
+          State.loaded.employees = false;
+          toast('Saved voice settings. Preview text was not saved.', 'ok');
+        } catch (e) {
+          toast((e && e.message) || 'Save failed', 'err');
+        } finally {
+          saveTableBtn.disabled = false;
         }
       };
 
@@ -3706,7 +3772,7 @@ async function viewEmployeeStudio(root, id) {
         class: 'btn btn-primary btn-sm',
         disabled: (!canPreview || isMayaEmp) ? 'disabled' : null,
         title: isMayaEmp
-          ? 'Maya production voice is protected. Draft only.'
+          ? 'Maya production voice is protected. Draft only. WF8 unchanged.'
           : (canPreview ? 'Activate this employee runtime config' : 'Activate disabled'),
       }, isMayaEmp ? 'Activate (protected)' : 'Activate');
       activateBtn.onclick = async () => {
@@ -3716,15 +3782,16 @@ async function viewEmployeeStudio(root, id) {
         }
         activateBtn.disabled = true;
         try {
-          // Persist current cascade selection as draft, then activate.
+          await saveTableBtn.onclick();
+          const primary = (cascadeHost._langVoiceRows || {})[selectedLanguage] || {};
           await api('/api/employees/' + encodeURIComponent(emp.id) + '/runtime-config/draft', {
             method: 'POST',
             body: {
               tts: {
-                provider: selectedProvider === 'auto' ? 'deepgram' : selectedProvider,
-                voice_id: selectedVoiceId || voiceSel.value,
+                provider: selectedProvider === 'auto' ? 'sarvam' : selectedProvider,
+                voice_id: primary.voice_id || selectedVoiceId,
                 language: selectedLanguage,
-                speed: Number(speedIn.value) || 1.0,
+                speed: Number(primary.speed) || 1,
               },
             },
           });
@@ -3745,43 +3812,23 @@ async function viewEmployeeStudio(root, id) {
         finally { activateBtn.disabled = !canPreview || isMayaEmp; }
       };
 
-      const saveDraftBtn = el('button', {
-        class: 'btn btn-ghost btn-sm',
-      }, 'Save draft');
-      saveDraftBtn.onclick = async () => {
-        saveDraftBtn.disabled = true;
-        try {
-          await api('/api/employees/' + encodeURIComponent(emp.id) + '/runtime-config/draft', {
-            method: 'POST',
-            body: {
-              tts: {
-                provider: selectedProvider === 'auto' ? 'deepgram' : selectedProvider,
-                voice_id: selectedVoiceId || voiceSel.value,
-                language: selectedLanguage,
-                speed: Number(speedIn.value) || 1.0,
-              },
-            },
-          });
-          toast('Draft saved for ' + (emp.name || 'employee') + '. Not live until Activate.', 'ok');
-        } catch (e) { toast(e.message || 'Draft save failed', 'err'); }
-        finally { saveDraftBtn.disabled = false; }
-      };
-
-      cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-top:16px' }, [
-        el('h4', { class: 't-h4' }, 'Voice'),
+      cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
+        el('h4', { class: 't-h4' }, 'Voice by Language'),
         el('p', { class: 'muted' },
-          'Voice: ' + employeeVoiceIdentity(emp)
-          + ' · Mode: ' + ((modes.find((m) => m.id === voiceMode) || {}).label || voiceMode)
-          + ' · Draft voice · Not active'),
-        field('Voice', voiceSel),
-        el('div', { class: 'flex gap-2 items-center', style: 'margin:10px 0;flex-wrap:wrap' }, [
-          el('label', { class: 'muted' }, 'Speed'),
-          speedIn,
-          speedVal,
-          previewBtn,
-          saveDraftBtn,
+          'Configure voice and speed per language. Call start locks the selected voice + speed. '
+          + 'Mid-call language switches keep that lock (language_code only). '
+          + 'TTS Test Text is Preview only and is never saved as instructions or knowledge.'),
+        tableWrap,
+        saveStateEl,
+        el('div', { class: 'flex gap-2', style: 'margin-top:12px;flex-wrap:wrap' }, [
+          saveTableBtn,
           activateBtn,
         ]),
+        el('p', { class: 'muted', style: 'margin-top:8px' },
+          'Voice: ' + employeeVoiceIdentity(emp)
+          + ' · Mode: ' + ((modes.find((m) => m.id === voiceMode) || {}).label || voiceMode)
+          + ' · Primary: ' + (PERSONA_PREVIEW_LANG_LABELS[selectedLanguage] || selectedLanguage)
+          + ' · Draft voice · Not active'),
         !canPreview
           ? el('p', { class: 'muted', style: 'margin-top:8px' },
             'Preview and Activate disabled · ' + (meta.state_label || 'Unavailable'))
@@ -3795,9 +3842,10 @@ async function viewEmployeeStudio(root, id) {
         : [];
       if (dbgRoutes.length && !isInvestorDemo()) {
         const advRoutes = el('details', { class: 'emp-panel', style: 'margin-top:14px' });
-        advRoutes.appendChild(el('summary', { class: 't-h4', style: 'cursor:pointer' }, 'Advanced · Persona routes'));
+        advRoutes.appendChild(el('summary', { class: 't-h4', style: 'cursor:pointer' }, 'Advanced · Persona starting voices'));
         advRoutes.appendChild(el('p', { class: 'muted' },
-          'Internal Astra Voice routing for ' + employeeVoiceIdentity(emp)
+          'Starting-voice map for new calls only (not mid-call speaker switches). Internal Astra Voice routing for '
+          + employeeVoiceIdentity(emp)
           + '. Customer identity stays the persona. Engines are not customer-facing labels.'));
         const list = el('ul', { class: 'emp-persona-route-list' });
         dbgRoutes.forEach((r) => {
@@ -3970,7 +4018,7 @@ async function viewEmployeeStudio(root, id) {
       }
     }
 
-    renderCascade();
+    ensureDraftLanguageVoiceSeed().finally(() => renderCascade());
   } else if (tab === 'settings') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Settings'));
     const nameIn = el('input', { class: 'input', value: emp.name || '' });
