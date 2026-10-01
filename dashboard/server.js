@@ -596,11 +596,12 @@ async function apiVoicePreview(req, res, ctx) {
         language: out.language,
         employeeId: out.employeeId,
         chars: out.chars,
+        managed_via: out.managed_via || undefined,
         // Data URL keeps the contract playable without a secondary fetch.
         audio_url: 'data:' + out.mime_type + ';base64,' + out.buffer.toString('base64'),
       });
     }
-    core.send(res, 200, out.buffer, {
+    const headers = {
       'Content-Type': out.contentType,
       'Content-Length': out.buffer.length,
       'X-Chars': String(out.chars),
@@ -608,8 +609,9 @@ async function apiVoicePreview(req, res, ctx) {
       'X-Preview-Voice': out.voice_id,
       'X-Preview-Language': out.language || '',
       'X-Credits-Used': out.credits || '',
-    });
-  } catch (e) {
+    };
+    if (out.managed_via) headers['X-Preview-Managed-Via'] = out.managed_via;
+    core.send(res, 200, out.buffer, headers);  } catch (e) {
     if (e instanceof voicePreview.PreviewError) {
       const pub = voicePreview.publicPreviewError(e);
       return core.sendJson(res, pub.status, pub.body);

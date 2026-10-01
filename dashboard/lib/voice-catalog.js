@@ -81,21 +81,33 @@ function resolveProviderState(providerId) {
     };
   }
   if (id === 'dograh') {
+    // Managed preview is served via Rumik (no Dograh TTS adapter in dashboard).
+    // can_preview follows Rumik readiness so the Managed chip is not hard-blocked.
+    const rumikState = (() => {
+      if (!hasEnvKey('RUMIK_API_KEY')) {
+        return { can_preview: false, reason: 'rumik_api_key_missing' };
+      }
+      if (envFlag('RUMIK_NEEDS_FUNDING')
+        || String(process.env.RUMIK_ACCOUNT_STATUS || '').trim().toLowerCase() === 'needs_funding') {
+        return { can_preview: false, reason: 'rumik_needs_funding' };
+      }
+      return { can_preview: true, reason: null };
+    })();
     if (!dograhDiscovery.hasDograhCreds()) {
       return {
-        state: PROVIDER_STATE.NEEDS_CREDENTIALS,
-        label: 'Needs credentials',
-        can_preview: false,
+        state: rumikState.can_preview ? PROVIDER_STATE.READY : PROVIDER_STATE.NEEDS_CREDENTIALS,
+        label: rumikState.can_preview ? 'Ready' : 'Needs credentials',
+        can_preview: rumikState.can_preview,
         can_activate: false,
-        reason: 'managed_service_not_configured',
+        reason: rumikState.can_preview ? 'managed_via_rumik' : 'managed_service_not_configured',
       };
     }
     return {
-      state: PROVIDER_STATE.READY,
-      label: 'Ready',
-      can_preview: true,
+      state: rumikState.can_preview ? PROVIDER_STATE.READY : PROVIDER_STATE.NEEDS_CREDENTIALS,
+      label: rumikState.can_preview ? 'Ready' : 'Needs credentials',
+      can_preview: rumikState.can_preview,
       can_activate: false,
-      reason: null,
+      reason: rumikState.can_preview ? 'managed_via_rumik' : rumikState.reason,
     };
   }
   if (id === 'deepgram') {

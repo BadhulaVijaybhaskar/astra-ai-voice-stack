@@ -140,16 +140,28 @@ const SARVAM_V3_SPEAKERS = Object.freeze([
   { voice_id: 'rupali', gender: 'female', status: 'available' },
 ]);
 
-/** Legacy Bulbul v2 speakers (docs default anushka). */
+/**
+ * Deprecated Bulbul v2 speakers (docs default anushka).
+ * Kept for lookup so preview/activate can map them to voice_unavailable
+ * instead of sending v2 IDs to the Bulbul v3 API (Audio generation failed).
+ */
 const SARVAM_V2_SPEAKERS = Object.freeze([
-  { voice_id: 'anushka', gender: 'female', status: 'legacy' },
-  { voice_id: 'abhilash', gender: 'male', status: 'legacy' },
-  { voice_id: 'manisha', gender: 'female', status: 'legacy' },
-  { voice_id: 'vidya', gender: 'female', status: 'legacy' },
-  { voice_id: 'arya', gender: 'female', status: 'legacy' },
-  { voice_id: 'karun', gender: 'male', status: 'legacy' },
-  { voice_id: 'hitesh', gender: 'male', status: 'legacy' },
+  { voice_id: 'anushka', gender: 'female', status: 'voice_unavailable' },
+  { voice_id: 'abhilash', gender: 'male', status: 'voice_unavailable' },
+  { voice_id: 'manisha', gender: 'female', status: 'voice_unavailable' },
+  { voice_id: 'vidya', gender: 'female', status: 'voice_unavailable' },
+  { voice_id: 'arya', gender: 'female', status: 'voice_unavailable' },
+  { voice_id: 'karun', gender: 'male', status: 'voice_unavailable' },
+  { voice_id: 'hitesh', gender: 'male', status: 'voice_unavailable' },
 ]);
+
+const SARVAM_V2_VOICE_IDS = Object.freeze(
+  new Set(SARVAM_V2_SPEAKERS.map((s) => s.voice_id)),
+);
+
+function isSarvamV2VoiceId(voiceId) {
+  return SARVAM_V2_VOICE_IDS.has(String(voiceId || '').trim().toLowerCase());
+}
 
 /**
  * Per-language recommended speakers (Sarvam best-practices docs).
@@ -214,11 +226,11 @@ function normalizeVoiceRow(row) {
   };
 }
 
-function buildSarvamVoices() {
+function buildSarvamVoices(opts = {}) {
+  const includeUnavailable = opts.includeUnavailable === true;
   const out = [];
-  // Multilingual speakers: one catalog row per speaker with language "" so the
-  // UI can pair any Sarvam language mapping with any speaker. Language filter
-  // uses language_map / languages rather than per-row language exclusivity.
+  // Prefer Bulbul v3 speakers first. Multilingual: one row per speaker with
+  // language "" so the UI can pair any Sarvam language mapping with any speaker.
   for (const s of SARVAM_V3_SPEAKERS) {
     out.push(normalizeVoiceRow({
       provider: 'sarvam',
@@ -230,16 +242,20 @@ function buildSarvamVoices() {
       status: s.status,
     }));
   }
-  for (const s of SARVAM_V2_SPEAKERS) {
-    out.push(normalizeVoiceRow({
-      provider: 'sarvam',
-      voice_id: s.voice_id,
-      display_name: titleCase(s.voice_id) + ' (v2)',
-      language: '',
-      model: 'bulbul:v2',
-      gender: s.gender,
-      status: s.status,
-    }));
+  // Deprecated v2 speakers stay findable for error mapping, but are excluded
+  // from the default product catalog so the UI does not offer them.
+  if (includeUnavailable) {
+    for (const s of SARVAM_V2_SPEAKERS) {
+      out.push(normalizeVoiceRow({
+        provider: 'sarvam',
+        voice_id: s.voice_id,
+        display_name: titleCase(s.voice_id) + ' (v2)',
+        language: '',
+        model: 'bulbul:v2',
+        gender: s.gender,
+        status: s.status,
+      }));
+    }
   }
   return out;
 }
@@ -272,15 +288,15 @@ function listProviders() {
   return PROVIDERS.map((p) => ({ id: p.id, label: p.label }));
 }
 
-function listAllVoices() {
-  return buildSarvamVoices().concat(buildDeepgramVoices(), buildRumikVoices());
+function listAllVoices(opts = {}) {
+  return buildSarvamVoices(opts).concat(buildDeepgramVoices(), buildRumikVoices());
 }
 
 function filterVoices(opts = {}) {
   const provider = opts.provider ? String(opts.provider).trim().toLowerCase() : '';
   const language = opts.language ? String(opts.language).trim() : '';
   const model = opts.model ? String(opts.model).trim() : '';
-  let voices = listAllVoices();
+  let voices = listAllVoices(opts);
   if (provider) voices = voices.filter((v) => v.provider === provider);
   if (model) voices = voices.filter((v) => v.model === model);
   if (language) {
@@ -291,6 +307,11 @@ function filterVoices(opts = {}) {
       if (v.language === 'en' && /^en([-_]|$)/i.test(language)) return true;
       return false;
     });
+  }
+  // Product catalog prefers available voices. voice_unavailable / legacy stay
+  // out of pickers unless includeUnavailable is set.
+  if (opts.includeUnavailable !== true) {
+    voices = voices.filter((v) => v.status === 'available');
   }
   return voices;
 }
@@ -328,7 +349,9 @@ function getCatalog(opts = {}) {
 function findVoice(provider, voiceId) {
   const p = String(provider || '').trim().toLowerCase();
   const id = String(voiceId || '').trim();
-  return listAllVoices().find((v) => v.provider === p && v.voice_id === id) || null;
+  // Include deprecated rows so callers can map v2 IDs to voice_unavailable.
+  return listAllVoices({ includeUnavailable: true })
+    .find((v) => v.provider === p && v.voice_id === id) || null;
 }
 
 const DRAFT_PROVIDERS = new Set(['sarvam', 'deepgram', 'rumik']);
@@ -430,6 +453,8 @@ module.exports = {
   PROVIDERS,
   SARVAM_LANGUAGES,
   SARVAM_LANGUAGE_RECOMMENDATIONS,
+  SARVAM_V2_SPEAKERS,
+  SARVAM_V3_SPEAKERS,
   ASTRA_SUPPORTED_LANGUAGES,
   VALIDATED_LANGUAGE_IDS,
   listAstraSupportedLanguages,
@@ -440,6 +465,7 @@ module.exports = {
   listAllVoices,
   filterVoices,
   findVoice,
+  isSarvamV2VoiceId,
   listProviders,
   normalizeVoiceRow,
   normalizeDraftVoiceRef,

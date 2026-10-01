@@ -221,8 +221,11 @@ function normalizeTts(input, existing) {
   const language = String(b.language != null ? b.language : base.language || 'en')
     .trim().slice(0, 40) || 'en';
   const speed = clampSpeed(b.speed != null ? b.speed : base.speed, 1.0);
+  // Prefer Bulbul v3 (shubh). Deprecated v2 defaults (anushka / bulbul:v2) caused
+  // preview Audio generation failed when the UI sent v2 IDs to the v3 API.
+  // Maya production TTS activation is unchanged (Activate still blocked for WF8).
   const modelDefault = provider === 'rumik' ? 'mulberry'
-    : (provider === 'sarvam' ? 'bulbul:v2' : 'aura-2');
+    : (provider === 'sarvam' ? 'bulbul:v3' : 'aura-2');
   const model = String(b.model != null ? b.model : base.model || modelDefault)
     .trim().slice(0, 80) || modelDefault;
   const providerChanged = b.provider != null
@@ -242,7 +245,7 @@ function normalizeTts(input, existing) {
     value: {
       provider,
       voice_id: voice_id || (provider === 'rumik' ? 'ira'
-        : (provider === 'sarvam' ? 'anushka' : 'aura-2-helena-en')),
+        : (provider === 'sarvam' ? 'shubh' : 'aura-2-helena-en')),
       language,
       speed,
       model,

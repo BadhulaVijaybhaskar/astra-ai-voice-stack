@@ -175,7 +175,8 @@ function buildSynthesizeOpts(providerId, voiceId, language, text) {
     opts.voice_id = model;
     opts.speaker = model;
   } else if (providerId === 'sarvam') {
-    opts.model = (known && known.model) || 'bulbul:v3';
+    // Always prefer Bulbul v3 for preview. Never send deprecated v2 model IDs.
+    opts.model = 'bulbul:v3';
     opts.speaker = String(voiceId || (known && known.voice_id) || 'shubh').toLowerCase();
     opts.language = language || 'en-IN';
   } else if (providerId === 'rumik') {
@@ -183,6 +184,43 @@ function buildSynthesizeOpts(providerId, voiceId, language, text) {
     opts.speaker = voiceId || (known && known.voice_id) || 'speaker_1';
   }
   return opts;
+}
+
+/**
+ * Dograh managed runtime has no dashboard TTS synthesize adapter.
+ * Preview is served via Rumik so the Managed chip is not hard-blocked.
+ */
+function resolveManagedPreviewViaRumik(voiceId) {
+  gateProvider('rumik');
+  const requested = String(voiceId || '').trim();
+  const rumikHit = requested ? voiceCatalog.findVoice('rumik', requested) : null;
+  return {
+    provider: 'rumik',
+    voice_id: rumikHit ? rumikHit.voice_id : 'speaker_2',
+    managed_via: 'rumik',
+  };
+}
+
+function assertSarvamVoicePreviewable(voiceId) {
+  const id = String(voiceId || '').trim().toLowerCase();
+  if (!id) return;
+  if (voiceCatalog.isSarvamV2VoiceId(id)) {
+    throw new PreviewError(
+      'Voice unavailable',
+      422,
+      'voice_unavailable',
+      { provider: 'sarvam', voice_id: id, reason: 'deprecated_bulbul_v2', prefer: 'bulbul:v3' },
+    );
+  }
+  const known = voiceCatalog.findVoice('sarvam', id);
+  if (known && (known.status === 'voice_unavailable' || known.status === 'legacy')) {
+    throw new PreviewError(
+      'Voice unavailable',
+      422,
+      'voice_unavailable',
+      { provider: 'sarvam', voice_id: id, status: known.status, model: known.model },
+    );
+  }
 }
 
 /**
@@ -237,32 +275,35 @@ async function synthesizePreview(input = {}) {
     }
   }
 
-  if (provider === 'dograh') {
-    // Dograh managed runtime TTS is not exposed as a dashboard synthesize adapter.
-    throw new PreviewError(
-      'Voice unavailable',
-      422,
-      'voice_unavailable',
-      { provider: 'dograh', reason: 'managed_preview_unsupported' },
-    );
-  }
+  let managedVia = null;
+  let effectiveVoiceId = voiceId;
 
-  if (!PREVIEWABLE_TTS.has(provider)) {
+  if (provider === 'dograh') {
+    // Was managed_preview_unsupported. Allow Managed preview via Rumik.
+    const routed = resolveManagedPreviewViaRumik(voiceId);
+    provider = routed.provider;
+    effectiveVoiceId = routed.voice_id;
+    managedVia = routed.managed_via;
+  } else if (!PREVIEWABLE_TTS.has(provider)) {
     throw new PreviewError(
       'Voice unavailable',
       422,
       'voice_unavailable',
       { provider },
     );
+  } else {
+    gateProvider(provider);
   }
 
-  gateProvider(provider);
-
-  if (!voiceId) {
+  if (!effectiveVoiceId) {
     throw new PreviewError('Voice unavailable', 422, 'voice_unavailable', { reason: 'voice_id_required' });
   }
 
-  const opts = buildSynthesizeOpts(provider, voiceId, effectiveLanguage, text);
+  if (provider === 'sarvam') {
+    assertSarvamVoicePreviewable(effectiveVoiceId);
+  }
+
+  const opts = buildSynthesizeOpts(provider, effectiveVoiceId, effectiveLanguage, text);
 
   let adapter;
   try {
@@ -297,10 +338,11 @@ async function synthesizePreview(input = {}) {
     mime_type: contentType,
     chars: out.chars || text.length,
     provider,
-    voice_id: voiceId,
+    voice_id: effectiveVoiceId,
     language: effectiveLanguage || opts.language || '',
     employeeId: employee ? employee.id : null,
     credits: out.credits || '',
+    managed_via: managedVia,
   };
 }
 
@@ -341,4 +383,6 @@ module.exports = {
   gateProvider,
   mapUpstreamPreviewError,
   buildSynthesizeOpts,
+  resolveManagedPreviewViaRumik,
+  assertSarvamVoicePreviewable,
 };
