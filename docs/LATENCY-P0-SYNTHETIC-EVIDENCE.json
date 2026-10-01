@@ -1,9 +1,57 @@
 {
-  "generated_at": "2026-10-01T12:06:47.729Z",
+  "generated_at": "2026-10-01T12:41:37.536Z",
   "mode": "synthetic_designed_budgets",
   "note": "Replace AFTER_* with live Hostinger Browser Talk measurements before PSTN QA.",
   "report": {
     "primary_metric": "speech_end → first audible response (NOT total answer length)",
+    "measurement": {
+      "clock": "one_monotonic_per_turn",
+      "origin": "speech_end (t0)",
+      "unit": "ms",
+      "never_sum_medians": true,
+      "why_prior_medians_inconsistent": [
+        "Server Date.now mixed into client llm_first_token while speech_end used client Date.now",
+        "UI Brain metric used full stream latency_ms, not Groq TTFT",
+        "TTS duration used performance.now while stage marks used Date.now",
+        "TTFT and TTS TTFB overlap in parallel with phrase accumulation; they are not a serial sum",
+        "Percentiles of unrelated stage gaps across turns are not additive to TOTAL percentile"
+      ],
+      "correct_report": "Percentile each derived gap (STT, Groq_TTFT, TTS_TTFB, TOTAL) independently from per-turn stage_trace. Never add P50(TTFT)+P50(TTFB) and compare to P50(TOTAL)."
+    },
+    "critical_path": [
+      {
+        "t": "t0",
+        "stage": "speech_end"
+      },
+      {
+        "t": "t1",
+        "stage": "stt_final"
+      },
+      {
+        "t": "t2",
+        "stage": "llm_request"
+      },
+      {
+        "t": "t3",
+        "stage": "llm_first_token"
+      },
+      {
+        "t": "t4",
+        "stage": "first_safe_phrase"
+      },
+      {
+        "t": "t5",
+        "stage": "tts_request"
+      },
+      {
+        "t": "t6",
+        "stage": "tts_first_audio"
+      },
+      {
+        "t": "t7",
+        "stage": "playback_start"
+      }
+    ],
     "first_audio_target_ms": [
       800,
       1000
@@ -19,6 +67,17 @@
       "max_ms": 54597,
       "bottleneck": "WF8 LLM/tool especially booking (speech blocked on tools)"
     },
+    "live_baseline_flawed_p01": {
+      "label": "Hostinger Browser Talk after P0.1 (flawed measurement)",
+      "FIRST_AUDIO_P50": 1764,
+      "FIRST_AUDIO_P90": 3257,
+      "FIRST_AUDIO_P95": 3362,
+      "HI_BOOKING_ACK_P50": 707,
+      "reported_groq_ttft_approx": 808,
+      "reported_tts_first_byte_approx": 1876,
+      "groq_rate_limited_turns": "6/22",
+      "note": "Medians were NOT additive. Fix measurement (P0.2) before trusting stage sums."
+    },
     "targets": {
       "first_audio_target_ms": 1000,
       "first_audio_stretch_ms": 1200,
@@ -29,112 +88,387 @@
       "tool_assisted_first_audio_ms": 1200,
       "stt_final_target_ms": 250,
       "silent_wait_fail_ms": 4000,
-      "critical_slow_first_audio_ms": 2500
+      "critical_slow_first_audio_ms": 2500,
+      "max_llm_before_first_speech": 1
     },
     "sample_count": 22,
     "ENGLISH": {
       "FIRST_AUDIO": {
         "n": 7,
-        "P50": 950,
-        "P90": 1031,
-        "P95": 1036,
-        "max": 1040
+        "P50": 780,
+        "P90": 845,
+        "P95": 853,
+        "max": 860
       },
       "TOTAL_RESPONSE_DURATION": {
         "n": 7,
-        "P50": 5455,
-        "P90": 5666,
-        "P95": 5716,
-        "max": 5765
+        "P50": 5265,
+        "P90": 5462,
+        "P95": 5509,
+        "max": 5555
+      },
+      "STAGE_BREAKDOWN": {
+        "STT": {
+          "n": 7,
+          "P50": 195,
+          "P90": 210,
+          "P95": 210,
+          "desc": "speech_end → stt_final"
+        },
+        "orchestration": {
+          "n": 7,
+          "P50": 15,
+          "P90": 15,
+          "P95": 15,
+          "desc": "stt_final → llm_request"
+        },
+        "Groq_TTFT": {
+          "n": 7,
+          "P50": 230,
+          "P90": 265,
+          "P95": 273,
+          "desc": "llm_request → llm_first_token"
+        },
+        "phrase_accum": {
+          "n": 7,
+          "P50": 100,
+          "P90": 148,
+          "P95": 154,
+          "desc": "llm_first_token → first_safe_phrase"
+        },
+        "TTS_TTFB": {
+          "n": 7,
+          "P50": 200,
+          "P90": 220,
+          "P95": 220,
+          "desc": "tts_request → tts_first_audio"
+        },
+        "playback_buffer": {
+          "n": 7,
+          "P50": 20,
+          "P90": 20,
+          "P95": 20,
+          "desc": "tts_first_audio → playback_start"
+        },
+        "TOTAL": {
+          "n": 7,
+          "P50": 780,
+          "P90": 845,
+          "P95": 853,
+          "desc": "speech_end → playback_start"
+        },
+        "_warning": "Do NOT sum P50(Groq_TTFT)+P50(TTS_TTFB) and compare to P50(TOTAL). Report each independently from per-turn stage_trace."
       }
     },
     "TELUGU": {
       "FIRST_AUDIO": {
         "n": 5,
-        "P50": 1005,
-        "P90": 1026,
-        "P95": 1028,
-        "max": 1030
+        "P50": 805,
+        "P90": 842,
+        "P95": 846,
+        "max": 850
       },
       "TOTAL_RESPONSE_DURATION": {
         "n": 5,
-        "P50": 5545,
-        "P90": 5637,
-        "P95": 5646,
-        "max": 5655
+        "P50": 5325,
+        "P90": 5449,
+        "P95": 5462,
+        "max": 5475
+      },
+      "STAGE_BREAKDOWN": {
+        "STT": {
+          "n": 5,
+          "P50": 195,
+          "P90": 210,
+          "P95": 210,
+          "desc": "speech_end → stt_final"
+        },
+        "orchestration": {
+          "n": 5,
+          "P50": 15,
+          "P90": 15,
+          "P95": 15,
+          "desc": "stt_final → llm_request"
+        },
+        "Groq_TTFT": {
+          "n": 5,
+          "P50": 230,
+          "P90": 270,
+          "P95": 275,
+          "desc": "llm_request → llm_first_token"
+        },
+        "phrase_accum": {
+          "n": 5,
+          "P50": 120,
+          "P90": 152,
+          "P95": 156,
+          "desc": "llm_first_token → first_safe_phrase"
+        },
+        "TTS_TTFB": {
+          "n": 5,
+          "P50": 200,
+          "P90": 220,
+          "P95": 220,
+          "desc": "tts_request → tts_first_audio"
+        },
+        "playback_buffer": {
+          "n": 5,
+          "P50": 20,
+          "P90": 20,
+          "P95": 20,
+          "desc": "tts_first_audio → playback_start"
+        },
+        "TOTAL": {
+          "n": 5,
+          "P50": 805,
+          "P90": 842,
+          "P95": 846,
+          "desc": "speech_end → playback_start"
+        },
+        "_warning": "Do NOT sum P50(Groq_TTFT)+P50(TTS_TTFB) and compare to P50(TOTAL). Report each independently from per-turn stage_trace."
       }
     },
     "MIXED": {
       "FIRST_AUDIO": {
         "n": 5,
-        "P50": 1010,
-        "P90": 1074,
-        "P95": 1087,
-        "max": 1100
+        "P50": 820,
+        "P90": 886,
+        "P95": 893,
+        "max": 900
       },
       "TOTAL_RESPONSE_DURATION": {
         "n": 5,
-        "P50": 5660,
-        "P90": 5827,
-        "P95": 5881,
-        "max": 5935
+        "P50": 5440,
+        "P90": 5641,
+        "P95": 5693,
+        "max": 5745
+      },
+      "STAGE_BREAKDOWN": {
+        "STT": {
+          "n": 5,
+          "P50": 195,
+          "P90": 210,
+          "P95": 210,
+          "desc": "speech_end → stt_final"
+        },
+        "orchestration": {
+          "n": 5,
+          "P50": 15,
+          "P90": 15,
+          "P95": 15,
+          "desc": "stt_final → llm_request"
+        },
+        "Groq_TTFT": {
+          "n": 5,
+          "P50": 255,
+          "P90": 270,
+          "P95": 275,
+          "desc": "llm_request → llm_first_token"
+        },
+        "phrase_accum": {
+          "n": 5,
+          "P50": 120,
+          "P90": 152,
+          "P95": 156,
+          "desc": "llm_first_token → first_safe_phrase"
+        },
+        "TTS_TTFB": {
+          "n": 5,
+          "P50": 200,
+          "P90": 220,
+          "P95": 220,
+          "desc": "tts_request → tts_first_audio"
+        },
+        "playback_buffer": {
+          "n": 5,
+          "P50": 20,
+          "P90": 20,
+          "P95": 20,
+          "desc": "tts_first_audio → playback_start"
+        },
+        "TOTAL": {
+          "n": 5,
+          "P50": 820,
+          "P90": 886,
+          "P95": 893,
+          "desc": "speech_end → playback_start"
+        },
+        "_warning": "Do NOT sum P50(Groq_TTFT)+P50(TTS_TTFB) and compare to P50(TOTAL). Report each independently from per-turn stage_trace."
       }
     },
     "HINDI_BOOKING": {
       "FIRST_AUDIO": {
         "n": 5,
-        "P50": 1000,
-        "P90": 1060,
-        "P95": 1075,
-        "max": 1090
+        "P50": 435,
+        "P90": 444,
+        "P95": 447,
+        "max": 450
       },
       "TOTAL_RESPONSE_DURATION": {
         "n": 5,
-        "P50": 6870,
-        "P90": 6899,
-        "P95": 6907,
-        "max": 6915
+        "P50": 6650,
+        "P90": 6707,
+        "P95": 6711,
+        "max": 6715
+      },
+      "STAGE_BREAKDOWN": {
+        "STT": {
+          "n": 5,
+          "P50": 195,
+          "P90": 204,
+          "P95": 207,
+          "desc": "speech_end → stt_final"
+        },
+        "orchestration": {
+          "n": 5,
+          "P50": 15,
+          "P90": 15,
+          "P95": 15,
+          "desc": "stt_final → llm_request"
+        },
+        "Groq_TTFT": {
+          "n": 5,
+          "P50": 255,
+          "P90": 280,
+          "P95": 280,
+          "desc": "llm_request → llm_first_token"
+        },
+        "phrase_accum": {
+          "n": 5,
+          "P50": 0,
+          "P90": 0,
+          "P95": 0,
+          "desc": "llm_first_token → first_safe_phrase"
+        },
+        "TTS_TTFB": {
+          "n": 5,
+          "P50": 180,
+          "P90": 180,
+          "P95": 180,
+          "desc": "tts_request → tts_first_audio"
+        },
+        "playback_buffer": {
+          "n": 5,
+          "P50": 20,
+          "P90": 20,
+          "P95": 20,
+          "desc": "tts_first_audio → playback_start"
+        },
+        "TOTAL": {
+          "n": 5,
+          "P50": 435,
+          "P90": 444,
+          "P95": 447,
+          "desc": "speech_end → playback_start"
+        },
+        "_warning": "Do NOT sum P50(Groq_TTFT)+P50(TTS_TTFB) and compare to P50(TOTAL). Report each independently from per-turn stage_trace."
       }
     },
     "FIRST_AUDIO": {
       "n": 22,
-      "P50": 1003,
-      "P90": 1040,
-      "P95": 1088,
-      "max": 1100
+      "P50": 783,
+      "P90": 859,
+      "P95": 865,
+      "max": 900
     },
     "TOTAL_RESPONSE_DURATION": {
       "n": 22,
-      "P50": 5605,
-      "P90": 6848,
-      "P95": 6875,
-      "max": 6915
+      "P50": 5405,
+      "P90": 6631,
+      "P95": 6693,
+      "max": 6715
+    },
+    "STAGE_BREAKDOWN": {
+      "STT": {
+        "n": 22,
+        "P50": 195,
+        "P90": 210,
+        "P95": 210,
+        "desc": "speech_end → stt_final"
+      },
+      "orchestration": {
+        "n": 22,
+        "P50": 15,
+        "P90": 15,
+        "P95": 15,
+        "desc": "stt_final → llm_request"
+      },
+      "Groq_TTFT": {
+        "n": 22,
+        "P50": 230,
+        "P90": 280,
+        "P95": 280,
+        "desc": "llm_request → llm_first_token"
+      },
+      "phrase_accum": {
+        "n": 22,
+        "P50": 100,
+        "P90": 158,
+        "P95": 160,
+        "desc": "llm_first_token → first_safe_phrase"
+      },
+      "TTS_TTFB": {
+        "n": 22,
+        "P50": 190,
+        "P90": 220,
+        "P95": 220,
+        "desc": "tts_request → tts_first_audio"
+      },
+      "playback_buffer": {
+        "n": 22,
+        "P50": 20,
+        "P90": 20,
+        "P95": 20,
+        "desc": "tts_first_audio → playback_start"
+      },
+      "TOTAL": {
+        "n": 22,
+        "P50": 783,
+        "P90": 859,
+        "P95": 865,
+        "desc": "speech_end → playback_start"
+      },
+      "_warning": "Do NOT sum P50(Groq_TTFT)+P50(TTS_TTFB) and compare to P50(TOTAL). Report each independently from per-turn stage_trace."
     },
     "BOTTLENECKS": [
       {
-        "stage_gap": "playback_start_to_response_complete",
-        "count": 22
+        "stage_gap": "Groq_TTFT",
+        "count": 20
+      },
+      {
+        "stage_gap": "TTS_TTFB",
+        "count": 2
       }
     ],
     "BEFORE_MEDIAN_MS": 14403,
-    "AFTER_FIRST_AUDIO_P50_MS": 1003,
-    "AFTER_FIRST_AUDIO_P90_MS": 1040,
-    "AFTER_FIRST_AUDIO_P95_MS": 1088,
-    "AFTER_TOTAL_RESPONSE_P50_MS": 5605,
+    "AFTER_FIRST_AUDIO_P50_MS": 783,
+    "AFTER_FIRST_AUDIO_P90_MS": 859,
+    "AFTER_FIRST_AUDIO_P95_MS": 865,
+    "AFTER_TOTAL_RESPONSE_P50_MS": 5405,
     "SILENT_WAITS": {
       "fail_count": 0,
       "fail_threshold_ms": 4000,
       "fails": []
     },
+    "GROQ_RATE_LIMIT": {
+      "fail_count": 0,
+      "turns": []
+    },
+    "MULTI_LLM_BEFORE_FIRST_SPEECH": {
+      "fail_count": 0,
+      "max_allowed": 1
+    },
     "ANSWER_COMPLETENESS": "PASS",
     "NATURAL_PACING": "PASS",
     "CUSTOMER_NOT_RUSHED": "PASS",
     "DEMO_PUSH_REDUCED": "PASS",
-    "READY_FOR_PSTN_QA": "NO_PENDING_HOSTINGER_MEASUREMENT",
+    "READY_FOR_PSTN_QA": "CONDITIONAL_AFTER_HOSTINGER_BROWSER_TALK",
     "notes": [
       "Do not optimize total response duration by shortening useful answers.",
       "Streaming starts TTS on the first safe natural phrase while LLM continues.",
-      "Turn length is adaptive: simple concise, explanation detailed, qualify consultative, booking action-oriented."
+      "Turn length is adaptive: simple concise, explanation detailed, qualify consultative, booking action-oriented.",
+      "Never sum medians of Groq TTFT and TTS TTFB across turns.",
+      "Harness / synthetic numbers are non-acceptance. Live Hostinger replaces AFTER_*."
     ]
   },
   "designed": {
@@ -146,8 +480,19 @@
     "after_designed": {
       "first_audio_ms": 1000,
       "total_response_duration_ms": "adaptive (not optimized down)",
-      "mechanism": "stream first safe phrase to TTS; booking ack parallel with tools; aggregation off",
-      "notes": "Answer completeness preserved. Total duration may exceed first audio by design."
+      "mechanism": "stream first safe phrase to TTS; booking ack parallel with tools; aggregation off; Groq RL fallback; TTS keep-alive",
+      "notes": "Answer completeness preserved. Total duration may exceed first audio by design. Harness numbers are non-acceptance."
+    },
+    "flawed_p01_live": {
+      "label": "Hostinger Browser Talk after P0.1 (flawed measurement)",
+      "FIRST_AUDIO_P50": 1764,
+      "FIRST_AUDIO_P90": 3257,
+      "FIRST_AUDIO_P95": 3362,
+      "HI_BOOKING_ACK_P50": 707,
+      "reported_groq_ttft_approx": 808,
+      "reported_tts_first_byte_approx": 1876,
+      "groq_rate_limited_turns": "6/22",
+      "note": "Medians were NOT additive. Fix measurement (P0.2) before trusting stage sums."
     },
     "targets": {
       "first_audio_target_ms": 1000,
@@ -159,7 +504,22 @@
       "tool_assisted_first_audio_ms": 1200,
       "stt_final_target_ms": 250,
       "silent_wait_fail_ms": 4000,
-      "critical_slow_first_audio_ms": 2500
+      "critical_slow_first_audio_ms": 2500,
+      "max_llm_before_first_speech": 1
+    },
+    "measurement": {
+      "clock": "one_monotonic_per_turn",
+      "origin": "speech_end (t0)",
+      "unit": "ms",
+      "never_sum_medians": true,
+      "why_prior_medians_inconsistent": [
+        "Server Date.now mixed into client llm_first_token while speech_end used client Date.now",
+        "UI Brain metric used full stream latency_ms, not Groq TTFT",
+        "TTS duration used performance.now while stage marks used Date.now",
+        "TTFT and TTS TTFB overlap in parallel with phrase accumulation; they are not a serial sum",
+        "Percentiles of unrelated stage gaps across turns are not additive to TOTAL percentile"
+      ],
+      "correct_report": "Percentile each derived gap (STT, Groq_TTFT, TTS_TTFB, TOTAL) independently from per-turn stage_trace. Never add P50(TTFT)+P50(TTFB) and compare to P50(TOTAL)."
     }
   },
   "wf8_node_trace": {
@@ -284,8 +644,20 @@
       "Speak booking ack before any Cal.com tool node.",
       "Do not run End Call eligibility LLM hop before first audio on booking language (use local policy).",
       "Keep Global prompt compacted for TTFT; full qualification bank can ride after first phrase.",
+      "P0.2: at most one conversational LLM before first audible. Defer edge-router / language / summarizer LLMs until after first speech.",
+      "NL edge conditions are LOCAL_POLICY_PREFERRED for booking. Avoid Dograh edge-router LLM before first syllable.",
       "WF8 id stays 8. Manual Hostinger import only."
-    ]
+    ],
+    "pre_speech_llm_budget": {
+      "max_llm_before_first_speech": 1,
+      "booking_ack_llm_before_first_speech": 0,
+      "deferred": [
+        "edge_router_classifier",
+        "language_detect_llm",
+        "qualification_bank_preload",
+        "call_summarizer"
+      ]
+    }
   },
   "baselines": {
     "tip": "7f03dd0",

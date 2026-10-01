@@ -42,10 +42,12 @@ const FIXTURES = [
 
 function designedStages(t0, fixture, i) {
   // Designed budgets after streaming + tight STT. Not live provider RTT.
+  // NON-ACCEPTANCE harness numbers only.
   const stt = 180 + (i % 3) * 15;
   const llmToken = stt + 220 + (i % 4) * 25;
-  const firstPhrase = llmToken + 280 + (i % 5) * 30;
-  const ttsAudio = firstPhrase + 180 + (i % 3) * 20;
+  const firstPhrase = llmToken + 80 + (i % 5) * 20;
+  const ttsReq = firstPhrase + 20;
+  const ttsAudio = ttsReq + 180 + (i % 3) * 20;
   const llmDone = ttsAudio + 900 + (i % 6) * 80;
   const responseDone = llmDone + 2500 + (fixture.tool ? 2000 : 800) + (i % 4) * 100;
   const stages = {
@@ -53,15 +55,21 @@ function designedStages(t0, fixture, i) {
     stt_final: t0 + stt,
     llm_request: t0 + stt + 15,
     llm_first_token: t0 + llmToken,
-    tts_request: t0 + firstPhrase,
+    first_safe_phrase: t0 + firstPhrase,
+    tts_request: t0 + ttsReq,
     tts_first_audio: t0 + ttsAudio,
     playback_start: t0 + ttsAudio + 20,
     llm_complete: t0 + llmDone,
     response_complete: t0 + responseDone,
   };
   if (fixture.tool) {
-    stages.tool_start = t0 + ttsAudio + 50;
-    stages.tool_complete = t0 + ttsAudio + 2200;
+    // Booking: first_safe_phrase is local ack (before llm_request conceptually).
+    stages.first_safe_phrase = t0 + stt + 20;
+    stages.tts_request = t0 + stt + 40;
+    stages.tts_first_audio = t0 + stt + 220;
+    stages.playback_start = t0 + stt + 240;
+    stages.tool_start = t0 + stt + 50;
+    stages.tool_complete = t0 + stt + 2200;
   }
   return stages;
 }
@@ -80,6 +88,7 @@ test('harness posts >=20 turns and builds FINAL REPORT fields', () => {
       booking_ack: !!fixture.tool,
       tool_assisted: !!fixture.tool,
       streamed_first_phrase: !fixture.tool,
+      llm_calls_before_first_speech: fixture.tool ? 0 : 1,
       source: 'synthetic_browser_talk',
       stages: designedStages(t0, fixture, i),
       stt: { provider: 'deepgram', model: 'nova-3-general', language: 'multi' },
@@ -97,6 +106,11 @@ test('harness posts >=20 turns and builds FINAL REPORT fields', () => {
 
   const report = latency.summarizeEvidence({ employee_id: 'emp_33eae8ef454680f0' });
   assert.ok(report.sample_count >= 20);
+  assert.ok(report.FIRST_AUDIO.P50 != null);
+  assert.ok(report.STAGE_BREAKDOWN.TOTAL.P50 != null);
+  assert.ok(report.STAGE_BREAKDOWN.Groq_TTFT.n >= 0);
+  assert.equal(report.MULTI_LLM_BEFORE_FIRST_SPEECH.fail_count, 0);
+  assert.match(report.notes.join(' '), /non-acceptance|Harness/i);
   assert.ok(report.FIRST_AUDIO.P50 != null);
   assert.ok(report.FIRST_AUDIO.P90 != null);
   assert.ok(report.FIRST_AUDIO.P95 != null);

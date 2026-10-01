@@ -1057,7 +1057,10 @@ async function apiChatStream(req, res, ctx) {
     system = cached.value + (system ? ('\n\n' + system) : '');
   }
 
+  const preSpeechPlan = voiceFastPath.planPreSpeechLlm(lastText);
   // Booking tool path: emit ack phrase immediately so TTS can start before Groq.
+  // llm_calls_before_first_speech = 0 for booking (local ack).
+  let llmCallsBeforeFirstSpeech = 0;
   if (turnPath.path === 'tool' && turnPath.ack && turnPath.ack.text) {
     write({
       type: 'first_phrase',
@@ -1065,6 +1068,7 @@ async function apiChatStream(req, res, ctx) {
       at_ms: Date.now(),
       booking_ack: true,
       language: turnPath.ack.language,
+      first_safe_phrase: true,
     });
     if (b.turn_id || b.record_latency) {
       turnLatency.ingestTurnTiming({
@@ -1074,6 +1078,8 @@ async function apiChatStream(req, res, ctx) {
         booking_ack: true,
         tool_assisted: true,
         tool_start_ms: Date.now(),
+        first_safe_phrase_ms: Date.now(),
+        llm_calls_before_first_speech: 0,
         note: 'booking_ack_emitted_before_llm',
       });
     }
@@ -1082,9 +1088,11 @@ async function apiChatStream(req, res, ctx) {
   write({
     type: 'meta',
     turn_path: turnPath,
+    pre_speech_llm: preSpeechPlan,
     booking_intent: !!turnPath.ack,
     model: providers.llm.model,
     targets: voiceFastPath.latencyBudgets(),
+    measurement: turnLatency.MEASUREMENT_SEMANTICS,
   });
 
   const llmStarted = Date.now();
@@ -1095,20 +1103,35 @@ async function apiChatStream(req, res, ctx) {
       ? adapter.chatStream.bind(adapter)
       : (opts) => llmStream.streamGroqChat({ ...opts, model: selected.model });
 
+    // Ordinary turns: exactly one main conversational stream before first audio.
+    // Booking: ack already spoken; this stream is post-ack follow-up.
+    if (turnPath.path !== 'tool') llmCallsBeforeFirstSpeech = 1;
+    const budget = voiceFastPath.assertSingleLlmBeforeFirstSpeech(
+      llmCallsBeforeFirstSpeech,
+      turnPath,
+    );
+
     const out = await streamFn({
       messages: b.messages,
       system,
       model: selected.model,
       onFirstToken: (ev) => {
-        write({ type: 'first_token', ...ev });
+        // Emit relative ttft_ms for client monotonic stage_trace. Client must
+        // mark llm_first_token on its own clock, not server at_ms.
+        write({ type: 'first_token', ttft_ms: ev.ttft_ms, text: ev.text, model: ev.model });
         if (b.turn_id || b.record_latency) {
           turnLatency.ingestTurnTiming({
             turn_id: b.turn_id,
             session_id: b.session_id,
             employee_id: b.employeeId,
             llm_request_ms: llmStarted,
-            llm_first_token_ms: ev.at_ms,
-            llm: { provider: adapter.id || selected.id, model: selected.model },
+            llm_first_token_ms: llmStarted + (Number(ev.ttft_ms) || 0),
+            llm_calls_before_first_speech: llmCallsBeforeFirstSpeech,
+            llm: {
+              provider: adapter.id || selected.id,
+              model: ev.model || selected.model,
+              ttft_ms: ev.ttft_ms,
+            },
           });
         }
       },
@@ -1118,7 +1141,34 @@ async function apiChatStream(req, res, ctx) {
           write({ type: 'continue_phrase', ...ev });
           return;
         }
-        write({ type: 'first_phrase', ...ev, streamed_first_phrase: true });
+        write({
+          type: 'first_phrase',
+          phrase: ev.phrase,
+          phrase_ttfb_ms: ev.phrase_ttfb_ms,
+          model: ev.model,
+          streamed_first_phrase: true,
+          first_safe_phrase: true,
+          rate_limit_ack: !!ev.rate_limit_ack,
+        });
+      },
+      onRateLimit: (ev) => {
+        write({ type: 'rate_limit', ...ev });
+        if (b.turn_id || b.record_latency) {
+          turnLatency.ingestTurnTiming({
+            turn_id: b.turn_id,
+            session_id: b.session_id,
+            employee_id: b.employeeId,
+            rate_limited: true,
+            fallback_used: true,
+            note: 'groq_rate_limit_status_' + (ev.status || 429),
+            llm: {
+              provider: 'groq',
+              model: selected.model,
+              fallback_model: ev.fallback_model,
+              rate_limited: true,
+            },
+          });
+        }
       },
       onDelta: (ev) => write({ type: 'delta', text: ev.text }),
     });
@@ -1131,6 +1181,9 @@ async function apiChatStream(req, res, ctx) {
         employee_id: b.employeeId,
         llm_complete_ms: Date.now(),
         streamed_first_phrase: true,
+        rate_limited: !!out.rate_limited,
+        fallback_used: !!out.fallback_used,
+        llm_calls_before_first_speech: llmCallsBeforeFirstSpeech,
       });
     }
     write({
@@ -1146,6 +1199,11 @@ async function apiChatStream(req, res, ctx) {
       booking_intent: asrSanityGuard.isBookingOrScheduleIntent(lastText),
       booking_ack: turnPath.ack,
       turn_path: turnPath,
+      pre_speech_llm: preSpeechPlan,
+      llm_calls_before_first_speech: llmCallsBeforeFirstSpeech,
+      multi_llm_before_first_speech: budget.multi_llm_before_first_speech,
+      rate_limited: !!out.rate_limited,
+      fallback_used: !!out.fallback_used,
       streamed: true,
     });
     res.end();
@@ -1154,6 +1212,7 @@ async function apiChatStream(req, res, ctx) {
       type: 'error',
       error: String((e && e.message) || e).slice(0, 300),
       code: (e && e.code) || 'upstream',
+      rate_limited: !!(e && e.code === 'rate_limit'),
     });
     res.end();
   }
@@ -1248,12 +1307,21 @@ async function apiTalkLatencyReport(req, res) {
       employee_id: url.searchParams.get('employee_id') || mayaConversationPolicy.MAYA_EMPLOYEE_ID,
     }),
     designed: turnLatency.syntheticBudgetComparison(),
+    measurement: turnLatency.MEASUREMENT_SEMANTICS,
+    critical_path: turnLatency.CRITICAL_PATH,
+    hi_vs_ordinary: voiceFastPath.hiVsOrdinaryArchitectureDiff(),
     wf8_node_trace: wf8NodeTrace.buildWf8NodeTrace(),
     prompt_audit: voiceFastPath.auditPromptTokens({
       maya_global: mayaConversationPolicy.GLOBAL_PROMPT,
       booking: mayaConversationPolicy.BOOKING_STAGES.map((s) => s.prompt).join('\n'),
       __required: { maya_global: true, booking: false },
     }),
+    hostinger_apply_notes: {
+      dashboard: 'Deploy tip with P0.2 measurement + Groq RL fallback + TTS keep-alive.',
+      overlay: 'Rebuild rumik-overlay-local (Sarvam silence 0.2, aggregation false, create_llm_service_with_model_override preserved).',
+      wf8: 'Import workflows/maya-receptionist.json. Prefer local booking/end-call routers. Do not add classifier LLM hops before first audio. Maya emp_33eae8ef454680f0 · WF8 · DID +918065353938 · priya unchanged.',
+      retest: 'Coordinator runs >=30 Browser Talk turns AFTER merge/deploy. Out of scope for this PR.',
+    },
   });
 }
 

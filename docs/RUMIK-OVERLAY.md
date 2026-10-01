@@ -30,7 +30,7 @@ Two files are copied out of the running image, patched, and copied back in:
 | File | Change |
 |---|---|
 | `/app/api/services/configuration/registry.py` | Register a `rumik` entry in the TTS provider registry: id, label, models (`mulberry`, `muga`), voices, and the tunable fields (temperature, top_p, top_k, description, full_response_aggregation) |
-| `/app/api/services/pipecat/service_factory.py` | Construct a `RumikTTSService` from `pipecat_rumik` when `provider == "rumik"`, passing api_key, model, voice, description and the sampling params through |
+| `/app/api/services/pipecat/service_factory.py` | Construct a `RumikTTSService` from `pipecat_rumik` when `provider == "rumik"`, passing api_key, model, voice, description and the sampling params through. Keep Sarvam/other TTS `silence_time_s=0.2`. **Preserve `create_llm_service_with_model_override`** (P0.1/P0.2 lesson: overlay patches must not drop this Dograh entrypoint). |
 
 The repository includes the verified patched files in `rumik-overlay-local/`
 for the pinned reference deployment, with Dograh's BSD 2-Clause license. When
