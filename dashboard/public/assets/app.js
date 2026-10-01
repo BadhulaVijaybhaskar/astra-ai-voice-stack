@@ -61,11 +61,30 @@ function isInvestorDemo() {
   return !!State.investorDemo;
 }
 
+/** Demo Preview surfaces sample/fixture data and must be visibly labeled. */
+function isDemoPreview() {
+  return isInvestorDemo();
+}
+
 function setInvestorDemo(on) {
   State.investorDemo = !!on;
   try { localStorage.setItem('astra_investor_demo', State.investorDemo ? '1' : '0'); } catch (_) {}
   const shell = $('.shell');
   if (shell) shell.classList.toggle('investor-demo', State.investorDemo);
+}
+
+function dataModeBadge(opts) {
+  opts = opts || {};
+  if (isDemoPreview()) {
+    return el('span', {
+      class: 'data-mode-badge is-preview' + (opts.class ? (' ' + opts.class) : ''),
+      title: 'Demo Preview shows sample data. Live calls and outcomes stay real.',
+    }, 'Demo Preview');
+  }
+  return el('span', {
+    class: 'data-mode-badge is-live' + (opts.class ? (' ' + opts.class) : ''),
+    title: 'Live workspace data only. No sample outcomes.',
+  }, 'Live');
 }
 
 const VOICE_MODELS = ['mulberry', 'muga'];
@@ -427,17 +446,21 @@ function renderShell() {
 
   const isSuperAdmin = u.role === 'super_admin';
   const investorBtn = el('button', {
-    class: 'investor-toggle' + (isInvestorDemo() ? ' is-on' : ''),
+    class: 'investor-badge' + (isDemoPreview() ? ' is-on' : ''),
     type: 'button',
-    title: 'Hide developer controls and unfinished surfaces',
+    title: isDemoPreview()
+      ? 'Demo Preview on. Sample data is labeled. Click to return to Live.'
+      : 'Turn on Demo Preview for investor walkthrough (sample data labeled).',
     onclick: () => {
       setInvestorDemo(!isInvestorDemo());
       renderShell();
-      toast(isInvestorDemo() ? 'Investor Demo on. Focused on Maya, Live Demo, Calls, Outcomes.' : 'Investor Demo off.', 'info');
+      toast(isDemoPreview()
+        ? 'Demo Preview on. Sample outcomes are labeled. Live calls stay real.'
+        : 'Live mode. Showing real workspace data only.', 'info');
     },
   }, [
-    el('span', { class: 'tog', 'aria-hidden': 'true' }),
-    document.createTextNode('Investor Demo'),
+    el('span', { class: 'dot', 'aria-hidden': 'true' }),
+    document.createTextNode(isDemoPreview() ? 'Demo Preview' : 'Investor Demo'),
   ]);
 
   const topRight = isSuperAdmin
@@ -1135,6 +1158,52 @@ function employeeCalendarLabel(emp) {
   return '—';
 }
 
+/** Product-facing voice identity. Never show "Standard voice profile". */
+function employeeVoiceIdentity(emp) {
+  const name = String((emp && emp.name) || 'Employee').trim() || 'Employee';
+  const v = (emp && emp.voice) || {};
+  const catalog = v.voiceLabel || v.displayName || v.catalogLabel || v.name;
+  if (catalog && !/standard\s+voice\s+profile/i.test(String(catalog))) {
+    return String(catalog);
+  }
+  const profile = String(v.profileLabel || '');
+  if (profile && !/standard\s+voice\s+profile/i.test(profile)) return profile;
+  if (/maya/i.test(name) || (emp && emp.templateKey === 'lead_qualification')) {
+    return 'Maya · Natural';
+  }
+  return name + ' · Natural';
+}
+
+function demoOutcomeFixture(emp) {
+  const who = (emp && emp.name) || 'Maya';
+  return {
+    status: 'completed',
+    outcome: 'qualified',
+    summary: 'Customer is a 20-person sales team interested in Astra Voice. Demo requested; follow-up assigned to Sales.',
+    extractedData: {
+      name: 'Arjun Mehta',
+      phone: '+91 ··· ·····',
+      company: 'Northline Sales',
+      interest: 'Product demo',
+      teamSize: '20 people',
+      qualification: 'Qualified',
+      language: 'Telugu → English',
+      appointment: 'Requested',
+      nextAction: 'Schedule sales follow-up · Sales team',
+    },
+    actionsPerformed: [
+      { label: 'Checked calendar availability', status: 'done' },
+      { label: 'Drafted sales follow-up', status: 'done' },
+    ],
+    transcript: [
+      { role: 'maya', text: 'Namaskaram! This is ' + who + ' from Astra Voice. How can I help you today?' },
+      { role: 'customer', text: 'We are a 20-person sales team looking at a product demo.' },
+      { role: 'maya', text: 'Great. I can check calendar availability and book an Astra Voice Demo.' },
+    ],
+    _demoPreview: true,
+  };
+}
+
 function openLiveDemo(emp) {
   if (emp && emp.agentId) State.activeAgentId = emp.agentId;
   location.hash = '#/employees?id=' + encodeURIComponent(emp.id) + '&tab=live-demo';
@@ -1212,7 +1281,7 @@ async function viewEmployees(root) {
       if (!State.employees.length) {
         host.appendChild(el('div', { class: 'card card-pad empty empty-rich emp-empty' }, [
           el('div', { class: 'ttl' }, 'No AI Employees yet'),
-          el('p', {}, 'AI Employees are the voices that call and answer for your business. Create one from a job template, then add instructions and a Phone Number.'),
+          el('p', {}, 'Create an AI Employee from a job template, add instructions and a phone number, then run a Browser Test.'),
           el('button', {
             class: 'btn btn-primary',
             onclick: () => { location.hash = '#/employees?create=1'; },
@@ -1232,21 +1301,35 @@ async function viewEmployees(root) {
 }
 
 function employeeCard(emp) {
-  const open = el('button', { class: 'btn btn-primary' }, 'Open');
+  const open = el('button', { class: 'btn btn-primary btn-sm' }, 'Open');
   open.onclick = () => { location.hash = '#/employees?id=' + encodeURIComponent(emp.id); };
-  const testBtn = el('button', { class: 'btn btn-ghost' }, 'Test');
+  const testBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Test');
   testBtn.onclick = () => openLiveDemo(emp);
 
   const status = employeeProductStatus(emp);
   const caps = employeeCapabilities(emp);
-  const voiceLabel = dashOr(
-    (emp.voice && emp.voice.profileLabel)
-      || (emp.language ? String(emp.language) : '')
-      || 'Standard voice profile'
-  );
+  const voiceLabel = employeeVoiceIdentity(emp);
   const langs = dashOr(emp.language || 'en-IN');
   const numberLabel = employeePhoneLabel(emp);
   const calendarLabel = employeeCalendarLabel(emp);
+  const callsToday = Number(emp.callsToday) || 0;
+  const leads = Number(emp.leads) || 0;
+  const qualified = Number(emp.qualified) || 0;
+
+  const metaKids = [
+    el('div', {}, [el('span', {}, 'Voice'), el('b', {}, voiceLabel)]),
+    el('div', {}, [el('span', {}, 'Languages'), el('b', {}, langs)]),
+    el('div', {}, [el('span', {}, 'Phone'), el('b', {}, numberLabel)]),
+    el('div', {}, [el('span', {}, 'Calendar'), el('b', {}, calendarLabel)]),
+  ];
+  if (callsToday > 0) metaKids.push(el('div', {}, [el('span', {}, 'Calls today'), el('b', {}, fmtMetric(callsToday))]));
+  if (leads > 0) metaKids.push(el('div', {}, [el('span', {}, 'Leads'), el('b', {}, fmtMetric(leads))]));
+  if (qualified > 0) metaKids.push(el('div', {}, [el('span', {}, 'Qualified'), el('b', {}, fmtMetric(qualified))]));
+  if (emp.lastActiveAt) {
+    metaKids.push(el('div', {}, [el('span', {}, 'Last active'), el('b', {}, fmtLastActive(emp.lastActiveAt))]));
+  } else {
+    metaKids.push(el('div', {}, [el('span', {}, 'Activity'), el('b', {}, 'No calls yet')]));
+  }
 
   return el('article', { class: 'card emp-card' }, [
     el('div', { class: 'emp-card-top' }, [
@@ -1254,22 +1337,14 @@ function employeeCard(emp) {
         el('div', { class: 'emp-card-name' }, [
           el('span', { class: 'emp-status-dot is-' + status.key, 'aria-hidden': 'true' }),
           el('h3', { class: 't-h3' }, emp.name || 'Employee'),
+          dataModeBadge({ class: 'emp-card-mode' }),
         ]),
         el('p', { class: 'muted', style: 'margin-top:4px' }, emp.role || 'AI Employee'),
       ]),
       el('span', { class: 'pill emp-status emp-status-' + status.key }, status.label),
     ]),
     el('div', { class: 'emp-caps' }, caps.map((c) => el('span', { class: 'emp-cap' }, c))),
-    el('div', { class: 'emp-meta' }, [
-      el('div', {}, [el('span', {}, 'Voice'), el('b', {}, voiceLabel)]),
-      el('div', {}, [el('span', {}, 'Languages'), el('b', {}, langs)]),
-      el('div', {}, [el('span', {}, 'Phone'), el('b', {}, numberLabel)]),
-      el('div', {}, [el('span', {}, 'Calendar'), el('b', {}, calendarLabel)]),
-      el('div', {}, [el('span', {}, 'Calls today'), el('b', {}, fmtMetric(emp.callsToday))]),
-      el('div', {}, [el('span', {}, 'Leads'), el('b', {}, fmtMetric(emp.leads))]),
-      el('div', {}, [el('span', {}, 'Qualified'), el('b', {}, fmtMetric(emp.qualified))]),
-      el('div', {}, [el('span', {}, 'Last active'), el('b', {}, emp.lastActiveAt ? fmtLastActive(emp.lastActiveAt) : '—')]),
-    ]),
+    el('div', { class: 'emp-meta' }, metaKids),
     el('div', { class: 'flex gap-2 emp-card-actions' }, [open, testBtn]),
   ]);
 }
@@ -1348,6 +1423,7 @@ async function viewEmployeeCreate(root) {
 
 async function renderLiveDemoWorkspace(host, emp, id) {
   host.innerHTML = '';
+  const preview = isDemoPreview();
   const back = el('button', {
     class: 'btn btn-ghost btn-sm',
     style: 'margin-bottom:10px',
@@ -1357,6 +1433,16 @@ async function renderLiveDemoWorkspace(host, emp, id) {
     },
   }, '← Back to Overview');
   host.appendChild(back);
+
+  host.appendChild(el('div', { class: 'live-mode-banner' }, [
+    el('span', { class: 'live-mode-chip is-browser' }, 'Browser Test'),
+    el('span', { class: 'live-mode-chip is-muted' }, 'Not PSTN'),
+    dataModeBadge(),
+    el('span', { class: 'muted', style: 'font-size:0.78rem' },
+      preview
+        ? 'Demo Preview walkthrough. Start a Browser Test to use real mic + Talk APIs.'
+        : 'Live Browser Test. Uses real mic and Talk session APIs. For phone dials, use PSTN Test.'),
+  ]));
 
   const stage = el('div', { class: 'live-demo-stage' });
   const side = el('div', { class: 'live-side' });
@@ -1384,20 +1470,37 @@ async function renderLiveDemoWorkspace(host, emp, id) {
   ]);
   const transcripts = el('div', { class: 'live-transcripts' });
   const tools = el('div', { class: 'live-tools' }, 'Tool activity idle. Availability and booking appear here during the call.');
-  const startBtn = el('button', { class: 'btn btn-primary' }, 'Start Live Demo');
-  const muteBtn = el('button', { class: 'btn btn-ghost', disabled: 'disabled' }, 'Mute');
-  const endBtn = el('button', { class: 'btn btn-end', disabled: 'disabled' }, 'End Call');
+  const startBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Start Browser Test');
+  const muteBtn = el('button', { class: 'btn btn-ghost btn-sm', disabled: 'disabled' }, 'Mute');
+  const endBtn = el('button', { class: 'btn btn-end btn-sm', disabled: 'disabled' }, 'End Call');
+  const pstnLink = el('button', {
+    class: 'btn btn-ghost btn-sm',
+    onclick: () => {
+      location.hash = '#/employees?id=' + encodeURIComponent(id) + '&tab=testing&mode=pstn';
+      onRoute();
+    },
+  }, 'Switch to PSTN Test');
 
-  stage.appendChild(el('div', { class: 'live-demo-head' }, [livePill, timerEl]));
+  stage.appendChild(el('div', { class: 'live-demo-head' }, [
+    el('div', { class: 'live-demo-head-left' }, [
+      livePill,
+      el('span', { class: 'live-channel-badge' }, 'Browser'),
+    ]),
+    timerEl,
+  ]));
   stage.appendChild(wave);
   stage.appendChild(transcripts);
   stage.appendChild(tools);
-  stage.appendChild(el('div', { class: 'live-controls' }, [startBtn, muteBtn, endBtn, audio]));
+  stage.appendChild(el('div', { class: 'live-controls' }, [startBtn, muteBtn, endBtn, pstnLink, audio]));
 
   side.appendChild(el('div', { class: 'emp-panel' }, [
-    el('h3', { class: 't-h4' }, 'Live conversation'),
-    el('p', { class: 'muted' }, name + ' speaks with your customer in real time. Same Talk APIs as production.'),
-    el('p', { class: 'muted', style: 'margin-top:8px' }, 'Phone · ' + employeePhoneLabel(emp)),
+    el('div', { class: 'emp-panel-h' }, [
+      el('h3', { class: 't-h4' }, 'Browser conversation'),
+      dataModeBadge(),
+    ]),
+    el('p', { class: 'muted' }, name + ' speaks in the browser with mic, transcript, and tool calls.'),
+    el('p', { class: 'muted', style: 'margin-top:8px' }, 'Channel · Browser Test (not PSTN)'),
+    el('p', { class: 'muted', style: 'margin-top:4px' }, 'Phone · ' + employeePhoneLabel(emp)),
   ]));
   const outcomeHost = el('div', { class: 'emp-panel live-complete hide' });
   side.appendChild(outcomeHost);
@@ -1430,10 +1533,13 @@ async function renderLiveDemoWorkspace(host, emp, id) {
   function showComplete() {
     outcomeHost.classList.remove('hide');
     outcomeHost.innerHTML = '';
-    outcomeHost.appendChild(el('h3', { class: 't-h4' }, 'Call complete'));
-    outcomeHost.appendChild(el('p', { class: 'muted' }, 'Structured outcome from this Live Demo session.'));
+    outcomeHost.appendChild(el('div', { class: 'emp-panel-h' }, [
+      el('h3', { class: 't-h4' }, 'Call complete'),
+      el('span', { class: 'data-mode-badge is-live' }, 'Live session'),
+    ]));
+    outcomeHost.appendChild(el('p', { class: 'muted' }, 'Structured outcome from this Browser Test session.'));
     outcomeHost.appendChild(el('div', { class: 'grid', style: 'margin-top:10px' }, [
-      el('div', { class: 'kv' }, [el('div', { class: 'k' }, 'Summary'), el('div', { class: 'v' }, name + ' completed a live demo conversation.')]),
+      el('div', { class: 'kv' }, [el('div', { class: 'k' }, 'Summary'), el('div', { class: 'v' }, name + ' completed a Browser Test conversation.')]),
       el('div', { class: 'kv is-success' }, [el('div', { class: 'k' }, 'Structured outcome'), el('div', { class: 'v' }, 'Interest captured · Status pending review')]),
       el('div', { class: 'kv' }, [el('div', { class: 'k' }, 'Actions performed'), el('div', { class: 'v' }, 'Checked availability · Draft follow-up')]),
       el('div', { class: 'kv' }, [el('div', { class: 'k' }, 'Appointment'), el('div', { class: 'v' }, 'Astra Voice Demo · 30 minutes')]),
@@ -1453,7 +1559,7 @@ async function renderLiveDemoWorkspace(host, emp, id) {
     startBtn.disabled = false;
     muteBtn.disabled = true;
     endBtn.disabled = true;
-    startBtn.textContent = 'Start Live Demo';
+    startBtn.textContent = 'Start Browser Test';
     if (timerId) { clearInterval(timerId); timerId = null; }
     if (ws && ws.readyState < 2) { try { ws.close(); } catch (_) {} }
     ws = null;
@@ -1595,9 +1701,9 @@ async function renderLiveDemoWorkspace(host, emp, id) {
         },
       }));
     } catch (e) {
-      toast(e.message || 'Could not start Live Demo.', 'err');
+      toast(e.message || 'Could not start Browser Test.', 'err');
       stopCall('Ready');
-      startBtn.textContent = 'Start Live Demo';
+      startBtn.textContent = 'Start Browser Test';
       startBtn.disabled = false;
       outcomeHost.classList.add('hide');
     }
@@ -1669,17 +1775,26 @@ async function viewEmployeeStudio(root, id) {
     : ((emp.role || 'AI Employee') + (emp.channel ? ' · ' + channelLabel(emp.channel) : ''));
   const productStatus = employeeProductStatus(emp, detail);
   const numberLabel = employeePhoneLabel(emp);
-  const voiceMeta = dashOr((emp.voice && emp.voice.profileLabel) || 'Standard voice profile');
+  const voiceMeta = employeeVoiceIdentity(emp);
   const langMeta = dashOr(emp.language || 'en-IN');
   const journeyEnabled = !!(State.me && State.me.features && State.me.features.aiEmployeeJourney);
 
   const header = el('div', { class: 'emp-studio-head' }, [
     el('div', { class: 'emp-studio-title' }, [
-      el('button', { class: 'btn btn-ghost btn-sm', onclick: () => { location.hash = '#/employees'; } }, '← AI Employees'),
+      el('nav', { class: 'emp-crumb', 'aria-label': 'Breadcrumb' }, [
+        el('a', {
+          class: 'emp-crumb-link',
+          href: '#/employees',
+          onclick: (ev) => { ev.preventDefault(); location.hash = '#/employees'; },
+        }, 'AI Employees'),
+        el('span', { class: 'emp-crumb-sep', 'aria-hidden': 'true' }, '/'),
+        el('span', { class: 'emp-crumb-current' }, emp.name || 'Employee'),
+      ]),
       el('div', { class: 'emp-title-row' }, [
         el('h2', {}, emp.name || 'Employee'),
         el('span', { class: 'pill emp-kind' }, 'AI Employee'),
         el('span', { class: 'pill emp-status emp-status-' + productStatus.key }, productStatus.label),
+        dataModeBadge(),
       ]),
       el('p', { class: 'muted emp-role-line' }, roleLine),
       el('div', { class: 'emp-studio-meta' }, [
@@ -1690,18 +1805,18 @@ async function viewEmployeeStudio(root, id) {
     ]),
     el('div', { class: 'flex gap-2 emp-studio-actions' }, [
       el('button', {
-        class: 'btn btn-primary',
+        class: 'btn btn-primary btn-sm',
         onclick: () => openLiveDemo(emp),
       }, 'Run Live Demo'),
       el('button', {
-        class: 'btn btn-ghost',
+        class: 'btn btn-ghost btn-sm',
         onclick: () => {
           location.hash = '#/employees?id=' + encodeURIComponent(id) + '&tab=testing&mode=pstn';
           onRoute();
         },
       }, 'Test Call'),
       el('button', {
-        class: 'btn btn-ghost',
+        class: 'btn btn-ghost btn-sm',
         onclick: () => {
           location.hash = '#/employees?id=' + encodeURIComponent(id) + '&tab=instructions';
           onRoute();
@@ -1810,26 +1925,35 @@ async function viewEmployeeStudio(root, id) {
     ]));
 
     left.appendChild(el('div', { class: 'emp-panel' }, [
-      el('div', { class: 'emp-panel-h' }, [el('h3', {}, 'Recent activity')]),
+      el('div', { class: 'emp-panel-h' }, [
+        el('h3', {}, 'Recent activity'),
+        dataModeBadge(),
+      ]),
       el('div', { class: 'emp-activity' }, emp.lastActiveAt ? [
         el('div', { class: 'row' }, [el('span', {}, 'Last active'), el('b', {}, fmtLastActive(emp.lastActiveAt))]),
         el('div', { class: 'row' }, [el('span', {}, 'Calls today'), el('b', {}, fmtMetric(emp.callsToday))]),
         el('div', { class: 'row' }, [el('span', {}, 'Qualified'), el('b', {}, fmtMetric(emp.qualified))]),
       ] : [
-        el('p', { class: 'muted' }, (emp.name || 'Maya') + " hasn't handled a call yet."),
-        el('button', { class: 'btn btn-primary btn-sm', onclick: () => openLiveDemo(emp) }, 'Run Live Demo'),
+        el('p', { class: 'muted' }, 'No live calls yet. Run a Browser Test to see activity here.'),
+        el('button', { class: 'btn btn-primary btn-sm', onclick: () => openLiveDemo(emp) }, 'Start Browser Test'),
       ]),
     ]));
 
     right.appendChild(el('div', { class: 'emp-panel emp-test-maya' }, [
-      el('div', { class: 'emp-panel-h' }, [el('h3', {}, 'Test ' + (emp.name || 'Maya'))]),
-      el('p', { class: 'muted' }, 'Browser realtime Talk with mic, transcript, and tool activity.'),
+      el('div', { class: 'emp-panel-h' }, [
+        el('h3', {}, 'Test ' + (emp.name || 'Maya')),
+        el('span', { class: 'live-mode-chip is-browser' }, 'Browser Test'),
+      ]),
+      el('p', { class: 'muted' }, 'Browser realtime Talk with mic, transcript, and tool activity. For phone dials, use PSTN Test.'),
       el('div', { class: 'wave', 'aria-hidden': 'true' }),
-      el('button', { class: 'btn btn-primary', onclick: () => openLiveDemo(emp) }, 'Run Live Demo'),
+      el('button', { class: 'btn btn-primary btn-sm', onclick: () => openLiveDemo(emp) }, 'Start Browser Test'),
     ]));
 
     right.appendChild(el('div', { class: 'emp-panel' }, [
-      el('div', { class: 'emp-panel-h' }, [el('h3', {}, 'Last call')]),
+      el('div', { class: 'emp-panel-h' }, [
+        el('h3', {}, 'Last call'),
+        dataModeBadge(),
+      ]),
       emp.lastActiveAt
         ? el('div', { class: 'emp-activity' }, [
           el('div', { class: 'row' }, [el('span', {}, 'When'), el('b', {}, fmtLastActive(emp.lastActiveAt))]),
@@ -1843,12 +1967,12 @@ async function viewEmployeeStudio(root, id) {
           }, 'Open Outcomes'),
         ])
         : el('div', {}, [
-          el('p', { class: 'muted' }, (emp.name || 'Maya') + " hasn't handled a call yet."),
+          el('p', { class: 'muted' }, 'No completed calls yet. Outcomes stay empty until a real or Demo Preview session exists.'),
           el('button', {
             class: 'btn btn-ghost btn-sm',
             style: 'margin-top:8px',
             onclick: () => openLiveDemo(emp),
-          }, 'Run Live Demo'),
+          }, 'Start Browser Test'),
         ]),
     ]));
 
@@ -2233,7 +2357,7 @@ async function viewEmployeeStudio(root, id) {
     body.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:16px' }, [
       el('h4', { class: 't-h4' }, 'Calendar'),
       el('p', {}, 'Connected · Astra Voice Demo · 30 minutes'),
-      el('p', { class: 'muted' }, 'Cal.com. Event Type ID is not shown in the product UI.'),
+      el('p', { class: 'muted' }, 'Cal.com booking for qualified leads.'),
       el('button', {
         class: 'btn btn-ghost btn-sm',
         style: 'margin-top:8px',
@@ -2545,9 +2669,14 @@ async function viewEmployeeStudio(root, id) {
       save,
     ]));
   } else if (tab === 'outcomes') {
-    body.appendChild(el('h3', { class: 't-h3' }, 'Outcomes'));
+    body.appendChild(el('div', { class: 'emp-panel-h', style: 'margin-bottom:6px' }, [
+      el('h3', { class: 't-h3' }, 'Outcomes'),
+      dataModeBadge(),
+    ]));
     body.appendChild(el('p', { class: 'muted' },
-      'Latest call result: summary, transcript, structured data, and actions performed. Empty stays empty.'));
+      isDemoPreview()
+        ? 'Demo Preview can show a labeled sample outcome when no live calls exist. Live mode shows real results only.'
+        : 'Latest call result: summary, transcript, structured data, and actions. Live data only.'));
 
     const subHost = el('div', { class: 'emp-outcome-panels' });
     const subTabs = el('div', { class: 'emp-tabs emp-subtabs' });
@@ -2581,73 +2710,148 @@ async function viewEmployeeStudio(root, id) {
     panels.structured.appendChild(el('p', { class: 'muted' }, '—'));
     panels.actions.appendChild(el('p', { class: 'muted' }, '—'));
 
+    function paintOutcomeDetail(detail, fromPreview) {
+      panels.summary.innerHTML = '';
+      if (fromPreview) {
+        panels.summary.appendChild(el('div', {
+          class: 'demo-preview-banner',
+        }, [
+          dataModeBadge(),
+          el('span', {}, 'Sample outcome for walkthrough. Not a live call.'),
+        ]));
+      } else {
+        panels.summary.appendChild(el('div', {
+          class: 'demo-preview-banner is-live',
+        }, [
+          el('span', { class: 'data-mode-badge is-live' }, 'Live'),
+          el('span', {}, 'Real call result from this workspace.'),
+        ]));
+      }
+      const extracted = detail.extractedData || {};
+      const kvKids = [];
+      const pushKv = (k, v, cls) => {
+        if (v == null || v === '' || v === '—') return;
+        kvKids.push(el('div', { class: 'kv' + (cls ? (' ' + cls) : '') }, [
+          el('div', { class: 'k' }, k),
+          el('div', { class: 'v' }, String(v)),
+        ]));
+      };
+      pushKv('Name', extracted.name || detail.callerName);
+      pushKv('Phone', extracted.phone || detail.phone);
+      pushKv('Company', extracted.company);
+      pushKv('Interest', extracted.interest);
+      pushKv('Team size', extracted.teamSize || extracted.team_size);
+      pushKv('Qualification', extracted.qualification || extracted.qualified || detail.outcome, 'is-success');
+      pushKv('Language', extracted.language);
+      pushKv('Appointment', extracted.appointment);
+      pushKv('Next action', extracted.nextAction || extracted.next_action, 'is-next');
+      if (kvKids.length) {
+        panels.summary.appendChild(el('div', { class: 'live-complete' }, [
+          el('div', { class: 'grid' }, kvKids),
+        ]));
+      } else {
+        panels.summary.appendChild(el('div', { class: 'emp-meta' }, [
+          el('div', {}, [el('span', { class: 'muted' }, 'Status'), el('b', {}, detail.status || '—')]),
+          el('div', {}, [el('span', { class: 'muted' }, 'Outcome'), el('b', {}, detail.outcome || '—')]),
+        ]));
+      }
+      if (detail.summary) {
+        panels.summary.appendChild(el('p', { style: 'margin-top:12px' }, detail.summary));
+      }
+
+      panels.transcript.innerHTML = '';
+      if (fromPreview) {
+        panels.transcript.appendChild(el('div', { class: 'demo-preview-banner' }, [
+          dataModeBadge(),
+          el('span', {}, 'Sample transcript'),
+        ]));
+      }
+      const transcript = detail.transcript;
+      const turns = Array.isArray(transcript) ? transcript
+        : (typeof transcript === 'string' && transcript ? [{ role: 'transcript', text: transcript }] : []);
+      if (!turns.length) panels.transcript.appendChild(el('p', { class: 'muted' }, 'No transcript for this call yet.'));
+      else {
+        turns.forEach((t) => panels.transcript.appendChild(el('div', { class: 'tx-turn' }, [
+          el('span', { class: 'tx-role' }, String(t.role || 'unknown')),
+          el('span', { class: 'tx-text' }, String(t.text || '')),
+        ])));
+      }
+
+      panels.structured.innerHTML = '';
+      if (fromPreview) {
+        panels.structured.appendChild(el('div', { class: 'demo-preview-banner' }, [
+          dataModeBadge(),
+          el('span', {}, 'Sample structured fields'),
+        ]));
+      }
+      const keys = Object.keys(extracted);
+      if (!keys.length) panels.structured.appendChild(el('p', { class: 'muted' }, 'No structured fields captured yet.'));
+      else {
+        keys.forEach((k) => {
+          panels.structured.appendChild(el('div', { class: 'ledger-row' }, [
+            el('div', {}, k),
+            el('b', {}, typeof extracted[k] === 'object' ? JSON.stringify(extracted[k]) : String(extracted[k])),
+          ]));
+        });
+      }
+
+      panels.actions.innerHTML = '';
+      if (fromPreview) {
+        panels.actions.appendChild(el('div', { class: 'demo-preview-banner' }, [
+          dataModeBadge(),
+          el('span', {}, 'Sample actions'),
+        ]));
+      }
+      const performed = detail.actionsPerformed || detail.toolCalls || [];
+      if (!performed.length) {
+        panels.actions.appendChild(el('p', { class: 'muted' },
+          detail.outcome ? ('Outcome recorded: ' + detail.outcome) : 'No actions recorded for this call.'));
+      } else {
+        performed.forEach((a) => {
+          panels.actions.appendChild(el('div', { class: 'ledger-row' }, [
+            el('div', {}, a.label || a.name || a.type || 'Action'),
+            el('b', {}, a.status || 'done'),
+          ]));
+        });
+      }
+    }
+
     try {
       const conv = await api('/api/conversations?limit=5&employeeId=' + encodeURIComponent(id));
       const rows = conv.conversations || conv.calls || [];
       const latest = rows[0];
       if (!latest) {
-        panels.summary.innerHTML = '';
-        panels.summary.appendChild(el('div', { class: 'emp-panel', style: 'border:0;padding:0;background:transparent;box-shadow:none' }, [
-          el('p', { class: 'muted' }, (emp.name || 'Maya') + " hasn't handled a call yet."),
-          el('button', {
-            class: 'btn btn-primary btn-sm',
-            style: 'margin-top:10px',
-            onclick: () => openLiveDemo(emp),
-          }, 'Run Live Demo'),
-        ]));
+        if (isDemoPreview()) {
+          paintOutcomeDetail(demoOutcomeFixture(emp), true);
+        } else {
+          panels.summary.innerHTML = '';
+          panels.summary.appendChild(el('div', { class: 'emp-empty-state' }, [
+            el('div', { class: 'demo-preview-banner is-live' }, [
+              el('span', { class: 'data-mode-badge is-live' }, 'Live'),
+              el('span', {}, 'No sample data in Live mode.'),
+            ]),
+            el('p', { class: 'ttl' }, 'No outcomes yet'),
+            el('p', { class: 'muted' }, (emp.name || 'Maya') + ' has not completed a call in this workspace. Results appear here after a Browser Test or PSTN call.'),
+            el('button', {
+              class: 'btn btn-primary btn-sm',
+              style: 'margin-top:10px',
+              onclick: () => openLiveDemo(emp),
+            }, 'Start Browser Test'),
+          ]));
+          panels.transcript.innerHTML = '';
+          panels.transcript.appendChild(el('p', { class: 'muted' }, 'No transcript yet.'));
+          panels.structured.innerHTML = '';
+          panels.structured.appendChild(el('p', { class: 'muted' }, 'No structured data yet.'));
+          panels.actions.innerHTML = '';
+          panels.actions.appendChild(el('p', { class: 'muted' }, 'No actions yet.'));
+        }
       } else {
         let detail = latest;
         try {
           const full = await api('/api/conversations/' + encodeURIComponent(latest.id));
           detail = full.conversation || full.call || latest;
         } catch (_) {}
-        panels.summary.innerHTML = '';
-        panels.summary.appendChild(el('div', { class: 'emp-meta' }, [
-          el('div', {}, [el('span', { class: 'muted' }, 'Status'), el('b', {}, detail.status || '—')]),
-          el('div', {}, [el('span', { class: 'muted' }, 'Outcome'), el('b', {}, detail.outcome || '—')]),
-          el('div', {}, [el('span', { class: 'muted' }, 'Qualification'), el('b', {}, (detail.extractedData && (detail.extractedData.qualification || detail.extractedData.qualified)) || '—')]),
-          el('div', {}, [el('span', { class: 'muted' }, 'Next action'), el('b', {}, (detail.extractedData && detail.extractedData.nextAction) || '—')]),
-        ]));
-        panels.summary.appendChild(el('p', { style: 'margin-top:12px' }, detail.summary || 'No summary yet.'));
-
-        panels.transcript.innerHTML = '';
-        const transcript = detail.transcript;
-        const turns = Array.isArray(transcript) ? transcript
-          : (typeof transcript === 'string' && transcript ? [{ role: 'transcript', text: transcript }] : []);
-        if (!turns.length) panels.transcript.appendChild(el('p', { class: 'muted' }, '—'));
-        else {
-          turns.forEach((t) => panels.transcript.appendChild(el('div', { class: 'tx-turn' }, [
-            el('span', { class: 'tx-role' }, String(t.role || 'unknown')),
-            el('span', { class: 'tx-text' }, String(t.text || '')),
-          ])));
-        }
-
-        panels.structured.innerHTML = '';
-        const extracted = detail.extractedData || {};
-        const keys = Object.keys(extracted);
-        if (!keys.length) panels.structured.appendChild(el('p', { class: 'muted' }, '—'));
-        else {
-          keys.forEach((k) => {
-            panels.structured.appendChild(el('div', { class: 'ledger-row' }, [
-              el('div', {}, k),
-              el('b', {}, typeof extracted[k] === 'object' ? JSON.stringify(extracted[k]) : String(extracted[k])),
-            ]));
-          });
-        }
-
-        panels.actions.innerHTML = '';
-        const performed = detail.actionsPerformed || detail.toolCalls || [];
-        if (!performed.length) {
-          panels.actions.appendChild(el('p', { class: 'muted' },
-            detail.outcome ? ('Outcome recorded: ' + detail.outcome) : 'No actions recorded for this call.'));
-        } else {
-          performed.forEach((a) => {
-            panels.actions.appendChild(el('div', { class: 'ledger-row' }, [
-              el('div', {}, a.label || a.name || a.type || 'Action'),
-              el('b', {}, a.status || 'done'),
-            ]));
-          });
-        }
+        paintOutcomeDetail(detail, false);
       }
     } catch (e) {
       panels.summary.innerHTML = '';
@@ -2737,9 +2941,12 @@ async function viewEmployeeStudio(root, id) {
     body.appendChild(el('p', { class: 'muted', style: 'margin-top:14px' },
       'Qualified count uses real conversation outcomes only. Current qualified: ' + fmtMetric(emp.qualified) + '.'));
   } else if (tab === 'testing') {
-    body.appendChild(el('h3', { class: 't-h3' }, 'Testing'));
+    body.appendChild(el('div', { class: 'emp-panel-h', style: 'margin-bottom:6px' }, [
+      el('h3', { class: 't-h3' }, 'Testing'),
+      dataModeBadge(),
+    ]));
     body.appendChild(el('p', { class: 'muted' },
-      'Realtime Talk for this employee. Browser Test is free. PSTN Test requires explicit authorization before any paid dial.'));
+      'Choose a channel. Browser Test runs in this tab. PSTN Test places a real paid phone dial after authorization.'));
 
     const modeParams = new URLSearchParams((location.hash.split('?')[1] || ''));
     let testMode = modeParams.get('mode') === 'pstn' ? 'pstn' : 'browser';
@@ -2768,21 +2975,24 @@ async function viewEmployeeStudio(root, id) {
     paintTestMode();
 
     browserPanel.appendChild(el('div', { class: 'emp-panel' }, [
-      el('h4', { class: 't-h4' }, 'Browser realtime Talk'),
-      el('p', { class: 'muted' }, 'Start, mic, live transcript, current language, tool calls, end. Uses the same session APIs as Talk.'),
+      el('div', { class: 'emp-panel-h' }, [
+        el('h4', { class: 't-h4' }, 'Browser Test'),
+        el('span', { class: 'live-mode-chip is-browser' }, 'Free · Browser'),
+      ]),
+      el('p', { class: 'muted' }, 'Mic, live transcript, language, and tool calls in the browser. No phone charges.'),
       el('div', { class: 'flex gap-2', style: 'margin-top:12px;flex-wrap:wrap' }, [
         el('button', {
-          class: 'btn btn-primary',
+          class: 'btn btn-primary btn-sm',
           onclick: () => openLiveDemo(emp),
         }, 'Start Browser Test'),
       ]),
       el('p', { class: 'muted', style: 'margin-top:12px' },
-        'After the call ends, the Live Demo workspace opens Call complete with Summary, Structured outcome, and Actions.'),
+        'Opens the Live Demo workspace labeled Browser Test. After the call ends, review Summary and Structured outcome.'),
     ]));
 
     const authGate = el('input', { type: 'checkbox', id: 'pstnAuthGate' });
     const testNumber = el('input', { class: 'input', placeholder: 'Your test number (+91…)' });
-    const dialBtn = el('button', { class: 'btn btn-primary', disabled: 'disabled' }, 'Call my test number');
+    const dialBtn = el('button', { class: 'btn btn-primary btn-sm', disabled: 'disabled' }, 'Call my test number');
     authGate.onchange = () => { dialBtn.disabled = !authGate.checked; };
     dialBtn.onclick = () => {
       if (!authGate.checked) {
@@ -2806,8 +3016,11 @@ async function viewEmployeeStudio(root, id) {
       });
     };
     pstnPanel.appendChild(el('div', { class: 'emp-panel' }, [
-      el('h4', { class: 't-h4' }, 'PSTN Test'),
-      el('p', { class: 'muted' }, 'Call my test number. Explicit authorization required before any paid dial.'),
+      el('div', { class: 'emp-panel-h' }, [
+        el('h4', { class: 't-h4' }, 'PSTN Test'),
+        el('span', { class: 'live-mode-chip is-pstn' }, 'Paid · Phone'),
+      ]),
+      el('p', { class: 'muted' }, 'Real phone dial to your test number. Explicit authorization required before any charge.'),
       field('Test number', testNumber),
       el('label', { class: 'muted', style: 'display:flex;gap:8px;align-items:center;margin:12px 0' }, [
         authGate,
@@ -2816,9 +3029,12 @@ async function viewEmployeeStudio(root, id) {
       dialBtn,
     ]));
   } else if (tab === 'voice') {
-    body.appendChild(el('h3', { class: 't-h3' }, 'Voice & Language'));
+    body.appendChild(el('div', { class: 'emp-panel-h', style: 'margin-bottom:6px' }, [
+      el('h3', { class: 't-h3' }, 'Voice & Language'),
+      dataModeBadge(),
+    ]));
     body.appendChild(el('p', { class: 'muted' },
-      'Choose voice, mode, and languages. Draft voice changes do not flip production Set Active.'));
+      'Choose voice, mode, and languages for ' + (emp.name || 'this employee') + '.'));
     const v = emp.voice || {};
     let voiceMode = 'astra_auto';
     const modeBar = el('div', { class: 'emp-voice-modes', role: 'group', 'aria-label': 'Voice mode' });
@@ -2835,7 +3051,7 @@ async function viewEmployeeStudio(root, id) {
           voiceMode = m.id;
           $$('.emp-voice-mode', modeBar).forEach((b) => b.classList.remove('is-active'));
           ev.currentTarget.classList.add('is-active');
-          toast(m.label + ' selected. Draft voice only. Not active in production.', 'info');
+          toast(m.label + ' selected · Draft voice · Not active', 'info');
         },
       }, m.label));
     });
@@ -2943,29 +3159,34 @@ async function viewEmployeeStudio(root, id) {
             value: vv.id || vv.voiceId || vv.name,
           }, label + (vv.language ? ' · ' + vv.language : ''));
         })
-        : [el('option', { value: 'maya' }, 'Maya - Natural (Indian English)')]
+        : [el('option', { value: 'maya' }, employeeVoiceIdentity(emp) + ' (Indian English)')]
     );
     const speedIn = el('input', { class: 'input', type: 'range', min: '0.7', max: '1.2', step: '0.05', value: String(v.speed || 0.9) });
     const speedVal = el('span', { class: 'muted' }, String(v.speed || 0.9));
     speedIn.oninput = () => { speedVal.textContent = speedIn.value; };
-    const previewBtn = el('button', { class: 'btn btn-ghost' }, 'Play draft preview');
+    const previewBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Play draft preview');
     previewBtn.onclick = async () => {
       previewBtn.disabled = true;
       try {
-        toast('Draft voice preview. Production Set Active is not changed.', 'info');
+        toast('Playing draft preview · Draft voice · Not active', 'info');
         const out = await api('/api/tts', {
           method: 'POST',
           body: { text: 'Hi, I am Maya from Astra Voice. How can I help you today?', preview: true },
           raw: true,
         }).catch(() => null);
         if (out && out.ok === false) toast('Preview unavailable in this environment.', 'info');
-        else toast('Draft preview requested.', 'ok');
+        else toast('Draft preview ready.', 'ok');
       } catch (e) { toast(e.message || 'Preview failed.', 'err'); }
       finally { previewBtn.disabled = false; }
     };
+    const defaultVoiceLabel = employeeVoiceIdentity(emp);
+    if (catalogVoices.length) {
+      const preferred = Array.from(voiceSel.options).find((o) => /maya|natural/i.test(o.textContent || ''));
+      if (preferred) voiceSel.value = preferred.value;
+    }
     body.appendChild(el('div', { class: 'emp-panel', style: 'margin-top:16px' }, [
       el('h4', { class: 't-h4' }, 'Voice'),
-      el('p', { class: 'muted' }, 'Astra Auto by default. Advanced catalog stays secondary.'),
+      el('p', { class: 'muted' }, 'Selected · ' + defaultVoiceLabel + ' · Draft voice · Not active'),
       field('Voice', voiceSel),
       el('div', { class: 'flex gap-2 items-center', style: 'margin:10px 0;flex-wrap:wrap' }, [
         el('label', { class: 'muted' }, 'Speed'),
@@ -2973,7 +3194,6 @@ async function viewEmployeeStudio(root, id) {
         speedVal,
         previewBtn,
       ]),
-      el('p', { class: 'muted' }, 'Fallbacks: English if regional STT is unavailable. Never present unvalidated languages as production-ready.'),
     ]));
 
     if (!isInvestorDemo()) {
