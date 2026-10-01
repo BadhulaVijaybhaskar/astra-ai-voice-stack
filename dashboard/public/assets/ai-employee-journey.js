@@ -98,8 +98,8 @@
   }
 
   function chromeLabel() {
-    // Global chrome: AstraConnect Workspace. Demo adds DEMO PREVIEW badge separately.
-    return 'AstraConnect Workspace';
+    // Optional Guided Setup / Demo Journey chrome. Primary product nav stays in the app shell.
+    return 'Guided Setup · Astra Voice';
   }
 
   function pathCtas(data) {

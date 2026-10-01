@@ -945,3 +945,59 @@
   .emp-meta { grid-template-columns: 1fr; }
   .emp-studio-actions { width: 100%; }
 }
+
+/* ---- Platform IA: employee overview + action cards ---- */
+.emp-title-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.emp-title-row h2 { margin:0; }
+.emp-kind { background: rgba(59,130,246,0.10); border-color: rgba(59,130,246,0.28); color: var(--voice, #3b82f6); }
+.emp-role-line { margin:0; font-size:0.9rem; }
+.emp-overview-grid {
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap:12px;
+}
+.emp-ov-card { min-height:0; }
+.emp-ov-label {
+  font-size:0.68rem; letter-spacing:0.08em; text-transform:uppercase;
+  color: var(--ink-faint); font-weight:650; margin-bottom:6px;
+}
+.emp-ov-value { font-size:0.92rem; font-weight:560; color: var(--ink); line-height:1.35; }
+.emp-action-cards {
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap:12px;
+  margin-top:8px;
+}
+.emp-action-card .pill.is-ok {
+  background: rgba(22,163,74,0.12);
+  border-color: rgba(22,163,74,0.35);
+  color: #15803d;
+}
+.emp-instr-section { margin-bottom:12px; }
+.emp-instr-section .t-h4 { margin:0 0 6px; }
+.emp-voice-modes { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.emp-voice-mode {
+  border:1px solid var(--line); background: var(--panel);
+  border-radius:10px; padding:8px 12px; font-size:0.84rem; cursor:pointer; color: var(--ink-soft);
+}
+.emp-voice-mode.is-active {
+  background: rgba(59,130,246,0.10);
+  border-color: rgba(59,130,246,0.4);
+  color: var(--ink); font-weight:600;
+}
+.emp-lang-chips { display:flex; flex-wrap:wrap; gap:8px; }
+.emp-lang-chip {
+  display:inline-flex; align-items:center; gap:8px;
+  border:1px solid var(--line); border-radius:10px; padding:6px 10px; font-size:0.8rem;
+  background: var(--panel);
+}
+.emp-lang-chip .emp-lang-status { font-size:0.65rem; letter-spacing:0.04em; font-weight:650; }
+.emp-lang-chip.is-tested { border-color: rgba(59,130,246,0.35); }
+.emp-lang-chip.is-tested .emp-lang-status { color: #2563eb; }
+.emp-lang-chip.is-validation { border-color: rgba(22,163,74,0.35); }
+.emp-lang-chip.is-validation .emp-lang-status { color: #15803d; }
+.emp-lang-chip.is-unavailable { opacity:0.55; }
+.emp-lang-chip.is-unavailable .emp-lang-status { color: var(--ink-faint); }
+.emp-subtabs { margin-bottom:12px; }
+.emp-outcome-panel .tx-turn { display:flex; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); font-size:0.88rem; }
+.emp-outcome-panel .tx-role { min-width:72px; color: var(--ink-faint); font-weight:600; text-transform:capitalize; }

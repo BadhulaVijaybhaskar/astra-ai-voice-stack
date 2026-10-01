@@ -14,7 +14,11 @@ ENABLE_AI_EMPLOYEE_JOURNEY=1
 
 Route (authenticated console): `#/ai-employee-setup`
 
-When the flag is off, the nav item is hidden and `/api/ai-employee-journey` returns `404 feature_disabled`.
+This route is **Guided Setup / Demo Journey** only. It is not primary product navigation.
+Primary console IA is Overview · AI Employees · Calls · Conversations · Leads · Automations · Integrations · Analytics · Settings.
+Maya Overview deep-links here via Configure Maya / Run Live Demo / Guided Setup.
+
+When the flag is off, the TOOLS nav item is hidden and `/api/ai-employee-journey` returns `404 feature_disabled`.
 
 ## Investor paths (primary CTAs)
 
