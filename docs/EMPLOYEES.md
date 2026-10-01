@@ -11,6 +11,7 @@ Customer-facing **Employee** product layer. An employee is a composition of rela
 | `workflowId` | Astra `wf_...` |
 | `knowledgeIds` | Astra `kb_...` refs |
 | `phoneNumberId` | Astra `pn_...` |
+| `phoneConfig` | Per-employee phone persist (Business Number, direction, callbacks, hours). See [PHONE-NUMBERS.md](./PHONE-NUMBERS.md). |
 | `voice` | language / speaker / model (no provider brand names in UI copy) |
 | `status` | `DRAFT` \| `READY` \| `LIVE` \| `PAUSED` \| `ARCHIVED` |
 | `channel` | `inbound` \| `instant_lead` \| `campaign` \| `outbound` \| `both` |
@@ -39,6 +40,12 @@ Each maps onto existing workflow templates and agent presets (reuse).
 | `POST` | `/api/employees/:id/status` | Lifecycle transition. |
 | `POST` | `/api/employees/:id/pause` | LIVE → PAUSED. |
 | `POST` | `/api/employees/:id/resume` | PAUSED → LIVE. |
+| `GET` / `PUT` | `/api/employees/:id/phone-config` | Per-employee phone config. `?advanced=1` for provider ids. |
+| `POST` | `/api/employees/:id/phone-config/assign` | `{ numberId }` bind number + workflow + callbacks. |
+| `POST` | `/api/employees/:id/phone-config/change` | Replace number for this employee only. |
+| `POST` | `/api/employees/:id/phone-config/unassign` | Clear this employee's number. |
+| `POST` | `/api/employees/:id/phone-config/test-inbound` | Dry-run preflight. Never dials. |
+| `POST` | `/api/employees/:id/phone-config/test-outbound` | Dry-run preflight. Never dials. |
 | `GET` / `PUT` | `/api/employees/:id/instructions` | Teach: brief, greeting, instructions, step guidance. See [INSTRUCTIONS.md](./INSTRUCTIONS.md). |
 | `GET` / `PUT` | `/api/employees/:id/workflow` | Advanced Workflow: Steps + guidance (Phase 9). Customer language only. |
 | `GET` | `/api/employees/:id/timeline` | Activity Timeline from real Lead/CallJob/Call events (Phase 10). See [TIMELINE.md](./TIMELINE.md). |
@@ -59,17 +66,16 @@ Public JSON never includes Dograh / VoBiz / Deepgram / Groq / Rumik terms.
 
 - **My Employees**: cards, filters, Open / Test / Pause / Resume, + New Employee.
 - **Create Employee**: templates + brief → compose.
-- **Employee Studio**: header actions + tabs (Overview, Instructions, Workflow, Training, Assign Number, Leads, Timeline, Actions, Outcomes, Voice, Settings).
-  - Instructions / Workflow / Training / Assign Number / Outcomes / Leads / Timeline / Actions / Voice (Language + Voice tier stubs) are real editors.
+- **Employee Studio**: header actions + tabs (Overview, Instructions, Workflow, Training, Routing, Leads, Timeline, Actions, Outcomes, Voice, Settings).
+  - Routing (narrow): Assigned Phone Number + Status + Assign / Change / Unassign. Change opens workspace inventory selector. No buy UI here.
   - Voice tiers: Standard (live) / Regional Premium / Licensed Brand / Private Enterprise (placeholders). See [CELEBRITY-VOICES.md](./CELEBRITY-VOICES.md).
-  - Assign Number includes Inbound ownership when a Phone Number is linked.
 - Customer nav: see [NAV-IA.md](./NAV-IA.md).
 
 North star: Create → Teach → Test → Assign Number → Connect Leads → Go Live → Conversations → outcomes.
 
 ## Schema
 
-Additive migration to **schemaVersion 13**: Phone Number inbound greeting/hours, Employee `actions`, voice language normalize, plan `includedEmployees` / `includedMinutes`. See [INBOUND.md](./INBOUND.md), [LANGUAGES.md](./LANGUAGES.md), [ACTIONS.md](./ACTIONS.md), [PLANS-BILLING.md](./PLANS-BILLING.md).
+Additive migration to **schemaVersion 15**: Phone Number inbound greeting/hours + answer/hangup URLs, Employee `phoneConfig`, Employee `actions`, voice language normalize, plan `includedEmployees` / `includedMinutes`. See [INBOUND.md](./INBOUND.md), [PHONE-NUMBERS.md](./PHONE-NUMBERS.md), [LANGUAGES.md](./LANGUAGES.md), [ACTIONS.md](./ACTIONS.md), [PLANS-BILLING.md](./PLANS-BILLING.md).
 
 ## Out of scope
 

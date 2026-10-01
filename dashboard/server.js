@@ -54,6 +54,7 @@ const leads = require('./lib/leads');
 const callJobs = require('./lib/call-jobs');
 const employees = require('./lib/employees');
 const employeeRuntimeConfig = require('./lib/employee-runtime-config');
+const employeePhoneConfig = require('./lib/employee-phone-config');
 const timeline = require('./lib/timeline');
 const voiceCatalog = require('./lib/tts-voice-catalog');
 const unifiedVoiceCatalog = require('./lib/voice-catalog');
@@ -3195,6 +3196,18 @@ function matchEmployeesRoute(route) {
   if (runtimePstnProof) return { action: 'runtime_config_pstn_proof', id: decodeURIComponent(runtimePstnProof[1]) };
   const runtimeConfig = route.match(/^\/api\/employees\/([^/]+)\/runtime-config$/);
   if (runtimeConfig) return { action: 'runtime_config', id: decodeURIComponent(runtimeConfig[1]) };
+  const phoneTestIn = route.match(/^\/api\/employees\/([^/]+)\/phone-config\/test-inbound$/);
+  if (phoneTestIn) return { action: 'phone_config_test_inbound', id: decodeURIComponent(phoneTestIn[1]) };
+  const phoneTestOut = route.match(/^\/api\/employees\/([^/]+)\/phone-config\/test-outbound$/);
+  if (phoneTestOut) return { action: 'phone_config_test_outbound', id: decodeURIComponent(phoneTestOut[1]) };
+  const phoneAssign = route.match(/^\/api\/employees\/([^/]+)\/phone-config\/assign$/);
+  if (phoneAssign) return { action: 'phone_config_assign', id: decodeURIComponent(phoneAssign[1]) };
+  const phoneUnassign = route.match(/^\/api\/employees\/([^/]+)\/phone-config\/unassign$/);
+  if (phoneUnassign) return { action: 'phone_config_unassign', id: decodeURIComponent(phoneUnassign[1]) };
+  const phoneChange = route.match(/^\/api\/employees\/([^/]+)\/phone-config\/change$/);
+  if (phoneChange) return { action: 'phone_config_change', id: decodeURIComponent(phoneChange[1]) };
+  const phoneConfig = route.match(/^\/api\/employees\/([^/]+)\/phone-config$/);
+  if (phoneConfig) return { action: 'phone_config', id: decodeURIComponent(phoneConfig[1]) };
   const empLeads = route.match(/^\/api\/employees\/([^/]+)\/leads$/);
   if (empLeads) return { action: 'leads', id: decodeURIComponent(empLeads[1]) };
   const one = route.match(/^\/api\/employees\/([^/]+)$/);
@@ -3667,6 +3680,150 @@ function apiEmployeesRuntimeConfigPstnProof(req, res, ctx) {
     return core.sendJson(res, proof.status, { error: proof.error, code: proof.code });
   }
   core.sendJson(res, 200, proof);
+}
+
+function apiEmployeesPhoneConfigGet(req, res, ctx) {
+  const row = employees.findEmployee(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!row) return core.sendJson(res, 404, { error: 'employee not found', code: 'not_found' });
+  const url = new URL(req.url || '/', 'http://localhost');
+  const advanced = url.searchParams.get('advanced') === '1'
+    || url.searchParams.get('advanced') === 'true'
+    || !!(ctx.user && ctx.user.role === 'super_admin');
+  const phoneConfig = employeePhoneConfig.publicPhoneConfig(core.db(), row, { advanced });
+  // Customer payloads never include Dograh / VoBiz brand strings.
+  const blob = JSON.stringify(phoneConfig).toLowerCase();
+  if (!advanced && (blob.includes('dograh') || blob.includes('vobiz'))) {
+    return core.sendJson(res, 500, { error: 'phone config leak', code: 'sanitization_failed' });
+  }
+  core.sendJson(res, 200, { phoneConfig });
+}
+
+async function apiEmployeesPhoneConfigPatch(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = employeePhoneConfig.patchPhoneConfig(d, ctx.tenant.id, ctx.params.id, ctx.body || {});
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.phone_config.updated', 'employee', ctx.params.id, {
+        direction: result.employee.phoneConfig && result.employee.phoneConfig.direction,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, {
+    phoneConfig: employeePhoneConfig.publicPhoneConfig(core.db(), result.employee, { advanced: false }),
+    verify: result.verify || null,
+  });
+}
+
+async function apiEmployeesPhoneConfigAssign(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const numberId = String(b.numberId || b.phoneNumberId || '').trim();
+  if (!numberId) {
+    return core.sendJson(res, 422, { error: 'numberId is required', code: 'validation' });
+  }
+  try {
+    const number = await telephonyProvider.assignNumber(numberId, ctx.tenant.id, {
+      employeeId: ctx.params.id,
+      inboundEnabled: b.inboundEnabled,
+      outboundEnabled: b.outboundEnabled,
+      direction: b.direction,
+      working_hours: b.working_hours || b.workingHours,
+      after_hours_action: b.after_hours_action || b.afterHoursAction,
+      escalation_target: b.escalation_target || b.escalationTarget,
+      answer_url: b.answer_url || b.answerUrl,
+      hangup_callback: b.hangup_callback || b.hangupCallback,
+    });
+    await core.mutate((d) => {
+      addAudit(d, ctx, 'employee.phone_config.assigned', 'employee', ctx.params.id, {
+        numberId: number.id,
+        e164: number.e164,
+      });
+    });
+    const fresh = employees.findEmployee(core.db(), ctx.tenant.id, ctx.params.id);
+    const cfg = fresh && fresh.phoneConfig ? fresh.phoneConfig : null;
+    core.sendJson(res, 200, {
+      number,
+      phoneConfig: employeePhoneConfig.publicPhoneConfig(core.db(), fresh, { advanced: false }),
+      telephonySync: {
+        ok: !!(cfg && cfg.telephonySyncOk),
+        mode: (cfg && cfg.telephonySyncMode) || 'dry_run',
+        workflowBound: !!(cfg && cfg.workflow_id),
+        paidCall: false,
+      },
+    });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiEmployeesPhoneConfigUnassign(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = employeePhoneConfig.unassignFromEmployee(d, {
+      tenantId: ctx.tenant.id,
+      employeeId: ctx.params.id,
+    });
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.phone_config.unassigned', 'employee', ctx.params.id, {});
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, {
+    phoneConfig: employeePhoneConfig.publicPhoneConfig(core.db(), result.employee, { advanced: false }),
+    number: result.number ? serializePhoneNumber(result.number, ctx.tenant.id) : null,
+  });
+}
+
+async function apiEmployeesPhoneConfigChange(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const numberId = String(b.numberId || b.phoneNumberId || '').trim();
+  if (!numberId) {
+    return core.sendJson(res, 422, { error: 'numberId is required', code: 'validation' });
+  }
+  // Change = unassign current then assign new via provider path.
+  let cleared;
+  await core.mutate((d) => {
+    cleared = employeePhoneConfig.unassignFromEmployee(d, {
+      tenantId: ctx.tenant.id,
+      employeeId: ctx.params.id,
+    });
+  });
+  if (!cleared.ok && cleared.code !== 'employee_not_found') {
+    return core.sendJson(res, cleared.status, { error: cleared.error, code: cleared.code });
+  }
+  return apiEmployeesPhoneConfigAssign(req, res, ctx);
+}
+
+function apiEmployeesPhoneConfigTestInbound(req, res, ctx) {
+  const result = employeePhoneConfig.testInbound(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!result.ok) {
+    return core.sendJson(res, result.status, {
+      error: result.error,
+      code: result.code,
+      result: result.result,
+    });
+  }
+  core.sendJson(res, 200, result);
+}
+
+function apiEmployeesPhoneConfigTestOutbound(req, res, ctx) {
+  // Never place paid calls from Test outbound.
+  const result = employeePhoneConfig.testOutbound(core.db(), ctx.tenant.id, ctx.params.id, {
+    confirmPaid: !!(ctx.body && ctx.body.confirmPaid),
+    placeCall: !!(ctx.body && (ctx.body.placeCall || ctx.body.dial)),
+  });
+  if (!result.ok) {
+    return core.sendJson(res, result.status, {
+      error: result.error,
+      code: result.code,
+      result: result.result,
+    });
+  }
+  core.sendJson(res, 200, result);
 }
 
 function apiEmployeesLeadsList(req, res, ctx) {
@@ -4187,6 +4344,9 @@ const server = http.createServer(async (req, res) => {
           if (empGet.action === 'runtime_config_pstn_proof') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigPstnProof(rq, rs, { ...ctx, params: { id: empGet.id } }));
           }
+          if (empGet.action === 'phone_config') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPhoneConfigGet(rq, rs, { ...ctx, params: { id: empGet.id } }));
+          }
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
         if (route === '/api/hvac/desk') return core.requireAuth(req, res, apiHvacDesk);
@@ -4259,6 +4419,9 @@ const server = http.createServer(async (req, res) => {
           if (empPatch.action === 'runtime_config' || empPatch.action === 'runtime_config_draft') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigDraft(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
           }
+          if (empPatch.action === 'phone_config') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPhoneConfigPatch(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
+          }
         }
         return core.sendJson(res, 405, { error: 'method not allowed', code: 'method' });
       }
@@ -4290,7 +4453,8 @@ const server = http.createServer(async (req, res) => {
         if (empPut && (empPut.action === 'instructions' || empPut.action === 'outcomes' || empPut.action === 'workflow'
           || empPut.action === 'actions' || empPut.action === 'language'
           || empPut.action === 'voice_tier'
-          || empPut.action === 'runtime_config' || empPut.action === 'runtime_config_draft')) {
+          || empPut.action === 'runtime_config' || empPut.action === 'runtime_config_draft'
+          || empPut.action === 'phone_config')) {
           let body;
           try { body = await core.readBody(req, 256 * 1024); }
           catch (e) {
@@ -4314,6 +4478,9 @@ const server = http.createServer(async (req, res) => {
           }
           if (empPut.action === 'runtime_config' || empPut.action === 'runtime_config_draft') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigDraft(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
+          }
+          if (empPut.action === 'phone_config') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPhoneConfigPatch(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
           }
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesOutcomesPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
         }
@@ -4511,6 +4678,24 @@ const server = http.createServer(async (req, res) => {
         }
         if (empPost.action === 'runtime_config_activate') {
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigActivate(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'phone_config_assign') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPhoneConfigAssign(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'phone_config_unassign') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPhoneConfigUnassign(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'phone_config_change') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPhoneConfigChange(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'phone_config_test_inbound') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPhoneConfigTestInbound(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'phone_config_test_outbound') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPhoneConfigTestOutbound(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'phone_config') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesPhoneConfigPatch(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
         }
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }

@@ -506,6 +506,9 @@ function publicAssignedNumber(n) {
     id: n.id,
     e164: n.e164 || n.address || '',
     label: n.label || '',
+    connectionState: n.status === 'assigned' ? 'Connected' : 'Unassigned',
+    inboundEnabled: n.inboundEnabled !== false,
+    outboundEnabled: n.outboundEnabled !== false,
   };
 }
 
@@ -578,6 +581,13 @@ function publicEmployee(row, db, opts = {}) {
     : computeMetrics(db || { calls: [], leads: [] }, row);
   const names = resolveNames(db || {}, row);
   const number = resolveAssignedNumber(db || {}, row);
+  let phoneConfigSummary = null;
+  try {
+    const employeePhoneConfig = require('./employee-phone-config');
+    phoneConfigSummary = employeePhoneConfig.publicPhoneConfig(db || {}, row, { advanced: false });
+  } catch (_) {
+    phoneConfigSummary = null;
+  }
   const out = {
     id: row.id,
     name: row.name || '',
@@ -596,6 +606,7 @@ function publicEmployee(row, db, opts = {}) {
     language: normalizeLanguage((row.voice && row.voice.language) || DEFAULT_LANGUAGE),
     voiceTier: normalizeVoiceTier((row.voice && row.voice.tier) || DEFAULT_VOICE_TIER),
     assignedNumber: number,
+    phoneConfig: phoneConfigSummary,
     agentName: names.agentName,
     workflowName: names.workflowName,
     runtimeConfig: row.runtimeConfig ? {

@@ -1,7 +1,6 @@
 # Phone Numbers Workspace
 
 Astra Voice Phone Numbers is a dedicated top-level product section. Customers buy, assign, and route numbers inside Astra. Provider portals (VoBiz / Dograh) stay invisible in normal UI (Advanced / Super Admin only).
-
 ## Tabs
 
 | Tab | Purpose |
@@ -12,7 +11,62 @@ Astra Voice Phone Numbers is a dedicated top-level product section. Customers bu
 | Usage & Cost | Real Astra call aggregates only. Never invent metrics. |
 
 Header **Get New Number** opens the Buy tab.
+Purchase is deferred (`POST /api/phone-numbers/purchase` returns **501** `purchase_deferred`).
 
+On boot the dashboard seeds platform-owned numbers:
+
+| Field | Main | Alternate |
+| --- | --- | --- |
+| id | `pn_platform_astranova_main` | `pn_platform_astranova_alt` |
+| e164 | `+918065353938` | `+918065353939` |
+| label | AstraNova Main Line | AstraNova Alternate Line |
+| status | `available` until assigned | `available` until assigned |
+
+Secrets and API keys are never returned. Public JSON exposes Astra `id`, `e164` / Business Number, label, capabilities, connection state, Employee assignment, inbound/outbound toggles, and workflow **product name** only.
+
+## Per-employee phone configuration
+
+Each AI Employee persists:
+
+`assigned_phone_number`, `telephony_provider`, `direction`, `inbound_enabled`, `outbound_enabled`, `caller_id`, `dograh_phone_id`, `telephony_config_id`, `workflow_id`, `answer_url`, `hangup_callback`, `working_hours`, `after_hours_action`, `escalation_target`
+
+Stored on `employee.phoneConfig` (schemaVersion **15**). Raw provider ids are Advanced-only.
+
+### Connection states
+
+`Unassigned` | `Connected` | `Inbound only` | `Outbound only` | `Inbound + Outbound` | `Needs attention`
+
+### Assignment path
+
+Astra UI → `employee_id` → select available number → bind phone to employee/workflow → update Dograh telephony mapping (dry-run when not live) → persist answer URL / hangup callback → verify callback shape → persist in Astra.
+
+Do not hardcode Maya. Changing Vaani never mutates Maya's phone mapping.
+
+```bash
+# Employee phone config (customer shape)
+curl -s -b cookies.txt http://localhost:8787/api/employees/emp_.../phone-config
+
+# Advanced (provider ids)
+curl -s -b cookies.txt 'http://localhost:8787/api/employees/emp_.../phone-config?advanced=1'
+
+# Assign / change / unassign
+curl -s -b cookies.txt -X POST http://localhost:8787/api/employees/emp_.../phone-config/assign \
+  -H 'Content-Type: application/json' \
+  -d '{"numberId":"pn_platform_astranova_main","inboundEnabled":true,"outboundEnabled":true}'
+
+curl -s -b cookies.txt -X POST http://localhost:8787/api/employees/emp_.../phone-config/change \
+  -H 'Content-Type: application/json' -d '{"numberId":"pn_platform_astranova_alt"}'
+
+curl -s -b cookies.txt -X POST http://localhost:8787/api/employees/emp_.../phone-config/unassign \
+  -H 'Content-Type: application/json' -d '{}'
+
+# Dry-run preflight only. Never places paid PSTN calls.
+curl -s -b cookies.txt -X POST http://localhost:8787/api/employees/emp_.../phone-config/test-inbound \
+  -H 'Content-Type: application/json' -d '{}'
+
+curl -s -b cookies.txt -X POST http://localhost:8787/api/employees/emp_.../phone-config/test-outbound \
+  -H 'Content-Type: application/json' -d '{}'
+```
 Employee **Routing** is assign / change / unassign only. Change opens the central inventory selector. Purchasing is not embedded in employee pages.
 
 ## Safety
@@ -25,7 +79,6 @@ Employee **Routing** is assign / change / unassign only. Change opens the centra
 - **Connected** only after provider verified + Dograh mapping + callback URLs all pass. Status checks do not place PSTN calls.
 
 ## API
-
 ```bash
 GET  /api/phone-numbers
 GET  /api/phone-numbers/available
@@ -57,3 +110,23 @@ VOBIZ_AUTH_TOKEN=
 ```
 
 Until VoBiz inventory credentials are configured, Buy shows setup guidance and My Numbers keeps platform test inventory. When search is live, the "purchase not available" copy is removed.
+## Schema
+
+Additive **schemaVersion 15**: `employee.phoneConfig`, phone number `answerUrl` / `hangupCallback`, alternate inventory seed. See [EMPLOYEES.md](./EMPLOYEES.md).
+
+## Adapter
+
+- `dashboard/lib/phone-numbers.js`: seed, list/search, assign/unassign/patch, inbound get/set, public serialization, connection states
+- `dashboard/lib/employee-phone-config.js`: per-employee persist, assign/change/unassign, dry-run tests, isolation
+- `dashboard/lib/telephony-provider.js`: `assignNumber` persists phoneConfig + dry-run telephony mapping
+
+## UI
+
+Employee Studio **Routing** (narrow scope for this PR):
+- Shows **Assigned Phone Number** and **Status** (`Connected` / `Unassigned`)
+- Buttons: **Assign** / **Change** / **Unassign**
+- Change and Assign open a modal selector over **Phone Numbers workspace inventory** (`/api/phone-numbers/available`)
+- Link out to Phone Numbers workspace for inventory management
+- **No buy / purchase marketplace** inside employee pages (that belongs to the top-level Phone Numbers workspace)
+
+Sidebar **Phone Numbers** remains the inventory workspace. Outbound dial still requires explicit confirm. Test inbound/outbound APIs are dry-run only and are not shown on the employee Routing tab.
