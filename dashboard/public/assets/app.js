@@ -3159,12 +3159,14 @@ async function viewEmployeeStudio(root, id) {
 
     function renderCascade() {
       cascadeHost.innerHTML = '';
+      const isMayaEmp = /^maya$/i.test(String(emp.name || '').trim())
+        || String(emp.id) === 'emp_33eae8ef454680f0';
       const meta = currentProviderMeta();
       const canPreview = meta.can_preview !== false
         && meta.state !== 'needs_funding'
         && meta.state !== 'needs_credentials'
         && meta.state !== 'unavailable';
-      // production activate stays gated
+      // production activate stays gated for Maya only
 
       // 1. Voice mode
       const modeBar = el('div', { class: 'emp-voice-modes', role: 'group', 'aria-label': 'Voice mode' });
@@ -3478,11 +3480,67 @@ async function viewEmployeeStudio(root, id) {
 
       const activateBtn = el('button', {
         class: 'btn btn-primary btn-sm',
-        disabled: 'disabled',
-        title: 'Activate is gated. Production TTS unchanged.',
-      }, 'Activate');
-      activateBtn.onclick = () => {
-        toast('Activate is gated. Production Maya TTS is unchanged.', 'info');
+        disabled: (!canPreview || isMayaEmp) ? 'disabled' : null,
+        title: isMayaEmp
+          ? 'Maya production voice is protected. Draft only.'
+          : (canPreview ? 'Activate this employee runtime config' : 'Activate disabled'),
+      }, isMayaEmp ? 'Activate (protected)' : 'Activate');
+      activateBtn.onclick = async () => {
+        if (isMayaEmp) {
+          toast('Maya production config is protected. Draft saved only. Dograh WF8 unchanged.', 'info');
+          return;
+        }
+        activateBtn.disabled = true;
+        try {
+          // Persist current cascade selection as draft, then activate.
+          await api('/api/employees/' + encodeURIComponent(emp.id) + '/runtime-config/draft', {
+            method: 'POST',
+            body: {
+              tts: {
+                provider: selectedProvider === 'auto' ? 'deepgram' : selectedProvider,
+                voice_id: selectedVoiceId || voiceSel.value,
+                language: selectedLanguage,
+                speed: Number(speedIn.value) || 1.0,
+              },
+            },
+          });
+          const act = await api('/api/employees/' + encodeURIComponent(emp.id) + '/runtime-config/activate', {
+            method: 'POST',
+            body: {},
+          });
+          const sync = act && act.dograhSync;
+          if (sync && sync.skipped) {
+            toast('Activated on Astra. Dograh sync skipped · ' + (sync.reason || 'n/a'), 'info');
+          } else if (sync && sync.ok) {
+            toast('Activated. Synced to this employee runtime only.', 'ok');
+          } else {
+            toast('Activated on Astra. Dograh sync: ' + ((sync && sync.error) || 'pending'), 'info');
+          }
+          State.loaded.employees = false;
+        } catch (e) { toast(e.message || 'Activate failed', 'err'); }
+        finally { activateBtn.disabled = !canPreview || isMayaEmp; }
+      };
+
+      const saveDraftBtn = el('button', {
+        class: 'btn btn-ghost btn-sm',
+      }, 'Save draft');
+      saveDraftBtn.onclick = async () => {
+        saveDraftBtn.disabled = true;
+        try {
+          await api('/api/employees/' + encodeURIComponent(emp.id) + '/runtime-config/draft', {
+            method: 'POST',
+            body: {
+              tts: {
+                provider: selectedProvider === 'auto' ? 'deepgram' : selectedProvider,
+                voice_id: selectedVoiceId || voiceSel.value,
+                language: selectedLanguage,
+                speed: Number(speedIn.value) || 1.0,
+              },
+            },
+          });
+          toast('Draft saved for ' + (emp.name || 'employee') + '. Not live until Activate.', 'ok');
+        } catch (e) { toast(e.message || 'Draft save failed', 'err'); }
+        finally { saveDraftBtn.disabled = false; }
       };
 
       cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-top:16px' }, [
@@ -3495,6 +3553,7 @@ async function viewEmployeeStudio(root, id) {
           speedIn,
           speedVal,
           previewBtn,
+          saveDraftBtn,
           activateBtn,
         ]),
         !canPreview
@@ -3502,6 +3561,127 @@ async function viewEmployeeStudio(root, id) {
             'Preview and Activate disabled · ' + (meta.state_label || 'Unavailable'))
           : null,
       ]));
+
+      // Advanced AI Settings (LLM / Transcriber / Embedding) — employee scoped
+      const adv = el('div', { class: 'emp-panel', style: 'margin-top:18px' });
+      adv.appendChild(el('h4', { class: 't-h4' }, 'Advanced AI Settings'));
+      adv.appendChild(el('p', { class: 'muted' },
+        'Per-employee LLM, Transcriber, and Embedding. Keys stay on the server as credential refs.'));
+
+      let runtimeSnap = null;
+      // Load once per renderCascade; fire and fill async.
+      const llmProv = el('select', { class: 'select' }, [
+        el('option', { value: 'groq' }, 'Groq'),
+        el('option', { value: 'openrouter' }, 'OpenRouter'),
+        el('option', { value: 'gemini' }, 'Gemini'),
+      ]);
+      const llmModel = el('input', { class: 'input', placeholder: 'Model id', value: 'llama-3.3-70b-versatile' });
+      const sttProv = el('select', { class: 'select' }, [
+        el('option', { value: 'deepgram' }, 'Deepgram'),
+        el('option', { value: 'sarvam' }, 'Sarvam'),
+      ]);
+      const sttModel = el('input', { class: 'input', placeholder: 'STT model', value: 'nova-3-general' });
+      const sttLang = el('input', { class: 'input', placeholder: 'STT language', value: 'multi' });
+      const embProv = el('select', { class: 'select' }, [
+        el('option', { value: '' }, 'None (org default)'),
+        el('option', { value: 'gemini' }, 'Gemini'),
+        el('option', { value: 'dograh' }, 'Managed'),
+      ]);
+      const embModel = el('input', { class: 'input', placeholder: 'Embedding model', value: '' });
+      const advStatus = el('p', { class: 'muted', style: 'margin-top:8px' }, 'Loading employee config…');
+
+      api('/api/employees/' + encodeURIComponent(emp.id) + '/runtime-config').then((cfg) => {
+        runtimeSnap = cfg;
+        const d = (cfg && (cfg.draft || cfg.active)) || {};
+        if (d.llm) {
+          llmProv.value = d.llm.provider || 'groq';
+          llmModel.value = d.llm.model || '';
+        }
+        if (d.stt) {
+          sttProv.value = d.stt.provider || 'deepgram';
+          sttModel.value = d.stt.model || '';
+          sttLang.value = d.stt.language || 'multi';
+        }
+        if (d.embedding) {
+          embProv.value = d.embedding.provider || '';
+          embModel.value = d.embedding.model || '';
+        } else {
+          embProv.value = '';
+        }
+        const bits = [];
+        if (cfg && cfg.dirty) bits.push('Draft differs from active');
+        if (cfg && cfg.maya_production_protected) bits.push('Maya production protected');
+        if (cfg && cfg.dograh_sync && cfg.dograh_sync.skipped) bits.push('Last sync skipped · ' + (cfg.dograh_sync.reason || ''));
+        if (cfg && cfg.dograh_sync && cfg.dograh_sync.ok) bits.push('Last sync ok');
+        advStatus.textContent = bits.length ? bits.join(' · ') : 'Draft ready. Activate to push this employee only.';
+      }).catch(() => {
+        advStatus.textContent = 'Could not load runtime config. Defaults shown.';
+      });
+
+      const saveAdv = el('button', { class: 'btn btn-primary btn-sm' }, 'Save draft');
+      saveAdv.onclick = async () => {
+        saveAdv.disabled = true;
+        try {
+          const body = {
+            llm: { provider: llmProv.value, model: llmModel.value.trim() },
+            stt: { provider: sttProv.value, model: sttModel.value.trim(), language: sttLang.value.trim() || 'multi' },
+            tts: {
+              provider: selectedProvider === 'auto' ? 'deepgram' : selectedProvider,
+              voice_id: selectedVoiceId || voiceSel.value,
+              language: selectedLanguage,
+              speed: Number(speedIn.value) || 1.0,
+            },
+            embedding: embProv.value
+              ? { provider: embProv.value, model: embModel.value.trim() || 'text-embedding-004' }
+              : null,
+          };
+          await api('/api/employees/' + encodeURIComponent(emp.id) + '/runtime-config/draft', {
+            method: 'POST',
+            body,
+          });
+          toast('Advanced draft saved for ' + (emp.name || 'employee') + '.', 'ok');
+          advStatus.textContent = 'Draft saved. Not live until Activate.';
+        } catch (e) { toast(e.message || 'Save failed', 'err'); }
+        finally { saveAdv.disabled = false; }
+      };
+
+      const actAdv = el('button', {
+        class: 'btn btn-ghost btn-sm',
+        disabled: isMayaEmp ? 'disabled' : null,
+        title: isMayaEmp ? 'Maya production protected' : 'Activate this employee only',
+      }, isMayaEmp ? 'Activate (protected)' : 'Activate');
+      actAdv.onclick = async () => {
+        if (isMayaEmp) {
+          toast('Maya production config is protected.', 'info');
+          return;
+        }
+        actAdv.disabled = true;
+        try {
+          await saveAdv.onclick();
+          const act = await api('/api/employees/' + encodeURIComponent(emp.id) + '/runtime-config/activate', {
+            method: 'POST',
+            body: {},
+          });
+          const sync = act && act.dograhSync;
+          toast(
+            sync && sync.ok ? 'Activated and synced for this employee only.'
+              : ('Activated on Astra · ' + ((sync && (sync.reason || sync.error)) || 'sync pending')),
+            sync && sync.ok ? 'ok' : 'info',
+          );
+        } catch (e) { toast(e.message || 'Activate failed', 'err'); }
+        finally { actAdv.disabled = !!isMayaEmp; }
+      };
+
+      adv.appendChild(field('LLM provider', llmProv));
+      adv.appendChild(field('LLM model', llmModel));
+      adv.appendChild(field('Transcriber provider', sttProv));
+      adv.appendChild(field('Transcriber model', sttModel));
+      adv.appendChild(field('Transcriber language', sttLang));
+      adv.appendChild(field('Embedding provider', embProv));
+      adv.appendChild(field('Embedding model', embModel));
+      adv.appendChild(el('div', { class: 'flex gap-2', style: 'margin-top:10px;flex-wrap:wrap' }, [saveAdv, actAdv]));
+      adv.appendChild(advStatus);
+      cascadeHost.appendChild(adv);
 
       if (voiceTierCache) {
         const currentTier = v.tier || emp.voiceTier || 'standard';

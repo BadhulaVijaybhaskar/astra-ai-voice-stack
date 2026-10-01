@@ -25,7 +25,7 @@
  */
 'use strict';
 
-const { httpsPost, httpsGet } = require('./core');
+const { httpsPost, httpsGet, httpsPut, httpsPatch, httpsRequest } = require('./core');
 const voiceCatalog = require('./tts-voice-catalog');
 
 // Rumik sits behind Cloudflare, which 403s non-browser user-agents. NEVER remove.
@@ -667,14 +667,33 @@ const telVobiz = {
     if (!hasEnv(this.needs)) throw notConfigured(this.label, this.needs);
     const connection = dograhConnection();
     const headers = { 'X-API-Key': process.env.DOGRAH_API_KEY };
+    const verb = String(method || 'GET').toUpperCase();
     let up;
-    if (method === 'POST') {
+    if (verb === 'GET' || (verb === 'DELETE' && payload == null)) {
+      if (verb === 'DELETE') {
+        up = await httpsRequest(connection.host, connection.prefix + pathname, {
+          method: 'DELETE', headers, timeoutMs: 20000,
+        });
+      } else {
+        up = await httpsGet(connection.host, connection.prefix + pathname, headers);
+      }
+    } else {
       const buf = Buffer.from(JSON.stringify(payload || {}));
       headers['Content-Type'] = 'application/json';
       headers['Content-Length'] = buf.length;
-      up = await httpsPost(connection.host, connection.prefix + pathname, headers, buf);
-    } else {
-      up = await httpsGet(connection.host, connection.prefix + pathname, headers);
+      if (verb === 'POST') {
+        up = await httpsPost(connection.host, connection.prefix + pathname, headers, buf);
+      } else if (verb === 'PUT') {
+        up = await httpsPut(connection.host, connection.prefix + pathname, headers, buf);
+      } else if (verb === 'PATCH') {
+        up = await httpsPatch(connection.host, connection.prefix + pathname, headers, buf);
+      } else if (verb === 'DELETE') {
+        up = await httpsRequest(connection.host, connection.prefix + pathname, {
+          method: 'DELETE', headers, bodyBuf: buf, timeoutMs: 60000,
+        });
+      } else {
+        up = await httpsPost(connection.host, connection.prefix + pathname, headers, buf);
+      }
     }
     return { up, data: parseJsonResponse(up) };
   },
