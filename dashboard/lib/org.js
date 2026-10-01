@@ -245,7 +245,9 @@ function detailedHealthPayload(described) {
 function assertNoSecretValues(payload, env = process.env) {
   const text = JSON.stringify(payload);
   const keys = [
-    'DOGRAH_API_KEY', 'DOGRAH_PASSWORD', 'VOBIZ_AUTH_TOKEN', 'RUMIK_API_KEY',
+    'DOGRAH_API_KEY', 'DOGRAH_PASSWORD', 'VOBIZ_AUTH_TOKEN', 'VOBIZ_AUTH_ID',
+    'PLIVO_AUTH_TOKEN', 'PLIVO_AUTH_ID',
+    'RUMIK_API_KEY',
     'GROQ_API_KEY', 'DEEPGRAM_API_KEY', 'GEMINI_API_KEY', 'PAYU_SALT', 'PAYU_KEY',
     'CALLBACK_SECRET', 'ANTHROPIC_API_KEY', 'SARVAM_API_KEY', 'ELEVENLABS_API_KEY',
   ];
