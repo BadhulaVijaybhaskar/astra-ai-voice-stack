@@ -237,15 +237,15 @@ const ttsSarvam = {
     // Prefer short first-phrase synthesis for first-audio. Sarvam REST still
     // returns a full clip per request; callers should pass only the first safe
     // phrase for the initial mint, then synthesize continuation chunks.
-    // Dograh WF8 uses pipecat SarvamTTSService with aggregation off for true
-    // streaming first-audio on bulbul:v3 priya.
+    // Dograh WF8 uses pipecat SarvamTTSService with TOKEN aggregation +
+    // silence_time_s=0.2 for streaming first-audio on bulbul:v3 priya.
     const key = process.env.SARVAM_API_KEY;
     if (!key) throw notConfigured(this.label, this.needs);
     return {
       mode: 'chunked_rest',
       provider: 'sarvam',
       model: selectedModel(this, opts && opts.model),
-      note: 'Dashboard uses chunked REST phrases for first-audio. Dograh overlay streams with full_response_aggregation=false.',
+      note: 'Dashboard uses chunked REST phrases for first-audio. Dograh overlay streams with TOKEN aggregation + silence_time_s=0.2.',
       voice_id: String((opts && (opts.speaker || opts.voice_id)) || 'priya'),
     };
   },
@@ -401,6 +401,24 @@ const llmGroq = {
     }, payload);
     let data = {}; try { data = JSON.parse(up.buffer.toString('utf8')); } catch {}
     if (up.status !== 200) {
+      const classified = llmStream.classifyGroqUpstreamError(
+        up.status,
+        up.buffer.toString('utf8'),
+        up.headers,
+      );
+      // Bounded RL fallback: never empty / silent. Prefer stream path for Talk.
+      if (classified.kind === 'rate_limit') {
+        const fb = llmStream.buildRateLimitFallback({ model }, classified);
+        return {
+          text: fb.text,
+          finish: fb.finish,
+          provider: 'groq',
+          model,
+          latency_ms: Date.now() - started,
+          rate_limited: true,
+          rate_limit: classified,
+        };
+      }
       throw new ProviderError('groq response failed', up.status, 'upstream',
         (((data.error || {}).message) || up.buffer.toString('utf8')).slice(0, 300));
     }

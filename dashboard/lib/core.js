@@ -95,10 +95,24 @@ function readBody(req, cap = 64 * 1024) {
   });
 }
 
+// Keep-alive agent: reuse TLS sessions to Sarvam / Groq / Rumik (TTFB win on
+// repeated Browser Talk turns). Safe default for Node 18+.
+const KEEP_ALIVE_AGENT = new https.Agent({
+  keepAlive: true,
+  maxSockets: 16,
+  keepAliveMsecs: 30_000,
+});
+
 // Generic HTTPS POST. Resolves { status, headers, buffer }. Times out at 60s.
 function httpsPost(host, pathname, headers, bodyBuf) {
   return new Promise((resolve, reject) => {
-    const r = https.request({ host, path: pathname, method: 'POST', headers }, (resp) => {
+    const r = https.request({
+      host,
+      path: pathname,
+      method: 'POST',
+      headers,
+      agent: KEEP_ALIVE_AGENT,
+    }, (resp) => {
       const parts = [];
       resp.on('data', (d) => parts.push(d));
       resp.on('end', () => resolve({
@@ -132,7 +146,13 @@ function httpsRequest(host, pathname, options = {}) {
     headers['Content-Length'] = bodyBuf.length;
   }
   return new Promise((resolve, reject) => {
-    const r = https.request({ host, path: pathname, method, headers }, (resp) => {
+    const r = https.request({
+      host,
+      path: pathname,
+      method,
+      headers,
+      agent: KEEP_ALIVE_AGENT,
+    }, (resp) => {
       const parts = [];
       resp.on('data', (d) => parts.push(d));
       resp.on('end', () => resolve({
@@ -163,7 +183,13 @@ function httpsPatch(host, pathname, headers, bodyBuf) {
 function httpsPostStream(host, pathname, headers, bodyBuf, onChunk, options = {}) {
   const timeoutMs = Number(options.timeoutMs) || 60000;
   return new Promise((resolve, reject) => {
-    const r = https.request({ host, path: pathname, method: 'POST', headers }, (resp) => {
+    const r = https.request({
+      host,
+      path: pathname,
+      method: 'POST',
+      headers,
+      agent: KEEP_ALIVE_AGENT,
+    }, (resp) => {
       resp.on('data', (d) => {
         try { if (typeof onChunk === 'function') onChunk(d, resp); } catch (e) { /* ignore consumer errors */ }
       });
@@ -719,6 +745,7 @@ module.exports = {
   ROOT, DATA_DIR, DB_FILE, PUBLIC_DIR,
   loadEnv,
   send, sendJson, readBody, httpsPost, httpsGet, httpsRequest, httpsPut, httpsPatch, httpsPostStream,
+  KEEP_ALIVE_AGENT,
   htmlEscape,
   db, mutate, loadDb, defaultDb, migrateDb,
   hashPassword, verifyPassword,
