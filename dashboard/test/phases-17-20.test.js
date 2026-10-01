@@ -49,7 +49,7 @@ function addLedgerEntry(d, tenantId, amountPaise, type, reference, actorUserId, 
   return entry;
 }
 
-test('schema v14 migrates inbound config, actions, language, plan entitlements, runtimeConfig', () => {
+test('schema v15 migrates inbound config, actions, language, plan entitlements, runtimeConfig, phoneConfig', () => {
   const migrated = core.migrateDb({
     schemaVersion: 12,
     tenants: [{ id: 't_a', name: 'A', plan: 'growth' }],
@@ -63,14 +63,18 @@ test('schema v14 migrates inbound config, actions, language, plan entitlements, 
       voice: { language: 'hindi', model: 'mulberry', speaker: 'speaker_1' },
     }],
   });
-  assert.equal(migrated.schemaVersion, 14);
+  assert.equal(migrated.schemaVersion, 15);
   assert.equal(migrated.phoneNumbers[0].inboundGreeting, null);
   assert.equal(migrated.phoneNumbers[0].inboundHours.timezone, 'Asia/Kolkata');
   assert.equal(migrated.phoneNumbers[0].inboundHours.mode, 'always');
+  assert.equal(migrated.phoneNumbers[0].answerUrl, null);
+  assert.equal(migrated.phoneNumbers[0].hangupCallback, null);
   assert.deepEqual(migrated.employees[0].actions, []);
   assert.equal(migrated.employees[0].voice.language, 'hi-IN');
   assert.ok(migrated.employees[0].runtimeConfig);
   assert.equal(migrated.employees[0].runtimeConfig.draft, null);
+  assert.ok(migrated.employees[0].phoneConfig);
+  assert.equal(migrated.employees[0].phoneConfig.direction, 'none');
   assert.equal(migrated.tenants[0].includedNumbers, 3);
   assert.equal(migrated.tenants[0].includedEmployees, 10);
   assert.equal(migrated.tenants[0].includedMinutes, 1000);

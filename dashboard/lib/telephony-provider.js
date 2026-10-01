@@ -631,32 +631,109 @@ class DograhVobizProvider extends TelephonyProvider {
   async assignNumber(numberId, tenantId, opts = {}) {
     if (!this.core) throw new TelephonyProviderError('core store is required', 500, 'misconfigured');
     const workflows = require('./workflows');
+    const employeePhoneConfig = require('./employee-phone-config');
     let result;
+    let syncResult = null;
     await this.core.mutate((db) => {
-      result = phoneNumbers.assignNumber(db, {
-        numberId,
-        tenantId,
-        agentId: opts.agentId,
-        employeeId: opts.employeeId,
-        inboundEnabled: opts.inboundEnabled,
-        outboundEnabled: opts.outboundEnabled,
-        inboundWorkflowId: opts.inboundWorkflowId,
-        outboundWorkflowId: opts.outboundWorkflowId,
-        resolveProviderWorkflowId: workflows.resolveProviderWorkflowId,
-        confirmReassign: opts.confirmReassign === true || opts.allowReassign === true,
-      });
+      if (opts.employeeId) {
+        // Prefer full per-employee assign path (phoneConfig + workflow bind).
+        result = employeePhoneConfig.assignToEmployee(db, {
+          numberId,
+          tenantId,
+          employeeId: opts.employeeId,
+          inboundEnabled: opts.inboundEnabled,
+          outboundEnabled: opts.outboundEnabled,
+          direction: opts.direction,
+          working_hours: opts.working_hours || opts.workingHours,
+          after_hours_action: opts.after_hours_action || opts.afterHoursAction,
+          escalation_target: opts.escalation_target || opts.escalationTarget,
+          answer_url: opts.answer_url || opts.answerUrl,
+          hangup_callback: opts.hangup_callback || opts.hangupCallback,
+          resolveProviderWorkflowId: workflows.resolveProviderWorkflowId,
+        });
+      } else {
+        result = phoneNumbers.assignNumber(db, {
+          numberId,
+          tenantId,
+          agentId: opts.agentId,
+          employeeId: opts.employeeId,
+          inboundEnabled: opts.inboundEnabled,
+          outboundEnabled: opts.outboundEnabled,
+          inboundWorkflowId: opts.inboundWorkflowId,
+          outboundWorkflowId: opts.outboundWorkflowId,
+          resolveProviderWorkflowId: workflows.resolveProviderWorkflowId,
+          confirmReassign: opts.confirmReassign === true || opts.allowReassign === true,
+        });
+      }
+      if (result.ok && result.number && result.employee) {
+        // Dry-run Dograh/VoBiz mapping update. Never paid dial.
+        const sync = {
+          ok: true,
+          mode: 'dry_run',
+          numberId: result.number.id,
+          employeeId: result.employee.id,
+        };
+        const meta = { ...(result.number.providerMetadata || {}) };
+        if (result.employee.phoneConfig) {
+          if (result.employee.phoneConfig.answer_url) {
+            meta.answerUrl = result.employee.phoneConfig.answer_url;
+            result.number.answerUrl = result.employee.phoneConfig.answer_url;
+          }
+          if (result.employee.phoneConfig.hangup_callback) {
+            meta.hangupCallback = result.employee.phoneConfig.hangup_callback;
+            result.number.hangupCallback = result.employee.phoneConfig.hangup_callback;
+          }
+          const wfId = result.employee.phoneConfig.workflow_id || result.employee.workflowId;
+          if (wfId) {
+            const dograhId = workflows.resolveProviderWorkflowId(db, tenantId, wfId);
+            if (dograhId) {
+              meta.inboundWorkflowId = dograhId;
+              meta.providerInboundWorkflowId = dograhId;
+              meta.inboundAstraWorkflowId = wfId;
+              sync.providerWorkflowId = dograhId;
+              sync.astraWorkflowId = wfId;
+            }
+          }
+          result.employee.phoneConfig.telephonySyncOk = true;
+          result.employee.phoneConfig.telephonySyncMode = 'dry_run';
+          result.employee.phoneConfig.telephonySyncAt = new Date().toISOString();
+          if (result.employee.phoneConfig.callbackVerifyOk == null) {
+            const verify = employeePhoneConfig.verifyCallbacks(result.employee.phoneConfig);
+            result.employee.phoneConfig.callbackVerifyOk = verify.ok;
+            result.employee.phoneConfig.needsAttention = !verify.ok;
+          }
+        }
+        meta.lastEmployeeId = result.employee.id;
+        meta.lastSyncAt = new Date().toISOString();
+        result.number.providerMetadata = meta;
+        syncResult = sync;
+      }
     });
     if (!result.ok) {
       throw new TelephonyProviderError(result.error, result.status, result.code);
     }
+    // Prefer #42 Connected publicize; syncResult stays on employee.phoneConfig only.
+    void syncResult;
     return this.publicize(result.number, tenantId);
   }
 
   async unassignNumber(numberId, tenantId) {
     if (!this.core) throw new TelephonyProviderError('core store is required', 500, 'misconfigured');
+    const employeePhoneConfig = require('./employee-phone-config');
     let result;
     await this.core.mutate((db) => {
+      const number = phoneNumbers.findNumber(db, numberId);
+      const employeeId = number && number.assignedEmployeeId;
       result = phoneNumbers.unassignNumber(db, { numberId, tenantId });
+      if (result.ok && employeeId) {
+        const emp = (db.employees || []).find((e) => e.id === employeeId && e.tenantId === tenantId);
+        if (emp) {
+          emp.phoneNumberId = null;
+          emp.phoneConfig = employeePhoneConfig.emptyPhoneConfig();
+          emp.phoneConfig.updatedAt = new Date().toISOString();
+          emp.updatedAt = new Date().toISOString();
+        }
+      }
     });
     if (!result.ok) {
       throw new TelephonyProviderError(result.error, result.status, result.code);

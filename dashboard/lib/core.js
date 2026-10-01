@@ -185,7 +185,7 @@ const DB_TMP = `${DB_FILE}.tmp`;
 
 function defaultDb() {
   return {
-    schemaVersion: 14,
+    schemaVersion: 15,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
@@ -231,7 +231,7 @@ function normalizeOutcomeDef(raw) {
 function migrateDb(parsed) {
   const out = Object.assign(defaultDb(), parsed || {});
   for (const k of COLLECTIONS) if (!Array.isArray(out[k])) out[k] = [];
-  out.schemaVersion = Math.max(14, Number(out.schemaVersion) || 0);
+  out.schemaVersion = Math.max(15, Number(out.schemaVersion) || 0);
   for (const tenant of out.tenants) {
     if (!tenant.status) tenant.status = 'active';
     if (!tenant.privacyMode) tenant.privacyMode = 'standard';
@@ -348,7 +348,42 @@ function migrateDb(parsed) {
     if (!emp.runtimeConfig || typeof emp.runtimeConfig !== 'object') {
       emp.runtimeConfig = { draft: null, active: null, dograhSync: null };
     }
+    // v15: per-employee phone configuration.
+    if (!emp.phoneConfig || typeof emp.phoneConfig !== 'object') {
+      emp.phoneConfig = {
+        assigned_phone_number: null,
+        phone_number_id: emp.phoneNumberId || null,
+        telephony_provider: 'dograh_vobiz',
+        direction: 'none',
+        inbound_enabled: false,
+        outbound_enabled: false,
+        caller_id: null,
+        dograh_phone_id: null,
+        telephony_config_id: null,
+        workflow_id: emp.workflowId || null,
+        answer_url: null,
+        hangup_callback: null,
+        working_hours: {
+          timezone: 'Asia/Kolkata',
+          mode: 'always',
+          windows: [],
+        },
+        after_hours_action: 'voicemail',
+        escalation_target: null,
+        callbackVerifyOk: null,
+        telephonySyncOk: null,
+        telephonySyncMode: null,
+        telephonySyncAt: null,
+        needsAttention: false,
+        updatedAt: null,
+      };
+    }
   }
+  for (const n of out.phoneNumbers) {
+    if (n.answerUrl === undefined) n.answerUrl = null;
+    if (n.hangupCallback === undefined) n.hangupCallback = null;
+  }
+  out.schemaVersion = Math.max(15, Number(out.schemaVersion) || 0);
   return out;
 }
 

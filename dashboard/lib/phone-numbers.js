@@ -13,6 +13,7 @@ const crypto = require('crypto');
 
 const PROVIDER_ID = 'dograh_vobiz';
 const PLATFORM_SEED_ID = 'pn_platform_astranova_main';
+const PLATFORM_ALT_SEED_ID = 'pn_platform_astranova_alt';
 const MAYA_PROTECTED_E164 = '+918065353938';
 
 const SEED_INVENTORY = Object.freeze({
@@ -25,6 +26,19 @@ const SEED_INVENTORY = Object.freeze({
   dograhTelephonyConfigId: 2,
   dograhPhoneNumberId: 3,
   inboundWorkflowId: 8,
+});
+
+/** Secondary test inventory for per-employee isolation (never Maya's number). */
+const ALT_SEED_INVENTORY = Object.freeze({
+  id: PLATFORM_ALT_SEED_ID,
+  e164: '+918065353939',
+  label: 'AstraNova Alternate Line',
+  country: 'IN',
+  numberType: 'local',
+  capabilities: Object.freeze(['inbound', 'outbound']),
+  dograhTelephonyConfigId: 2,
+  dograhPhoneNumberId: 4,
+  inboundWorkflowId: null,
 });
 
 function genId(prefix) {
@@ -48,9 +62,63 @@ function normalizeE164(value) {
   return raw.startsWith('+') ? raw : (digits ? '+' + digits : '');
 }
 
+function upsertAltSeedRow(db, seed) {
+  const existing = db.phoneNumbers.find((n) => n.id === seed.id
+    || normalizeE164(n.e164) === seed.e164);
+  const ts = nowIso();
+  if (existing) {
+    existing.label = existing.label || seed.label;
+    existing.provider = PROVIDER_ID;
+    existing.providerMetadata = {
+      ...(existing.providerMetadata || {}),
+      dograhTelephonyConfigId: seed.dograhTelephonyConfigId,
+      dograhPhoneNumberId: seed.dograhPhoneNumberId,
+      inboundWorkflowId: seed.inboundWorkflowId != null
+        ? seed.inboundWorkflowId
+        : (existing.providerMetadata && existing.providerMetadata.inboundWorkflowId),
+      label: seed.label,
+    };
+    if (existing.answerUrl === undefined) existing.answerUrl = null;
+    if (existing.hangupCallback === undefined) existing.hangupCallback = null;
+    existing.updatedAt = ts;
+    upsertProviderResource(db, existing);
+    return existing;
+  }
+  const row = {
+    id: seed.id,
+    tenantId: null,
+    provider: PROVIDER_ID,
+    providerNumberId: String(seed.dograhPhoneNumberId),
+    e164: seed.e164,
+    label: seed.label,
+    country: seed.country,
+    numberType: seed.numberType,
+    capabilities: [...seed.capabilities],
+    status: 'available',
+    connectionStatus: 'available',
+    assignedAgentId: null,
+    assignedEmployeeId: null,
+    inboundEnabled: true,
+    outboundEnabled: true,
+    answerUrl: null,
+    hangupCallback: null,
+    providerMetadata: {
+      dograhTelephonyConfigId: seed.dograhTelephonyConfigId,
+      dograhPhoneNumberId: seed.dograhPhoneNumberId,
+      inboundWorkflowId: seed.inboundWorkflowId,
+      label: seed.label,
+    },
+    createdAt: ts,
+    updatedAt: ts,
+  };
+  db.phoneNumbers.push(row);
+  upsertProviderResource(db, row);
+  return row;
+}
+
 /**
- * Idempotent seed of the platform-owned live test number.
- * Status stays available until a tenant assigns it.
+ * Idempotent seed of platform-owned test numbers.
+ * Main line keeps #42 Connected verify flags. Alternate supports employee isolation.
  */
 function seedPlatformInventory(db) {
   if (!Array.isArray(db.phoneNumbers)) db.phoneNumbers = [];
@@ -59,6 +127,7 @@ function seedPlatformInventory(db) {
   const existing = db.phoneNumbers.find((n) => n.id === SEED_INVENTORY.id
     || normalizeE164(n.e164) === SEED_INVENTORY.e164);
   const ts = nowIso();
+  let main;
   if (existing) {
     // Keep assignment state. Refresh label and provider mapping for the known live number.
     existing.label = existing.label || SEED_INVENTORY.label;
@@ -83,44 +152,46 @@ function seedPlatformInventory(db) {
     existing.connectionStatus = 'connected';
     existing.updatedAt = ts;
     upsertProviderResource(db, existing);
-    return existing;
-  }
-
-  const row = {
-    id: SEED_INVENTORY.id,
-    tenantId: null,
-    provider: PROVIDER_ID,
-    providerNumberId: String(SEED_INVENTORY.dograhPhoneNumberId),
-    e164: SEED_INVENTORY.e164,
-    label: SEED_INVENTORY.label,
-    country: SEED_INVENTORY.country,
-    numberType: SEED_INVENTORY.numberType,
-    capabilities: [...SEED_INVENTORY.capabilities],
-    status: 'available',
-    connectionStatus: 'connected',
-    assignedAgentId: null,
-    assignedEmployeeId: null,
-    inboundEnabled: true,
-    outboundEnabled: true,
-    providerMetadata: {
-      dograhTelephonyConfigId: SEED_INVENTORY.dograhTelephonyConfigId,
-      dograhPhoneNumberId: SEED_INVENTORY.dograhPhoneNumberId,
-      inboundWorkflowId: SEED_INVENTORY.inboundWorkflowId,
+    main = existing;
+  } else {
+    const row = {
+      id: SEED_INVENTORY.id,
+      tenantId: null,
+      provider: PROVIDER_ID,
+      providerNumberId: String(SEED_INVENTORY.dograhPhoneNumberId),
+      e164: SEED_INVENTORY.e164,
       label: SEED_INVENTORY.label,
-      providerVerified: true,
-      dograhMapped: true,
-      callbacksConfigured: true,
-      answerUrlConfigured: true,
-      hangupUrlConfigured: true,
-      websocketConfigured: true,
-      verifiedAt: ts,
-    },
-    createdAt: ts,
-    updatedAt: ts,
-  };
-  db.phoneNumbers.push(row);
-  upsertProviderResource(db, row);
-  return row;
+      country: SEED_INVENTORY.country,
+      numberType: SEED_INVENTORY.numberType,
+      capabilities: [...SEED_INVENTORY.capabilities],
+      status: 'available',
+      connectionStatus: 'connected',
+      assignedAgentId: null,
+      assignedEmployeeId: null,
+      inboundEnabled: true,
+      outboundEnabled: true,
+      providerMetadata: {
+        dograhTelephonyConfigId: SEED_INVENTORY.dograhTelephonyConfigId,
+        dograhPhoneNumberId: SEED_INVENTORY.dograhPhoneNumberId,
+        inboundWorkflowId: SEED_INVENTORY.inboundWorkflowId,
+        label: SEED_INVENTORY.label,
+        providerVerified: true,
+        dograhMapped: true,
+        callbacksConfigured: true,
+        answerUrlConfigured: true,
+        hangupUrlConfigured: true,
+        websocketConfigured: true,
+        verifiedAt: ts,
+      },
+      createdAt: ts,
+      updatedAt: ts,
+    };
+    db.phoneNumbers.push(row);
+    upsertProviderResource(db, row);
+    main = row;
+  }
+  upsertAltSeedRow(db, ALT_SEED_INVENTORY);
+  return main;
 }
 
 function upsertProviderResource(db, number) {
@@ -988,8 +1059,10 @@ function outboundDialContext(db, tenantId) {
 module.exports = {
   PROVIDER_ID,
   PLATFORM_SEED_ID,
+  PLATFORM_ALT_SEED_ID,
   MAYA_PROTECTED_E164,
   SEED_INVENTORY,
+  ALT_SEED_INVENTORY,
   seedPlatformInventory,
   publicPhoneNumber,
   publicInboundConfig,

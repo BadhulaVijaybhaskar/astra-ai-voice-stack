@@ -84,14 +84,17 @@ Dograh's published workflow remains the runtime authority for phone and browser 
 Numbers are first-class Astra **Phone Number** resources. Customers never see Dograh or VoBiz branding. Provider mapping stays server-side.
 
 - `GET /api/phone-numbers` returns the authenticated tenant's assigned numbers (`id`, `e164`, label, status, Employee assignment, inbound/outbound flags). Supports `?q=` search. Provider ids and API keys are never returned.
-- `GET /api/phone-numbers/available` returns platform-owned inventory still marked `available` (seeded live test number `+918065353938`).
-- `POST /api/phone-numbers/:id/assign` with `{employeeId}` (preferred) or `{agentId}` assigns inventory, syncs `employee.phoneNumberId` / `assignedEmployeeId`, sets agent telephony DID, and stores Dograh ids server-side for dial.
-- `POST /api/phone-numbers/:id/unassign` returns the number to platform inventory and clears Employee links.
+- `GET /api/phone-numbers/available` returns platform-owned inventory still marked `available` (seeded live test numbers `+918065353938` and `+918065353939`).
+- `POST /api/phone-numbers/:id/assign` with `{employeeId}` (preferred) or `{agentId}` assigns inventory, syncs `employee.phoneNumberId` / `assignedEmployeeId` / `employee.phoneConfig`, sets agent telephony DID, and stores Dograh ids server-side for dial.
+- `POST /api/phone-numbers/:id/unassign` returns the number to platform inventory and clears Employee links + phoneConfig.
 - `PATCH /api/phone-numbers/:id` toggles `inboundEnabled` / `outboundEnabled` and may set Inbound greeting / hours.
 - `GET` / `PUT` / `PATCH /api/phone-numbers/:id/inbound` customer Inbound ownership (answer, greeting, hours). See `docs/INBOUND.md`.
 - `POST /api/phone-numbers/purchase` requires `confirm:true` and quoted fee match. Live VoBiz debit requires `ASTRA_ALLOW_LIVE_NUMBER_PURCHASE=1`. Dev/CI uses `simulate:true` (READY, no live buy).
 - `POST /api/phone-numbers/search`, `GET|POST /api/phone-numbers/pricing`, `GET /api/phone-numbers/usage`, `POST /api/phone-numbers/:id/status`, `POST /api/phone-numbers/:id/release` (confirm), `POST /api/phone-numbers/:id/configure`.
-
+- `GET` / `PUT` / `PATCH /api/employees/:id/phone-config` per-employee phone configuration (Business Number, direction, status, workflow name). `?advanced=1` for infrastructure ids.
+- `POST /api/employees/:id/phone-config/assign|change|unassign` employee-scoped number binding with isolation.
+- `POST /api/employees/:id/phone-config/test-inbound|test-outbound` dry-run preflight only. Never places paid PSTN calls.
+- `POST /api/phone-numbers/purchase` returns **501** `purchase_deferred` during the testing phase.
 See `docs/PHONE-NUMBERS.md` for curl examples and adapter notes.
 
 ## Calls (Sprint 2 history)

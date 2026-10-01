@@ -14,7 +14,7 @@ test('seedPlatformInventory is idempotent and available until assigned', () => {
   const db = { phoneNumbers: [], providerResources: [], agents: [] };
   const a = phoneNumbers.seedPlatformInventory(db);
   const b = phoneNumbers.seedPlatformInventory(db);
-  assert.equal(db.phoneNumbers.length, 1);
+  assert.equal(db.phoneNumbers.length, 2);
   assert.equal(a.id, b.id);
   assert.equal(a.e164, '+918065353938');
   assert.equal(a.label, 'AstraNova Main Line');
@@ -23,7 +23,7 @@ test('seedPlatformInventory is idempotent and available until assigned', () => {
   assert.equal(a.providerMetadata.dograhTelephonyConfigId, 2);
   assert.equal(a.providerMetadata.dograhPhoneNumberId, 3);
   assert.equal(a.providerMetadata.inboundWorkflowId, 8);
-  assert.equal(db.providerResources.length, 1);
+  assert.equal(db.providerResources.length, 2);
 });
 
 test('publicPhoneNumber hides provider mapping and keys', () => {
@@ -76,7 +76,7 @@ test('assign and unassign update agent telephony.did and status', () => {
   assert.equal(assigned.number.outboundEnabled, false);
   assert.equal(db.agents[0].telephony.did, '918065353938');
   assert.equal(db.agents[0].telephony.phoneNumberId, phoneNumbers.PLATFORM_SEED_ID);
-  assert.equal(phoneNumbers.listAvailableInventory(db).length, 0);
+  assert.equal(phoneNumbers.listAvailableInventory(db).length, 1);
   assert.equal(phoneNumbers.listTenantNumbers(db, tenantId).length, 1);
 
   const cross = phoneNumbers.assignNumber(db, {
@@ -95,7 +95,7 @@ test('assign and unassign update agent telephony.did and status', () => {
   assert.equal(un.number.status, 'available');
   assert.equal(un.number.tenantId, null);
   assert.equal(db.agents[0].telephony.did, '');
-  assert.equal(phoneNumbers.listAvailableInventory(db).length, 1);
+  assert.equal(phoneNumbers.listAvailableInventory(db).length, 2);
 });
 
 test('tenant isolation on unassign and patch', () => {
@@ -310,12 +310,11 @@ test('HTTP phone-numbers routes: available, assign, unassign, purchase gated, te
 
   const available = await request('GET', '/api/phone-numbers/available', null, cookieA);
   assert.equal(available.status, 200);
-  assert.equal(available.body.numbers.length, 1);
-  assert.equal(available.body.numbers[0].e164, '+918065353938');
-  assert.equal(available.body.numbers[0].label, 'AstraNova Main Line');
+  assert.equal(available.body.numbers.length, 2);
+  assert.ok(available.body.numbers.some((n) => n.e164 === '+918065353938'));
   assert.equal(JSON.stringify(available.body).includes('dograh'), false);
   assert.equal(JSON.stringify(available.body).includes('providerMetadata'), false);
-  const numberId = available.body.numbers[0].id;
+  const numberId = available.body.numbers.find((n) => n.e164 === '+918065353938').id;
 
   const purchase = await request('POST', '/api/phone-numbers/purchase', { country: 'IN' }, cookieA);
   assert.equal(purchase.status, 400);
@@ -341,7 +340,8 @@ test('HTTP phone-numbers routes: available, assign, unassign, purchase gated, te
 
   const otherAvailable = await request('GET', '/api/phone-numbers/available', null, cookieB);
   assert.equal(otherAvailable.status, 200);
-  assert.equal(otherAvailable.body.numbers.length, 0, 'assigned number must leave shared inventory');
+  assert.equal(otherAvailable.body.numbers.length, 1, 'assigned main leaves alternate in shared inventory');
+  assert.equal(otherAvailable.body.numbers[0].e164, '+918065353939');
 
   const toggled = await request('PATCH', '/api/phone-numbers/' + numberId, { inboundEnabled: false }, cookieA);
   assert.equal(toggled.status, 200);
@@ -352,5 +352,5 @@ test('HTTP phone-numbers routes: available, assign, unassign, purchase gated, te
   assert.equal(unassigned.body.number.status, 'available');
 
   const availableAgain = await request('GET', '/api/phone-numbers/available', null, cookieA);
-  assert.equal(availableAgain.body.numbers.length, 1);
+  assert.equal(availableAgain.body.numbers.length, 2);
 });
