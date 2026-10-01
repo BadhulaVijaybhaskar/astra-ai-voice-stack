@@ -56,6 +56,10 @@ const employees = require('./lib/employees');
 const employeeRuntimeConfig = require('./lib/employee-runtime-config');
 const employeePhoneConfig = require('./lib/employee-phone-config');
 const timeline = require('./lib/timeline');
+const customerContext = require('./lib/customer-context');
+const outboundJobs = require('./lib/outbound-jobs');
+const eventTriggers = require('./lib/event-triggers');
+const endOfCallPipeline = require('./lib/end-of-call-pipeline');
 const voiceCatalog = require('./lib/tts-voice-catalog');
 const unifiedVoiceCatalog = require('./lib/voice-catalog');
 const voicePreview = require('./lib/voice-preview');
@@ -445,14 +449,43 @@ async function apiHvacBook(req, res, ctx) {
   if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !phone) return core.sendJson(res, 422, { error: 'attendee name, email and phone are required for Cal.com booking', code: 'missing_booking_contact' });
   try {
     const booking = await calRequest('POST', '/v2/bookings', '2026-02-25', { eventTypeId, start: new Date(start).toISOString(), attendee: { name, email, phoneNumber: phone, timeZone: HVAC_TIMEZONE, language: 'en' }, metadata: { source: 'rumik_hvac_desk', service: String(b.service || 'General HVAC').slice(0, 80), urgency: String(b.urgency || 'normal').slice(0, 30), jobId: String(b.jobId || '') } });
-    const now = new Date().toISOString(); let job;
+    const now = new Date().toISOString(); let job; let contextResult = null;
     await core.mutate((d) => {
       job = b.jobId ? d.hvacJobs.find((item) => item.id === String(b.jobId) && item.tenantId === ctx.tenant.id) : null;
       if (!job) { job = { id: core.genId('hvac_'), tenantId: ctx.tenant.id, callerName: name, phone, email, service: String(b.service || 'General HVAC').slice(0, 80), urgency: String(b.urgency || 'normal').slice(0, 30), assignedTo: '', notes: '', createdAt: now }; d.hvacJobs.push(job); }
       job.outcome = 'booked'; job.updatedAt = now; job.appointment = { calBookingUid: booking.data && booking.data.uid, eventTypeId, start: booking.data && booking.data.start, end: booking.data && booking.data.end, status: booking.data && booking.data.status, timezone: HVAC_TIMEZONE };
       addAudit(d, ctx, 'hvac.booking.created', 'hvac_job', job.id, { eventTypeId, bookingUid: job.appointment.calBookingUid || '' });
+
+      // Continuous context: resolve contact, store appointment, schedule confirmation/reminder jobs (no PSTN dial).
+      const resolved = customerContext.resolveContact(d, ctx.tenant.id, phone, {
+        name, email, company: b.company, assignedEmployee: b.employeeId || null,
+      });
+      if (resolved.ok) {
+        const apptRes = customerContext.addAppointment(resolved.contact, {
+          title: String(b.service || 'Meeting').slice(0, 120),
+          status: 'booked',
+          startAt: job.appointment.start || start,
+          endAt: job.appointment.end || null,
+          timezone: HVAC_TIMEZONE,
+          calBookingUid: job.appointment.calBookingUid,
+          eventTypeId,
+        });
+        const evt = eventTriggers.handleEvent(d, ctx.tenant.id, 'appointment.booked', {
+          contactId: resolved.contact.id,
+          employeeId: b.employeeId || resolved.contact.assignedEmployee,
+          appointment: apptRes.appointment,
+          appointmentId: apptRes.appointment && apptRes.appointment.id,
+          appointmentStartAt: apptRes.appointment && apptRes.appointment.startAt,
+        }, { actorUserId: ctx.user.id });
+        contextResult = {
+          contact_id: resolved.contact.id,
+          appointment: apptRes.appointment || null,
+          jobs: (evt.ok ? evt.jobs : []).map((j) => outboundJobs.publicOutboundJob(j.job)),
+          dialed: false,
+        };
+      }
     });
-    core.sendJson(res, 201, { booking: booking.data, job: publicHvacJob(job) });
+    core.sendJson(res, 201, { booking: booking.data, job: publicHvacJob(job), customer_context: contextResult });
   } catch (e) { handleProviderError(res, e); }
 }
 
@@ -3107,6 +3140,7 @@ function apiLeadsList(req, res, ctx) {
 async function apiLeadsCreate(req, res, ctx) {
   if (rejectImpersonated(res, ctx)) return;
   let result;
+  let contactResult = null;
   await core.mutate((d) => {
     result = leads.createLead(d, ctx.tenant.id, ctx.body || {}, ctx.user.id);
     if (result.ok && result.created) {
@@ -3114,12 +3148,31 @@ async function apiLeadsCreate(req, res, ctx) {
         phone: result.lead.phone,
         employeeId: result.lead.employeeId || null,
       });
+      // Continuous context: same contact for inbound/outbound.
+      contactResult = customerContext.resolveContact(d, ctx.tenant.id, result.lead.phone, {
+        name: result.lead.name,
+        assignedEmployee: result.lead.employeeId,
+        leadId: result.lead.id,
+      });
+      if (contactResult.ok) {
+        contactResult.contact.leadId = result.lead.id;
+        if (result.lead.employeeId) contactResult.contact.assignedEmployee = result.lead.employeeId;
+      }
+    } else if (result.ok && result.lead) {
+      contactResult = customerContext.resolveContact(d, ctx.tenant.id, result.lead.phone, {
+        name: result.lead.name,
+        assignedEmployee: result.lead.employeeId,
+        leadId: result.lead.id,
+      });
     }
   });
   if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
   core.sendJson(res, result.created ? 201 : 200, {
     lead: leads.publicLead(result.lead),
     created: result.created,
+    contact: contactResult && contactResult.ok
+      ? customerContext.publicContact(contactResult.contact)
+      : null,
   });
 }
 
@@ -3127,7 +3180,22 @@ function apiLeadsGet(req, res, ctx) {
   const lead = leads.findLead(core.db(), ctx.tenant.id, ctx.params.id);
   if (!lead) return core.sendJson(res, 404, { error: 'lead not found', code: 'not_found' });
   const jobs = callJobs.listCallJobs(core.db(), ctx.tenant.id, { leadId: lead.id, limit: 10 });
-  core.sendJson(res, 200, { lead: leads.publicLead(lead), jobs });
+  const contact = customerContext.findContactByPhone(core.db(), ctx.tenant.id, lead.phone)
+    || (lead.id
+      ? (core.db().contacts || []).find((c) => c.tenantId === ctx.tenant.id && c.leadId === lead.id)
+      : null);
+  let timelinePayload = null;
+  if (contact) {
+    const tl = customerContext.buildCustomerTimeline(core.db(), ctx.tenant.id, contact.id, { limit: 30 });
+    if (tl.ok) timelinePayload = tl.timeline;
+  }
+  core.sendJson(res, 200, {
+    lead: leads.publicLead(lead),
+    jobs,
+    contact: contact ? customerContext.publicContact(contact, { detail: true }) : null,
+    customer_timeline: timelinePayload,
+    context: contact ? customerContext.buildContextInjection(contact) : null,
+  });
 }
 
 async function apiLeadsPatch(req, res, ctx) {
@@ -3956,6 +4024,384 @@ function apiLeadsTimelineGet(req, res, ctx) {
   core.sendJson(res, 200, result.timeline);
 }
 
+/* ==========================================================================
+   Continuous Customer Context (contacts, injection, outbound jobs, pipeline)
+   Never auto-places paid PSTN. Jobs survive restart via db.json.
+   ========================================================================== */
+
+function matchContactsRoute(route) {
+  if (route === '/api/contacts') return { action: 'list_or_create' };
+  if (route === '/api/contacts/resolve') return { action: 'resolve' };
+  if (route === '/api/contacts/callback-request') return { action: 'callback_request' };
+  if (route === '/api/contacts/end-of-call') return { action: 'end_of_call' };
+  if (route === '/api/contacts/events') return { action: 'events' };
+  const inject = route.match(/^\/api\/contacts\/([^/]+)\/context$/);
+  if (inject) return { action: 'context', id: decodeURIComponent(inject[1]) };
+  const tl = route.match(/^\/api\/contacts\/([^/]+)\/timeline$/);
+  if (tl) return { action: 'timeline', id: decodeURIComponent(tl[1]) };
+  const handoff = route.match(/^\/api\/contacts\/([^/]+)\/handoff$/);
+  if (handoff) return { action: 'handoff', id: decodeURIComponent(handoff[1]) };
+  const appt = route.match(/^\/api\/contacts\/([^/]+)\/appointments$/);
+  if (appt) return { action: 'appointments', id: decodeURIComponent(appt[1]) };
+  const one = route.match(/^\/api\/contacts\/([^/]+)$/);
+  if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
+  return null;
+}
+
+function matchOutboundJobsRoute(route) {
+  if (route === '/api/outbound-jobs') return { action: 'list_or_create' };
+  const one = route.match(/^\/api\/outbound-jobs\/([^/]+)$/);
+  if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
+  return null;
+}
+
+function apiContactsList(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const list = customerContext.listContacts(core.db(), ctx.tenant.id, {
+    assignedEmployee: url.searchParams.get('employeeId') || undefined,
+    leadStatus: url.searchParams.get('leadStatus') || undefined,
+    q: url.searchParams.get('q') || undefined,
+    limit: url.searchParams.get('limit') || 50,
+  });
+  core.sendJson(res, 200, { contacts: list, count: list.length, empty: list.length === 0 });
+}
+
+async function apiContactsResolve(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  let result;
+  await core.mutate((d) => {
+    result = customerContext.resolveContact(d, ctx.tenant.id, b.phone || b.primary_phone || b.primaryPhone, {
+      name: b.name,
+      email: b.email,
+      company: b.company,
+      assignedEmployee: b.employeeId || b.assigned_employee,
+      preferredLanguage: b.preferred_language || b.preferredLanguage,
+      leadId: b.leadId,
+      create: b.create !== false,
+    });
+    if (result.ok && result.created) {
+      addAudit(d, ctx, 'contact.created', 'contact', result.contact.id, { phone: result.phone });
+      eventTriggers.handleEvent(d, ctx.tenant.id, 'lead.created', {
+        contactId: result.contact.id,
+        phone: result.phone,
+        employeeId: result.contact.assignedEmployee,
+      }, { actorUserId: ctx.user.id, force: true });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  const injection = customerContext.buildContextInjection(result.contact);
+  core.sendJson(res, result.created ? 201 : 200, {
+    contact: customerContext.publicContact(result.contact, { detail: true }),
+    created: result.created,
+    context: injection,
+  });
+}
+
+function apiContactsGet(req, res, ctx) {
+  const row = customerContext.findContact(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!row) return core.sendJson(res, 404, { error: 'contact not found', code: 'not_found' });
+  core.sendJson(res, 200, { contact: customerContext.publicContact(row, { detail: true }) });
+}
+
+async function apiContactsPatch(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = customerContext.patchContact(d, ctx.tenant.id, ctx.params.id, ctx.body || {});
+    if (result.ok) addAudit(d, ctx, 'contact.updated', 'contact', result.contact.id, {});
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { contact: customerContext.publicContact(result.contact, { detail: true }) });
+}
+
+function apiContactsContextGet(req, res, ctx) {
+  const row = customerContext.findContact(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!row) return core.sendJson(res, 404, { error: 'contact not found', code: 'not_found' });
+  const url = new URL(req.url || '/', 'http://localhost');
+  const injection = customerContext.buildContextInjection(row, {
+    appointmentId: url.searchParams.get('appointmentId') || undefined,
+    handoffFrom: url.searchParams.get('handoffFrom') || undefined,
+  });
+  core.sendJson(res, 200, injection);
+}
+
+function apiContactsTimelineGet(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const result = customerContext.buildCustomerTimeline(core.db(), ctx.tenant.id, ctx.params.id, {
+    limit: url.searchParams.get('limit') || 50,
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result.timeline);
+}
+
+async function apiContactsHandoff(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  let result;
+  await core.mutate((d) => {
+    result = customerContext.handoffContact(
+      d,
+      ctx.tenant.id,
+      ctx.params.id,
+      b.toEmployeeId || b.to_employee_id || b.employeeId,
+      { fromEmployeeId: b.fromEmployeeId, markHandedOff: b.markHandedOff !== false },
+    );
+    if (result.ok) {
+      addAudit(d, ctx, 'contact.handoff', 'contact', result.contact.id, {
+        from: result.fromEmployeeId,
+        to: result.toEmployeeId,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  const injection = customerContext.buildContextInjection(result.contact, {
+    handoffFrom: result.fromEmployeeId,
+  });
+  core.sendJson(res, 200, {
+    contact: customerContext.publicContact(result.contact, { detail: true }),
+    context: injection,
+    from_employee_id: result.fromEmployeeId,
+    to_employee_id: result.toEmployeeId,
+  });
+}
+
+async function apiContactsAppointments(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  let result = null;
+  let evt = null;
+  await core.mutate((d) => {
+    const contact = customerContext.findContact(d, ctx.tenant.id, ctx.params.id);
+    if (!contact) {
+      result = { ok: false, status: 404, error: 'contact not found', code: 'not_found' };
+      return;
+    }
+    result = customerContext.addAppointment(contact, b);
+    if (result.ok && result.created) {
+      const eventName = result.appointment.status === 'requested'
+        ? 'appointment.requested'
+        : result.appointment.status === 'cancelled'
+          ? 'appointment.cancelled'
+          : result.appointment.status === 'rescheduled'
+            ? 'appointment.rescheduled'
+            : 'appointment.booked';
+      evt = eventTriggers.handleEvent(d, ctx.tenant.id, eventName, {
+        contactId: contact.id,
+        employeeId: contact.assignedEmployee || b.employeeId,
+        appointment: result.appointment,
+        appointmentId: result.appointment.id,
+        appointmentStartAt: result.appointment.startAt,
+      }, { actorUserId: ctx.user.id });
+      addAudit(d, ctx, eventName, 'contact', contact.id, {
+        appointmentId: result.appointment.id,
+        persisted: true,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status || 422, { error: result.error, code: result.code });
+  // Never claim appointment until persisted (we only respond after mutate success).
+  core.sendJson(res, result.created ? 201 : 200, {
+    appointment: result.appointment,
+    created: result.created,
+    duplicate: !!result.duplicate,
+    jobs: (evt && evt.ok ? evt.jobs : []).map((j) => outboundJobs.publicOutboundJob(j.job)),
+    dialed: false,
+    claimed: true,
+  });
+}
+
+/**
+ * Callback request from conversation utterance.
+ * Persist outbound job FIRST, then allow verbal confirmation payload.
+ * Does NOT place PSTN.
+ */
+async function apiContactsCallbackRequest(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const phone = b.phone || b.primary_phone;
+  const phrase = b.phrase || b.utterance || b.when;
+  if (!phone && !(b.contactId || b.contact_id)) {
+    return core.sendJson(res, 422, { error: 'phone or contact_id required', code: 'missing_contact' });
+  }
+  const whenInfo = callback.parseNaturalCallbackWhen(phrase || b.when || 'in 30 minutes', {
+    appointmentStartAt: b.appointmentStartAt || b.appointment_start_at,
+    nowMs: b.nowMs,
+  });
+  if (!whenInfo.ok) {
+    return core.sendJson(res, 422, { error: whenInfo.error, code: whenInfo.code });
+  }
+
+  let out = null;
+  await core.mutate((d) => {
+    let contact;
+    if (b.contactId || b.contact_id) {
+      contact = customerContext.findContact(d, ctx.tenant.id, b.contactId || b.contact_id);
+      if (!contact) {
+        out = { ok: false, status: 404, error: 'contact not found', code: 'not_found' };
+        return;
+      }
+    } else {
+      const resolved = customerContext.resolveContact(d, ctx.tenant.id, phone, {
+        name: b.name,
+        assignedEmployee: b.employeeId,
+      });
+      if (!resolved.ok) { out = resolved; return; }
+      contact = resolved.contact;
+    }
+
+    const evt = eventTriggers.handleEvent(d, ctx.tenant.id, 'callback.requested', {
+      contactId: contact.id,
+      employeeId: b.employeeId || contact.assignedEmployee,
+      scheduledAt: whenInfo.when,
+      phone: contact.primaryPhone,
+      notes: b.note || phrase || null,
+    }, { actorUserId: ctx.user.id, force: !!b.force });
+
+    const createdJobs = (evt.jobs || []).filter((j) => j.created);
+    const anyJob = (evt.jobs || [])[0];
+    // Verbal confirm ONLY after persist success.
+    const confirmOk = evt.ok && anyJob && anyJob.job && anyJob.job.id;
+    customerContext.pushTimelineEvent(contact, {
+      type: 'callback_requested',
+      label: 'Callback requested',
+      detail: whenInfo.when,
+      jobId: anyJob && anyJob.job ? anyJob.job.id : null,
+    });
+    contact.nextAction = 'callback';
+    contact.nextActionAt = whenInfo.when;
+    contact.updatedAt = new Date().toISOString();
+    addAudit(d, ctx, 'callback.requested', 'contact', contact.id, {
+      jobId: anyJob && anyJob.job ? anyJob.job.id : null,
+      when: whenInfo.when,
+      persisted: !!confirmOk,
+    });
+
+    out = {
+      ok: true,
+      persisted: !!confirmOk,
+      verbal_confirm_allowed: !!confirmOk,
+      contact: customerContext.publicContact(contact),
+      when: whenInfo.when,
+      timezone: whenInfo.timezone || 'Asia/Kolkata',
+      phrase: whenInfo.phrase || phrase || null,
+      jobs: (evt.jobs || []).map((j) => ({
+        ...outboundJobs.publicOutboundJob(j.job),
+        created: j.created,
+        duplicate: j.duplicate,
+      })),
+      dialed: false,
+      message: confirmOk
+        ? 'Callback scheduled. You may confirm verbally.'
+        : 'Callback could not be persisted. Do not confirm verbally.',
+    };
+  });
+
+  if (!out.ok) return core.sendJson(res, out.status || 422, { error: out.error, code: out.code });
+  core.sendJson(res, 201, out);
+}
+
+async function apiContactsEndOfCall(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = endOfCallPipeline.runEndOfCallPipeline(d, ctx.tenant.id, ctx.body || {}, {
+      actorUserId: ctx.user.id,
+    });
+    if (result.ok) {
+      addAudit(d, ctx, 'call.pipeline.completed', 'contact', result.contact.contact_id || result.contact.id, {
+        dialed: false,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status || 422, { error: result.error, code: result.code });
+  core.sendJson(res, 200, result);
+}
+
+async function apiContactsEvents(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  const eventName = b.event || b.type;
+  let result;
+  await core.mutate((d) => {
+    result = eventTriggers.handleEvent(d, ctx.tenant.id, eventName, b, {
+      actorUserId: ctx.user.id,
+      force: !!b.force,
+      callbackRules: b.callbackRules,
+    });
+  });
+  if (!result.ok) return core.sendJson(res, result.status || 422, { error: result.error, code: result.code });
+  core.sendJson(res, 200, {
+    ...result,
+    jobs: (result.jobs || []).map((j) => ({
+      ...outboundJobs.publicOutboundJob(j.job),
+      created: j.created,
+      duplicate: j.duplicate,
+    })),
+  });
+}
+
+function apiOutboundJobsList(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const list = outboundJobs.listOutboundJobs(core.db(), ctx.tenant.id, {
+    contactId: url.searchParams.get('contactId') || undefined,
+    employeeId: url.searchParams.get('employeeId') || undefined,
+    status: url.searchParams.get('status') || undefined,
+    triggerEvent: url.searchParams.get('triggerEvent') || undefined,
+    limit: url.searchParams.get('limit') || 50,
+  });
+  core.sendJson(res, 200, {
+    jobs: list,
+    count: list.length,
+    empty: list.length === 0,
+    auto_dial: false,
+  });
+}
+
+async function apiOutboundJobsCreate(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = outboundJobs.createOutboundJob(d, ctx.tenant.id, ctx.body || {}, ctx.user.id);
+    if (result.ok && result.created) {
+      addAudit(d, ctx, 'outbound_job.created', 'outbound_job', result.job.id, {
+        triggerEvent: result.job.triggerEvent,
+        autoDial: false,
+      });
+    }
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, result.created ? 201 : 200, {
+    job: outboundJobs.publicOutboundJob(result.job),
+    created: result.created,
+    duplicate: !!result.duplicate,
+    dialed: false,
+  });
+}
+
+function apiOutboundJobsGet(req, res, ctx) {
+  const job = outboundJobs.findOutboundJob(core.db(), ctx.tenant.id, ctx.params.id);
+  if (!job) return core.sendJson(res, 404, { error: 'outbound job not found', code: 'not_found' });
+  core.sendJson(res, 200, { job: outboundJobs.publicOutboundJob(job), auto_dial: false });
+}
+
+async function apiOutboundJobsPatch(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  let result;
+  await core.mutate((d) => {
+    result = outboundJobs.updateOutboundJobStatus(
+      d,
+      ctx.tenant.id,
+      ctx.params.id,
+      b.status || 'pending',
+      b,
+    );
+  });
+  if (!result.ok) return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  core.sendJson(res, 200, { job: outboundJobs.publicOutboundJob(result.job), dialed: false });
+}
+
 function apiCallJobsList(req, res, ctx) {
   const url = new URL(req.url || '/', 'http://localhost');
   const list = callJobs.listCallJobs(core.db(), ctx.tenant.id, {
@@ -4380,6 +4826,28 @@ const server = http.createServer(async (req, res) => {
           }
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
+        const contactsGet = matchContactsRoute(route);
+        if (contactsGet) {
+          if (contactsGet.action === 'list_or_create') return core.requireAuth(req, res, apiContactsList);
+          if (contactsGet.action === 'one') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiContactsGet(rq, rs, { ...ctx, params: { id: contactsGet.id } }));
+          }
+          if (contactsGet.action === 'context') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiContactsContextGet(rq, rs, { ...ctx, params: { id: contactsGet.id } }));
+          }
+          if (contactsGet.action === 'timeline') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiContactsTimelineGet(rq, rs, { ...ctx, params: { id: contactsGet.id } }));
+          }
+          return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+        }
+        const ojobsGet = matchOutboundJobsRoute(route);
+        if (ojobsGet) {
+          if (ojobsGet.action === 'list_or_create') return core.requireAuth(req, res, apiOutboundJobsList);
+          if (ojobsGet.action === 'one') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiOutboundJobsGet(rq, rs, { ...ctx, params: { id: ojobsGet.id } }));
+          }
+          return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+        }
         const empGet = matchEmployeesRoute(route);
         if (empGet) {
           if (empGet.action === 'templates') return core.requireAuth(req, res, apiEmployeeTemplates);
@@ -4465,6 +4933,28 @@ const server = http.createServer(async (req, res) => {
             return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
           }
           return core.requireAuth(req, res, (rq, rs, ctx) => apiLeadsPatch(rq, rs, { ...ctx, params: { id: leadsPatch.id } }), body);
+        }
+        const contactsPatch = matchContactsRoute(route);
+        if (contactsPatch && (contactsPatch.action === 'one' || contactsPatch.action === 'handoff')) {
+          let body;
+          try { body = await core.readBody(req); }
+          catch (e) {
+            const tooBig = /too large/.test(String(e.message));
+            return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          if (contactsPatch.action === 'one') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiContactsPatch(rq, rs, { ...ctx, params: { id: contactsPatch.id } }), body);
+          }
+        }
+        const ojobsPatch = matchOutboundJobsRoute(route);
+        if (ojobsPatch && ojobsPatch.action === 'one') {
+          let body;
+          try { body = await core.readBody(req); }
+          catch (e) {
+            const tooBig = /too large/.test(String(e.message));
+            return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiOutboundJobsPatch(rq, rs, { ...ctx, params: { id: ojobsPatch.id } }), body);
         }
         const empPatch = matchEmployeesRoute(route);
         if (empPatch) {
@@ -4714,6 +5204,38 @@ const server = http.createServer(async (req, res) => {
         }
         if (leadsPost.action === 'call') {
           return core.requireAuth(req, res, (rq, rs, ctx) => apiLeadsCall(rq, rs, { ...ctx, params: { id: leadsPost.id } }), body);
+        }
+        return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+      }
+      const contactsPost = matchContactsRoute(route);
+      if (contactsPost) {
+        if (contactsPost.action === 'resolve') {
+          return core.requireAuth(req, res, apiContactsResolve, body);
+        }
+        if (contactsPost.action === 'callback_request') {
+          return core.requireAuth(req, res, apiContactsCallbackRequest, body);
+        }
+        if (contactsPost.action === 'end_of_call') {
+          return core.requireAuth(req, res, apiContactsEndOfCall, body);
+        }
+        if (contactsPost.action === 'events') {
+          return core.requireAuth(req, res, apiContactsEvents, body);
+        }
+        if (contactsPost.action === 'handoff') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiContactsHandoff(rq, rs, { ...ctx, params: { id: contactsPost.id } }), body);
+        }
+        if (contactsPost.action === 'appointments') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiContactsAppointments(rq, rs, { ...ctx, params: { id: contactsPost.id } }), body);
+        }
+        if (contactsPost.action === 'list_or_create') {
+          return core.requireAuth(req, res, apiContactsResolve, body);
+        }
+        return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
+      }
+      const ojobsPost = matchOutboundJobsRoute(route);
+      if (ojobsPost) {
+        if (ojobsPost.action === 'list_or_create') {
+          return core.requireAuth(req, res, apiOutboundJobsCreate, body);
         }
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }

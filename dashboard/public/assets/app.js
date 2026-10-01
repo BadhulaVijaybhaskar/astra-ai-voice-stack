@@ -6938,6 +6938,50 @@ async function paintCallDetail(host, callId) {
       recSection.appendChild(el('p', { class: 'muted' }, '—'));
     }
     host.appendChild(recSection);
+
+    // Continuous customer context timeline (Conversations / Contact Detail).
+    const phoneForContext = c.direction === 'inbound'
+      ? (c.fromE164 || c.toE164)
+      : (c.toE164 || c.fromE164);
+    const ctxSection = el('section', { class: 'calls-section' }, [
+      el('h4', {}, 'Customer timeline'),
+      el('p', { class: 'muted', id: 'callCustomerTimelineHint' }, 'Loading continuous context…'),
+    ]);
+    host.appendChild(ctxSection);
+    if (phoneForContext) {
+      try {
+        const resolved = await api('/api/contacts/resolve', {
+          method: 'POST',
+          body: { phone: phoneForContext, name: c.callerName || undefined, create: false },
+        });
+        const contact = resolved.contact;
+        const tl = contact && contact.contact_id
+          ? await api('/api/contacts/' + encodeURIComponent(contact.contact_id) + '/timeline?limit=20')
+          : null;
+        const hint = ctxSection.querySelector('#callCustomerTimelineHint');
+        if (hint) hint.remove();
+        if (contact) {
+          ctxSection.appendChild(el('p', { class: 'muted' },
+            [contact.name, contact.preferred_language, contact.qualification_status]
+              .filter(Boolean).join(' · ') || 'Contact resolved'));
+        }
+        const events = (tl && tl.events) || [];
+        if (events.length) {
+          events.slice(0, 8).forEach((ev) => {
+            ctxSection.appendChild(el('p', { class: 'muted', style: 'margin:4px 0' },
+              fmtCallTime(ev.at) + ' · ' + (ev.label || ev.type) + (ev.detail ? ' · ' + ev.detail : '')));
+          });
+        } else {
+          ctxSection.appendChild(el('p', { class: 'muted' }, 'No prior customer events. —'));
+        }
+      } catch (_) {
+        const hint = ctxSection.querySelector('#callCustomerTimelineHint');
+        if (hint) hint.textContent = 'Customer context unavailable for this conversation. —';
+      }
+    } else {
+      const hint = ctxSection.querySelector('#callCustomerTimelineHint');
+      if (hint) hint.textContent = '—';
+    }
   } catch (e) {
     host.innerHTML = '';
     host.appendChild(el('div', { class: 'muted' }, 'Could not load conversation. ' + esc(e.message)));
@@ -7083,6 +7127,16 @@ async function viewInstantLeads(root) {
     ]),
     list,
   ]));
+  const contactDetail = el('section', {
+    class: 'card card-pad',
+    id: 'leadContactDetail',
+    style: 'margin-top:18px',
+  }, [
+    el('h3', { class: 't-h3' }, 'Customer context'),
+    el('p', { class: 'muted' },
+      'Select a lead to see continuous context: inbound, booked, follow-up scheduled, outbound confirmation.'),
+  ]);
+  root.appendChild(contactDetail);
   root.appendChild(el('section', { class: 'card card-pad', style: 'margin-top:18px' }, [
     el('div', { class: 'flex items-center justify-between gap-2', style: 'margin-bottom:12px' }, [
       el('h3', { class: 't-h3' }, 'Call job queue'),
@@ -7149,13 +7203,85 @@ async function loadCallJobsQueue(host) {
   }
 }
 
+async function paintLeadCustomerContext(leadId) {
+  const host = $('#leadContactDetail');
+  if (!host) return;
+  host.innerHTML = '';
+  host.appendChild(el('div', {}, skeleton('sk-line', 4)));
+  try {
+    const res = await api('/api/leads/' + encodeURIComponent(leadId));
+    const contact = res.contact;
+    const timeline = res.customer_timeline;
+    const ctx = res.context;
+    host.innerHTML = '';
+    host.appendChild(el('h3', { class: 't-h3' }, 'Customer context'));
+    if (!contact) {
+      host.appendChild(el('p', { class: 'muted' },
+        'No continuous contact yet for this lead. Context is created on resolve / first call.'));
+      return;
+    }
+    host.appendChild(el('div', { class: 'calls-meta' }, [
+      metaItem('Name', contact.name || '—'),
+      metaItem('Phone', contact.primary_phone || '—'),
+      metaItem('Language', contact.preferred_language || '—'),
+      metaItem('Lead status', contact.lead_status || '—'),
+      metaItem('Qualification', contact.qualification_status || '—'),
+      metaItem('Next action', contact.next_action || '—'),
+    ]));
+    if (contact.interest || contact.business_goal || contact.last_conversation_summary) {
+      host.appendChild(el('section', { class: 'calls-section', style: 'margin-top:12px' }, [
+        el('h4', {}, 'Stored facts'),
+        el('p', { class: 'calls-summary' },
+          [
+            contact.interest ? ('Interest: ' + contact.interest) : null,
+            contact.business_goal ? ('Goal: ' + contact.business_goal) : null,
+            contact.last_conversation_summary || null,
+          ].filter(Boolean).join(' · ') || '—'),
+      ]));
+    }
+    if (ctx && ctx.block) {
+      host.appendChild(el('section', { class: 'calls-section', style: 'margin-top:12px' }, [
+        el('h4', {}, 'Injected context (compact)'),
+        el('pre', {
+          class: 'muted',
+          style: 'white-space:pre-wrap;font-size:.8rem;max-height:160px;overflow:auto',
+        }, ctx.block),
+        el('p', { class: 'muted', style: 'font-size:.75rem' },
+          '~' + (ctx.tokensEstimate || 0) + ' tokens · transcript never included'),
+      ]));
+    }
+    const events = (timeline && timeline.events) || [];
+    host.appendChild(el('section', { class: 'calls-section', style: 'margin-top:12px' }, [
+      el('h4', {}, 'Customer timeline'),
+      events.length
+        ? el('div', { class: 'ticket-list' }, events.map((ev) => el('article', {
+          class: 'card ticket-card',
+          style: 'padding:10px 12px;margin-bottom:8px',
+        }, [
+          el('div', { class: 'flex items-center justify-between gap-2' }, [
+            el('b', {}, ev.label || ev.type || 'Event'),
+            el('span', { class: 'pill' }, String(ev.type || '').replace(/_/g, ' ')),
+          ]),
+          el('p', { class: 'muted' },
+            fmtCallTime(ev.at) + (ev.detail ? ' · ' + ev.detail : '')),
+        ])))
+        : el('p', { class: 'muted' }, 'No timeline events yet. —'),
+    ]));
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('h3', { class: 't-h3' }, 'Customer context'));
+    host.appendChild(el('p', { class: 'muted' }, 'Could not load context. ' + esc(e.message)));
+  }
+}
+
 async function loadInstantLeads(host) {
   try {
     const out = await api('/api/leads');
     host.innerHTML = '';
     (out.leads || []).forEach((lead) => {
       const callBtn = el('button', { class: 'btn btn-primary' }, 'Call now');
-      callBtn.onclick = () => {
+      callBtn.onclick = (e) => {
+        e.stopPropagation();
         modal({
           title: 'Confirm outbound call',
           body: el('div', {}, [
@@ -7177,6 +7303,11 @@ async function loadInstantLeads(host) {
           },
         });
       };
+      const contextBtn = el('button', { class: 'btn btn-ghost' }, 'Context');
+      contextBtn.onclick = (e) => {
+        e.stopPropagation();
+        paintLeadCustomerContext(lead.id);
+      };
       const callsLink = el('a', {
         href: '#/calls',
         class: 'btn btn-ghost',
@@ -7188,15 +7319,17 @@ async function loadInstantLeads(host) {
         lead.lastCallId ? 'conversation linked' : null,
         lead.lastError ? ('error: ' + lead.lastError) : null,
       ].filter(Boolean).join(' · ');
-      host.appendChild(el('article', { class: 'card ticket-card' }, [
+      const card = el('article', { class: 'card ticket-card', style: 'cursor:pointer' }, [
         el('div', { class: 'flex items-center justify-between gap-2' }, [
           el('h3', { class: 't-h3' }, lead.name || 'Lead'),
           el('span', { class: 'pill' }, lead.status || 'new'),
         ]),
         el('p', { class: 'muted' }, (lead.phone || '') + (lead.employeeId || lead.agentId ? ' · employee linked' : '')),
         el('p', { class: 'muted' }, statusBits || '—'),
-        el('div', { class: 'flex gap-2' }, [callBtn, callsLink]),
-      ]));
+        el('div', { class: 'flex gap-2' }, [callBtn, contextBtn, callsLink]),
+      ]);
+      card.onclick = () => paintLeadCustomerContext(lead.id);
+      host.appendChild(card);
     });
     if (!(out.leads || []).length) {
       host.appendChild(el('div', { class: 'card card-pad muted' }, 'No leads yet. Save one on the left, then Call now.'));

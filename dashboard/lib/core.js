@@ -185,7 +185,7 @@ const DB_TMP = `${DB_FILE}.tmp`;
 
 function defaultDb() {
   return {
-    schemaVersion: 15,
+    schemaVersion: 16,
     tenants: [], users: [], agents: [], usage: [], sessions: [],
     wallets: [], ledger: [], paymentIntents: [], supportTickets: [],
     supportMessages: [], auditEvents: [], presets: [], byonConnections: [],
@@ -193,6 +193,7 @@ function defaultDb() {
     callbackJobs: [], phoneNumbers: [], providerResources: [], calls: [],
     knowledgeEntries: [], integrationWebhooks: [], campaigns: [], campaignLeads: [],
     workflows: [], leads: [], callJobs: [], employees: [],
+    contacts: [], outboundJobs: [],
   };
 }
 
@@ -203,6 +204,7 @@ const COLLECTIONS = [
   'callbackJobs', 'phoneNumbers', 'providerResources', 'calls',
   'knowledgeEntries', 'integrationWebhooks', 'campaigns', 'campaignLeads',
   'workflows', 'leads', 'callJobs', 'employees',
+  'contacts', 'outboundJobs',
 ];
 
 /**
@@ -231,7 +233,7 @@ function normalizeOutcomeDef(raw) {
 function migrateDb(parsed) {
   const out = Object.assign(defaultDb(), parsed || {});
   for (const k of COLLECTIONS) if (!Array.isArray(out[k])) out[k] = [];
-  out.schemaVersion = Math.max(15, Number(out.schemaVersion) || 0);
+  out.schemaVersion = Math.max(16, Number(out.schemaVersion) || 0);
   for (const tenant of out.tenants) {
     if (!tenant.status) tenant.status = 'active';
     if (!tenant.privacyMode) tenant.privacyMode = 'standard';
@@ -383,7 +385,40 @@ function migrateDb(parsed) {
     if (n.answerUrl === undefined) n.answerUrl = null;
     if (n.hangupCallback === undefined) n.hangupCallback = null;
   }
-  out.schemaVersion = Math.max(15, Number(out.schemaVersion) || 0);
+  // v16: Continuous customer context + scheduled outbound jobs (no auto PSTN).
+  if (!Array.isArray(out.contacts)) out.contacts = [];
+  if (!Array.isArray(out.outboundJobs)) out.outboundJobs = [];
+  for (const emp of out.employees) {
+    if (!emp.callbackRules || typeof emp.callbackRules !== 'object') {
+      emp.callbackRules = {
+        onBookingConfirmation: true,
+        remindBeforeMinutes: [60, 1440],
+        customOffsetsMinutes: [],
+        timezone: 'Asia/Kolkata',
+      };
+    } else {
+      if (emp.callbackRules.onBookingConfirmation === undefined) {
+        emp.callbackRules.onBookingConfirmation = true;
+      }
+      if (!Array.isArray(emp.callbackRules.remindBeforeMinutes)) {
+        emp.callbackRules.remindBeforeMinutes = [60, 1440];
+      }
+      if (!Array.isArray(emp.callbackRules.customOffsetsMinutes)) {
+        emp.callbackRules.customOffsetsMinutes = [];
+      }
+      if (!emp.callbackRules.timezone) emp.callbackRules.timezone = 'Asia/Kolkata';
+    }
+  }
+  for (const c of out.contacts) {
+    if (!Array.isArray(c.appointments)) c.appointments = [];
+    if (!Array.isArray(c.calls)) c.calls = [];
+    if (!Array.isArray(c.actions)) c.actions = [];
+    if (!Array.isArray(c.timelineEvents)) c.timelineEvents = [];
+    if (!Array.isArray(c.detectedLanguages)) c.detectedLanguages = [];
+    if (!c.leadStatus) c.leadStatus = 'new';
+    if (!c.qualificationStatus) c.qualificationStatus = 'unknown';
+  }
+  out.schemaVersion = Math.max(16, Number(out.schemaVersion) || 0);
   return out;
 }
 
