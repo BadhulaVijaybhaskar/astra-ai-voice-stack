@@ -13,7 +13,7 @@
   align-items: center; justify-content: center; color: var(--ink-dim);
 }
 .boot-mark { opacity: 0.95; }
-.boot-mark img { width: 40px; height: 40px; object-fit: contain; border-radius: 10px; }
+.boot-mark img { width: 50px; height: 50px; object-fit: contain; border-radius: 12px; }
 .boot-text { font-size: 0.9rem; display: inline-flex; align-items: center; gap: 10px; }
 .boot-spin {
   width: 14px; height: 14px; border-radius: 50%;
@@ -47,7 +47,7 @@
 }
 .auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; position: relative; }
 .auth-brand .lm {
-  width: 36px; height: 36px; object-fit: contain; border-radius: 10px;
+  width: 45px; height: 45px; object-fit: contain; border-radius: 12px;
 }
 .auth-brand .nm { font-weight: 650; font-size: 1.18rem; letter-spacing: -0.03em; color: var(--ink); }
 .auth-brand .nm em { font-style: normal; font-weight: 670; color: var(--voice); }
@@ -55,7 +55,7 @@
   display: none;
 }
 .auth-lockup {
-  display: block; height: 40px; width: auto; max-width: 220px; object-fit: contain;
+  display: block; height: 50px; width: auto; max-width: 275px; object-fit: contain;
 }
 .auth-card h1 { font-size: 1.55rem; letter-spacing: -0.035em; margin-bottom: 8px; position: relative; font-weight: 660; }
 .auth-card .sub { color: var(--ink-dim); font-size: 0.92rem; margin-bottom: 24px; position: relative; line-height: 1.5; }
@@ -106,10 +106,10 @@
   padding: 2px 8px 12px; margin-bottom: 2px;
 }
 .side-brand .lm {
-  width: 28px; height: 28px; object-fit: contain; border-radius: 8px;
+  width: 36px; height: 36px; object-fit: contain; border-radius: 10px;
 }
 .side-brand .lockup {
-  display: block; height: 30px; width: auto; max-width: 172px; object-fit: contain;
+  display: block; height: 38px; width: auto; max-width: 200px; object-fit: contain;
 }
 .side-brand .nm {
   font-weight: 650; font-size: 1.02rem; letter-spacing: -0.028em; color: var(--ink);
