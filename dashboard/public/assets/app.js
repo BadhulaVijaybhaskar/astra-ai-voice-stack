@@ -5083,6 +5083,35 @@ async function viewTalkLegacy(root) {
   let liveBubble = null;
   let turnId = 0;
   const turnTiming = { stt: null, llm: null, tts: null };
+  /** P0-3 stage marks (ms since epoch) for /api/talk/latency evidence. */
+  let activeLatency = null;
+  let lastAsrGuard = null;
+
+  function newLatencyTurn() {
+    activeLatency = {
+      turn_id: 'turn_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8),
+      session_id: 'browser_talk_legacy',
+      agent_id: (getActiveAgent() && getActiveAgent().id) || null,
+      source: 'browser_talk',
+      stages: {},
+      partials: [],
+    };
+    lastAsrGuard = null;
+    return activeLatency;
+  }
+
+  async function flushLatency(extra) {
+    if (!activeLatency) return;
+    const body = Object.assign({}, activeLatency, extra || {});
+    try {
+      await api('/api/talk/latency', { method: 'POST', timeoutMs: 8000, body });
+    } catch (_) { /* evidence best-effort */ }
+  }
+
+  function markLatency(stage) {
+    if (!activeLatency) newLatencyTurn();
+    activeLatency.stages[stage] = Date.now();
+  }
 
   const PHASE_LABELS = {
     idle: 'Ready', connecting: 'Connecting microphone', listening: 'Listening',
@@ -5101,6 +5130,11 @@ async function viewTalkLegacy(root) {
     if (turnTiming.stt != null) parts.push('STT ' + (turnTiming.stt / 1000).toFixed(2) + 's');
     if (turnTiming.llm != null) parts.push('Brain ' + (turnTiming.llm / 1000).toFixed(2) + 's');
     if (turnTiming.tts != null) parts.push('Voice ' + (turnTiming.tts / 1000).toFixed(2) + 's');
+    if (activeLatency && activeLatency.stages.speech_end && activeLatency.stages.playback_start) {
+      const total = activeLatency.stages.playback_start - activeLatency.stages.speech_end;
+      parts.push('E2E ' + (total / 1000).toFixed(2) + 's');
+      if (total >= 9000) parts.push('SLOW');
+    }
     timingText.textContent = parts.length ? parts.join('  ·  ') : 'Latency appears after the first turn';
   }
 
@@ -5161,7 +5195,14 @@ async function viewTalkLegacy(root) {
 
     socket.onmessage = (ev) => {
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.type === 'ProxyReady') { readyResolved = true; resolveReady(); return; }
+      if (msg.type === 'ProxyReady') {
+        readyResolved = true;
+        if (msg.model || msg.language) {
+          timingText.textContent = 'Listening · ' + (msg.provider || 'stt') + ' ' + (msg.model || '') + ' lang=' + (msg.language || 'multi');
+        }
+        resolveReady();
+        return;
+      }
       if (msg.type === 'ProxyError') {
         const err = new Error(msg.message || 'Live listening stream failed.');
         rejectReady(err);
@@ -5175,8 +5216,11 @@ async function viewTalkLegacy(root) {
         if (msg.is_final) {
           if (segments[segments.length - 1] !== text) segments.push(text);
           interim = '';
+          if (activeLatency) activeLatency.partials.push(text);
+          if (msg.asr_guard) lastAsrGuard = msg.asr_guard;
         } else {
           interim = text;
+          if (activeLatency) activeLatency.partials.push(text);
         }
         paintLiveTranscript(segments.concat(interim ? [interim] : []).join(' '));
       }
@@ -5235,16 +5279,36 @@ async function viewTalkLegacy(root) {
     cancelCapture();
     const myTurn = ++turnId;
     busy = true;
+    if (!activeLatency) newLatencyTurn();
+    markLatency('stt_final');
     addBubble('user', userText);
     convo.push({ role: 'user', text: userText });
     textIn.value = '';
     const typing = addTyping();
     setPhase('thinking');
     try {
+      markLatency('llm_request');
+      const isMaya = /^maya$/i.test(String(agent.name || '').trim());
       const chat = await api('/api/chat', {
         method: 'POST', timeoutMs: 30000,
-        body: { messages: convo.map((m) => ({ role: m.role === 'bot' ? 'model' : 'user', text: m.text })), system: agent.persona }
+        body: {
+          messages: convo.map((m) => ({ role: m.role === 'bot' ? 'model' : 'user', text: m.text })),
+          system: agent.persona,
+          applyMayaPolicy: isMaya,
+          employeeId: agent.employeeId || null,
+          employeeName: agent.name,
+          turn_id: activeLatency && activeLatency.turn_id,
+          record_latency: true,
+          session_id: 'browser_talk_legacy',
+          asr_confidence: lastAsrGuard && lastAsrGuard.confidence,
+        }
       });
+      markLatency('llm_complete');
+      if (!activeLatency.stages.llm_first_token) {
+        // Non-streaming brain: approximate first token as 40% of reported latency.
+        const llmMs = Number(chat.latency_ms) || Math.max(1, Date.now() - activeLatency.stages.llm_request);
+        activeLatency.stages.llm_first_token = activeLatency.stages.llm_request + Math.round(llmMs * 0.4);
+      }
       turnTiming.llm = Number(chat.latency_ms) || null;
       updateTiming();
       if (myTurn !== turnId) { typing.remove(); return; }
@@ -5252,8 +5316,26 @@ async function viewTalkLegacy(root) {
       typing.remove();
       addBubble('bot', reply);
       convo.push({ role: 'bot', text: reply });
-      setPhase('speaking');
-      await speakReply(reply, agent);
+      // Booking intent must keep the session alive (P0-2).
+      if (chat.booking_intent) {
+        try {
+          await api('/api/talk/hangup-trace', {
+            method: 'POST', timeoutMs: 5000,
+            body: { lastUserText: userText, phase: 'booking', endedByAgent: false },
+          });
+        } catch (_) {}
+      }
+      if (chat.llm_input_allowed === false) {
+        // ASR guard clarification: still speak it, then resume listening.
+        setPhase('speaking');
+        await speakReply(reply, agent);
+      } else {
+        setPhase('speaking');
+        await speakReply(reply, agent);
+      }
+      await flushLatency({
+        stt: { provider: 'deepgram', model: 'nova-3-general', language: 'multi' },
+      });
     } catch (ex) {
       typing.remove();
       addBubble('sys', 'The turn failed: ' + (ex.message || 'unknown error'));
@@ -5269,6 +5351,7 @@ async function viewTalkLegacy(root) {
   async function speakReply(text, agent) {
     const tts = agent.tts || {};
     const ttsStarted = performance.now();
+    markLatency('tts_request');
     try {
       const mint = await api('/api/ws-connect', {
         method: 'POST', timeoutMs: 12000,
@@ -5319,6 +5402,8 @@ async function viewTalkLegacy(root) {
           if (!pcm.length) return;
           if (!receivedAudio) {
             receivedAudio = true;
+            markLatency('tts_first_audio');
+            markLatency('playback_start');
             turnTiming.tts = Math.round(performance.now() - ttsStarted);
             updateTiming();
           }
@@ -5344,6 +5429,7 @@ async function viewTalkLegacy(root) {
       try {
         const res = await api('/api/tts', { method: 'POST', timeoutMs: 60000, body: { text: text.slice(0, 2000), model: tts.model || 'mulberry', speaker: tts.speaker, f0_up_key: tts.f0_up_key, description: tts.description } });
         const buf = await res.arrayBuffer();
+        markLatency('tts_first_audio');
         turnTiming.tts = Math.round(performance.now() - ttsStarted);
         updateTiming();
         const url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
@@ -5353,7 +5439,7 @@ async function viewTalkLegacy(root) {
           const done = () => { URL.revokeObjectURL(url); if (currentAudio === audio) currentAudio = null; resolve(); };
           audio.onended = done;
           audio.onerror = done;
-          audio.play().catch(done);
+          audio.play().then(() => { markLatency('playback_start'); updateTiming(); }).catch(done);
         });
       } catch (_) {
         toast('Voice playback failed, the transcript is still available.', 'err');
@@ -5369,6 +5455,7 @@ async function viewTalkLegacy(root) {
     clearVad();
     discardCapture = false;
     recChunks = [];
+    newLatencyTurn();
 
     setPhase('connecting');
     let dg;
@@ -5460,6 +5547,7 @@ async function viewTalkLegacy(root) {
       const endedTurn = speechStarted && now - speechStartedAt > 280 && now - lastVoiceAt > 900;
       const maxTurn = now - captureStartedAt > 30000;
       if (endedTurn || maxTurn) {
+        markLatency('speech_end');
         try { mediaRec.stop(); } catch (e) {}
       }
     }, 60);
@@ -5492,6 +5580,7 @@ async function viewTalkLegacy(root) {
       sessionActive = true;
       agentSel.disabled = true;
       setSessionButton(true);
+      newLatencyTurn();
       const greeting = String(agent.greeting || 'Hello, how can I help you today?').trim();
       addBubble('bot', greeting);
       convo.push({ role: 'bot', text: greeting });

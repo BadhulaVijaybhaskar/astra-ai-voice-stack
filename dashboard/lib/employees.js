@@ -1082,7 +1082,7 @@ function getInstructions(db, tenantId, id) {
       });
     }
   }
-  return {
+  const out = {
     ok: true,
     instructions: {
       employeeId: row.id,
@@ -1096,6 +1096,30 @@ function getInstructions(db, tenantId, id) {
       hasWorkflow: !!workflow,
     },
   };
+  // Attach Maya conversation policy (read-only guidance) for Teach / Hostinger sync.
+  try {
+    const mayaPolicy = require('./maya-conversation-policy');
+    if (mayaPolicy.isMayaEmployee(row)) {
+      const policy = mayaPolicy.mayaInstructionsPayload();
+      out.instructions.conversation_policy = policy.conversation_policy;
+      out.instructions.booking_stages = mayaPolicy.BOOKING_STAGES.map((s) => ({
+        id: s.id, label: s.label,
+      }));
+      out.instructions.end_call_condition = mayaPolicy.END_CALL_CONDITION;
+      out.instructions.maya_wf8_protected = true;
+      // Prefer stored agent persona when present; otherwise surface policy instructions.
+      if (!out.instructions.instructions) {
+        out.instructions.instructions = policy.instructions;
+      }
+      if (!out.instructions.greeting) {
+        out.instructions.greeting = policy.greeting;
+      }
+      if (!out.instructions.brief) {
+        out.instructions.brief = policy.brief;
+      }
+    }
+  } catch (_) { /* optional module */ }
+  return out;
 }
 
 /**

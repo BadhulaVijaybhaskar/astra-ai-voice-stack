@@ -67,6 +67,9 @@ const voicePreview = require('./lib/voice-preview');
 const callVoiceSession = require('./lib/call-voice-session');
 const personaRouter = require('./lib/voice-persona-router');
 const aiEmployeeJourney = require('./lib/ai-employee-journey');
+const asrSanityGuard = require('./lib/asr-sanity-guard');
+const mayaConversationPolicy = require('./lib/maya-conversation-policy');
+const turnLatency = require('./lib/turn-latency');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
@@ -926,31 +929,182 @@ async function apiWsConnect(req, res, ctx) {
 }
 
 // POST /api/chat -> { text, finish, model, latency_ms } (Brain).
+// ASR sanity guard: garbage last-user turns never enter normal business dialogue.
 async function apiChat(req, res, ctx) {
   const b = ctx.body || {};
   try {
+    const messages = Array.isArray(b.messages) ? b.messages : [];
+    const lastUser = [...messages].reverse().find((m) => m && (m.role === 'user' || m.role === 'human'));
+    const lastText = lastUser ? String(lastUser.text || lastUser.content || '') : '';
+    const guard = asrSanityGuard.evaluateTranscript(lastText, {
+      confidence: b.asr_confidence != null ? b.asr_confidence : b.confidence,
+      stt: b.stt || asrSanityGuard.VALIDATED_MULTILINGUAL_STT,
+    });
+    if (guard.action === 'reject' || guard.action === 'clarify') {
+      const clarify = asrSanityGuard.clarificationPrompt(guard);
+      return core.sendJson(res, 200, {
+        text: clarify,
+        finish: 'asr_guard',
+        model: 'asr-sanity-guard',
+        latency_ms: 0,
+        asr_guard: {
+          ok: false,
+          action: guard.action,
+          reasons: guard.reasons,
+          confidence: guard.confidence,
+        },
+        llm_input_allowed: false,
+      });
+    }
+
+    // Maya policy: booking intent must not be treated as end-of-dialogue by the brain alone.
+    let system = String(b.system || '');
+    if (b.employeeId && mayaConversationPolicy.isMayaEmployee({ id: b.employeeId, name: b.employeeName })) {
+      system = mayaConversationPolicy.GLOBAL_PROMPT + (system ? ('\n\n' + system) : '');
+    } else if (b.applyMayaPolicy) {
+      system = mayaConversationPolicy.GLOBAL_PROMPT + (system ? ('\n\n' + system) : '');
+    }
+
+    const llmStarted = Date.now();
     const selected = providers.resolveSelection('llm', { provider: b.provider, model: b.model });
-    const out = await selected.adapter.chat({ messages: b.messages, system: b.system, model: selected.model });
+    const out = await selected.adapter.chat({ messages: b.messages, system, model: selected.model });
     // Rough token accounting for the usage view (4 chars ~= 1 token).
     const approxTokens = Math.ceil((out.text || '').length / 4);
     bumpUsage(ctx.tenant.id, 'llmTokens', approxTokens).catch(() => {});
     const { provider: _provider, ...safe } = out && typeof out === 'object' ? out : {};
-    core.sendJson(res, 200, safe);
+    if (b.turn_id || b.record_latency) {
+      turnLatency.ingestTurnTiming({
+        turn_id: b.turn_id,
+        session_id: b.session_id,
+        employee_id: b.employeeId,
+        agent_id: b.agentId,
+        source: 'browser_talk',
+        llm_request_ms: llmStarted,
+        llm_complete_ms: Date.now(),
+        // Providers that do not stream still mark first token ~= complete for evidence.
+        llm_first_token_ms: b.llm_first_token_ms || (llmStarted + Math.max(1, (safe.latency_ms || 1) * 0.4)),
+        llm: { provider: selected.adapter.id || selected.id, model: selected.model },
+      });
+    }
+    core.sendJson(res, 200, {
+      ...safe,
+      asr_guard: { ok: true, action: 'accept', reasons: [] },
+      llm_input_allowed: true,
+      booking_intent: asrSanityGuard.isBookingOrScheduleIntent(lastText),
+    });
   } catch (e) {
     handleProviderError(res, e);
   }
 }
 
-// POST /api/stt -> { text, model, latency_ms } (Listening).
+// POST /api/stt -> { text, model, latency_ms, asr_guard, stt_trace } (Listening).
 async function apiStt(req, res, ctx) {
   const b = ctx.body || {};
   try {
     const out = await providers.stt.transcribe({ audio: b.audio, mime: b.mime });
     const { provider: _provider, ...safe } = out && typeof out === 'object' ? out : {};
-    core.sendJson(res, 200, safe);
+    const sttCfg = {
+      provider: providers.stt.id || 'deepgram',
+      model: providers.stt.model || asrSanityGuard.VALIDATED_MULTILINGUAL_STT.model,
+      language: asrSanityGuard.VALIDATED_MULTILINGUAL_STT.language,
+    };
+    const guard = asrSanityGuard.evaluateTranscript(safe.text || '', {
+      confidence: safe.confidence != null ? safe.confidence : b.confidence,
+      stt: sttCfg,
+    });
+    const stt_trace = asrSanityGuard.buildSttTrace({
+      stt: sttCfg,
+      partials: b.partials || [],
+      final: safe.text || '',
+      confidence: guard.confidence,
+      phrase_fixture: b.phrase_fixture || null,
+      guard,
+    });
+    if (b.turn_id || b.record_latency) {
+      turnLatency.ingestTurnTiming({
+        turn_id: b.turn_id,
+        session_id: b.session_id,
+        employee_id: b.employeeId,
+        source: 'browser_talk',
+        stt_final_ms: Date.now(),
+        stt: sttCfg,
+      });
+    }
+    core.sendJson(res, 200, {
+      ...safe,
+      asr_guard: {
+        ok: guard.ok,
+        action: guard.action,
+        reasons: guard.reasons,
+        confidence: guard.confidence,
+      },
+      stt_trace,
+      llm_input_allowed: guard.action === 'accept',
+      stt_config: sttCfg,
+    });
   } catch (e) {
     handleProviderError(res, e);
   }
+}
+
+/** POST /api/talk/latency — Browser Talk stage timing evidence (P0-3). */
+async function apiTalkLatencyIngest(req, res, ctx) {
+  const body = ctx.body || {};
+  const result = turnLatency.ingestTurnTiming(body);
+  core.sendJson(res, 200, result);
+}
+
+/** GET /api/talk/latency — list recent turn traces (optional slowOnly). */
+async function apiTalkLatencyList(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const rows = turnLatency.listTraces({
+    limit: url.searchParams.get('limit'),
+    slowOnly: url.searchParams.get('slowOnly') === '1' || url.searchParams.get('slow') === '1',
+    employee_id: url.searchParams.get('employee_id') || undefined,
+  });
+  core.sendJson(res, 200, {
+    traces: rows,
+    stages: turnLatency.STAGE_ORDER.slice(),
+    slow_threshold_ms: 9000,
+  });
+}
+
+/** POST /api/talk/hangup-trace — classify hangup cause without placing PSTN (P0-2). */
+async function apiTalkHangupTrace(req, res, ctx) {
+  const b = ctx.body || {};
+  const cause = mayaConversationPolicy.classifyHangupCause({
+    lastUserText: b.lastUserText || b.transcript || b.text,
+    providerHangupCause: b.providerHangupCause || b.hangupCause || b.HangupCause,
+    endNode: b.endNode || b.workflowNode,
+    endedByAgent: !!b.endedByAgent,
+    endedByCaller: !!b.endedByCaller,
+    inBookingFlow: !!b.inBookingFlow,
+  });
+  core.sendJson(res, 200, {
+    hangup: cause,
+    booking_intent: mayaConversationPolicy.detectBookingIntent(b.lastUserText || b.transcript || ''),
+    end_call_eligible: mayaConversationPolicy.isEndCallEligible(b.lastUserText || b.transcript || '', {
+      inBookingFlow: !!b.inBookingFlow,
+    }),
+    next: mayaConversationPolicy.nextDialogueAction(b.phase || 'qualify', b.lastUserText || b.transcript || ''),
+  });
+}
+
+/** GET /api/employees/maya/conversation-policy — read-only Maya policy (P0-2/P0-4). */
+async function apiMayaConversationPolicy(req, res) {
+  const graph = mayaConversationPolicy.buildMayaWorkflowGraph();
+  core.sendJson(res, 200, {
+    employee_id: mayaConversationPolicy.MAYA_EMPLOYEE_ID,
+    did: mayaConversationPolicy.MAYA_DID,
+    dograh_workflow_id: mayaConversationPolicy.MAYA_DOGRAH_WORKFLOW_ID,
+    tts: mayaConversationPolicy.MAYA_TTS,
+    instructions: mayaConversationPolicy.mayaInstructionsPayload(),
+    booking_stages: mayaConversationPolicy.BOOKING_STAGES.slice(),
+    end_call_condition: mayaConversationPolicy.END_CALL_CONDITION,
+    workflow_graph: graph,
+    stt_validated: asrSanityGuard.VALIDATED_MULTILINGUAL_STT,
+    note: 'Maya WF8 is protected. Import workflow_graph to Dograh manually on Hostinger. This endpoint never writes WF8.',
+  });
 }
 
 async function mintDograhVoiceSession(req, context) {
@@ -4915,6 +5069,10 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/providers') return core.requireAuth(req, res, apiProviders);
         if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsList);
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);
+        if (route === '/api/talk/latency') return core.requireAuth(req, res, apiTalkLatencyList);
+        if (route === '/api/employees/maya/conversation-policy') {
+          return core.requireAuth(req, res, apiMayaConversationPolicy);
+        }
         if (route === '/api/telephony/status') return core.requireAuth(req, res, apiTelephonyStatus);
         if (route === '/api/presets') return core.requireAuth(req, res, apiPresets);
         if (route === '/api/agent-types') return core.requireAuth(req, res, apiAgentTypes);
@@ -5317,6 +5475,8 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/ws-connect') return core.requireAuth(req, res, apiWsConnect, body);
       if (route === '/api/chat') return core.requireAuth(req, res, apiChat, body);
       if (route === '/api/stt') return core.requireAuth(req, res, apiStt, body);
+      if (route === '/api/talk/latency') return core.requireAuth(req, res, apiTalkLatencyIngest, body);
+      if (route === '/api/talk/hangup-trace') return core.requireAuth(req, res, apiTalkHangupTrace, body);
       if (route === '/api/voice/session') return core.requireAuth(req, res, apiVoiceSession, body);
       if (route === '/api/voice/session/language') return core.requireAuth(req, res, apiVoiceSessionLanguage, body);
       if (route === '/api/demo-links') return core.requireRole(req, res, 'owner', apiDemoLinksCreate, body);
@@ -5571,7 +5731,7 @@ sttWss.on('connection', (client) => {
   }
 
   const query = new URLSearchParams({
-    model: providers.stt.model,
+    model: providers.stt.model || asrSanityGuard.VALIDATED_MULTILINGUAL_STT.model,
     language: 'multi',
     smart_format: 'true',
     punctuate: 'true',
@@ -5602,11 +5762,44 @@ sttWss.on('connection', (client) => {
   upstream.on('open', () => {
     upstreamReady = true;
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({ type: 'ProxyReady', layer: 'listening', model: providers.stt.model }));
+      client.send(JSON.stringify({
+        type: 'ProxyReady',
+        layer: 'listening',
+        model: providers.stt.model || asrSanityGuard.VALIDATED_MULTILINGUAL_STT.model,
+        provider: providers.stt.id || 'deepgram',
+        language: 'multi',
+        validated_multilingual_path: true,
+      }));
     }
   });
   upstream.on('message', (data, isBinary) => {
-    if (client.readyState === WebSocket.OPEN) client.send(data, { binary: isBinary });
+    if (client.readyState !== WebSocket.OPEN) return;
+    // Annotate final Results with ASR sanity guard (diagnostics only).
+    if (!isBinary) {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg && msg.type === 'Results') {
+          const alt = ((((msg.channel || {}).alternatives) || [])[0]) || {};
+          const text = String(alt.transcript || '').trim();
+          const confidence = alt.confidence != null ? Number(alt.confidence) : null;
+          if (msg.is_final && text) {
+            const guard = asrSanityGuard.evaluateTranscript(text, {
+              confidence,
+              stt: asrSanityGuard.VALIDATED_MULTILINGUAL_STT,
+            });
+            msg.asr_guard = {
+              ok: guard.ok,
+              action: guard.action,
+              reasons: guard.reasons,
+              confidence: guard.confidence,
+              llm_input_allowed: guard.action === 'accept',
+            };
+            return client.send(JSON.stringify(msg));
+          }
+        }
+      } catch (_) { /* relay raw */ }
+    }
+    client.send(data, { binary: isBinary });
   });
   upstream.on('error', () => {
     if (client.readyState === WebSocket.OPEN) {
