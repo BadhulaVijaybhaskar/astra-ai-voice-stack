@@ -1,7 +1,7 @@
 # Nav / IA (Astra Voice platform)
 
 Customer navigation is a **SaaS platform shell**, not a 7-step onboarding slideshow.
-Investor dark (`#07111F`) is the primary polished experience.
+Premium light SaaS (`#F7F9FC` canvas, white cards, Astra blue `#1677FF`) is the primary polished experience.
 
 ## Primary navigation (exact labels)
 

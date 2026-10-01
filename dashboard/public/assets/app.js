@@ -1412,11 +1412,11 @@ async function renderLiveDemoWorkspace(host, emp, id) {
     livePill.lastChild.textContent = ' ' + (label || next);
     wave.classList.toggle('is-live', next === 'connected' || next === 'listening' || next === 'speaking');
     if (next === 'connected' || next === 'listening') {
-      livePill.style.background = 'rgba(52,211,153,0.12)';
-      livePill.style.color = '#6EE7B7';
+      livePill.style.background = '#EAF8F1';
+      livePill.style.color = '#22A06B';
     } else if (next === 'ended') {
-      livePill.style.background = 'rgba(148,163,184,0.12)';
-      livePill.style.color = '#CBD5E1';
+      livePill.style.background = '#F2F6FB';
+      livePill.style.color = '#64748B';
     }
   }
   function addBubble(who, text, lang) {
@@ -1434,10 +1434,10 @@ async function renderLiveDemoWorkspace(host, emp, id) {
     outcomeHost.appendChild(el('p', { class: 'muted' }, 'Structured outcome from this Live Demo session.'));
     outcomeHost.appendChild(el('div', { class: 'grid', style: 'margin-top:10px' }, [
       el('div', { class: 'kv' }, [el('div', { class: 'k' }, 'Summary'), el('div', { class: 'v' }, name + ' completed a live demo conversation.')]),
-      el('div', { class: 'kv' }, [el('div', { class: 'k' }, 'Structured outcome'), el('div', { class: 'v' }, 'Interest captured · Status pending review')]),
+      el('div', { class: 'kv is-success' }, [el('div', { class: 'k' }, 'Structured outcome'), el('div', { class: 'v' }, 'Interest captured · Status pending review')]),
       el('div', { class: 'kv' }, [el('div', { class: 'k' }, 'Actions performed'), el('div', { class: 'v' }, 'Checked availability · Draft follow-up')]),
       el('div', { class: 'kv' }, [el('div', { class: 'k' }, 'Appointment'), el('div', { class: 'v' }, 'Astra Voice Demo · 30 minutes')]),
-      el('div', { class: 'kv' }, [el('div', { class: 'k' }, 'Next action'), el('div', { class: 'v' }, 'Schedule sales follow-up')]),
+      el('div', { class: 'kv is-next' }, [el('div', { class: 'k' }, 'Next action'), el('div', { class: 'v' }, 'Schedule sales follow-up')]),
     ]));
     outcomeHost.appendChild(el('button', {
       class: 'btn btn-ghost btn-sm',
