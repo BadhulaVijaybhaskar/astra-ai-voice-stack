@@ -88,16 +88,62 @@ describe('AI Employee Setup Journey', () => {
     };
     const payload = journey.buildJourneyPayload(db, db.tenants[0], { mode: 'demo', env: {} });
     assert.equal(payload.mode, 'demo');
+    assert.equal(payload.workspaceLabel, 'AstraConnect Workspace');
     assert.equal(payload.employee.demoPreview, true);
     assert.equal(payload.knowledge.demoPreview, true);
     assert.ok(payload.knowledge.knowledge.every((k) => k.demoPreview));
     assert.equal(payload.language.demoPreview, true);
+    assert.equal((payload.language.providers || []).length, 0);
     assert.equal(payload.routing.demoPreview, true);
+    assert.match(String(payload.routing.businessNumber.e164), /918065353938/);
+    assert.doesNotMatch(String(payload.routing.businessNumber.e164), /4718/);
     assert.equal(payload.call.demoPreview, true);
+    assert.equal(payload.call.participant.name, 'Demo Caller');
+    assert.doesNotMatch(JSON.stringify(payload.call), /Arjun/);
     assert.ok(payload.call.transcript.every((t) => t.demoPreview));
     assert.equal(payload.outcome.demoPreview, true);
     assert.equal(payload.next.demoPreview, true);
-    assert.match(String(payload.next.disclaimer || ''), /demo/i);
+    assert.equal((payload.next.metrics || []).length, 0);
+    assert.doesNotMatch(JSON.stringify(payload.next), /"128"|46%|"38"|Ananya/);
+    assert.match(String(payload.next.disclaimer || ''), /DEMO PREVIEW/i);
+    assert.ok(payload.paths && payload.paths.configure && payload.paths.demonstrate);
+  });
+
+  it('LIVE never invents fake DID or Connected call state', () => {
+    const db = {
+      tenants: [{ id: 't1', name: 'T' }],
+      employees: [{
+        id: 'emp_maya',
+        tenantId: 't1',
+        name: 'Maya',
+        role: 'Lead Qualifier',
+        status: 'READY',
+        channel: 'instant_lead',
+        description: 'Qualify new enquiries.',
+        agentId: 'ag_1',
+        knowledgeIds: [],
+        outcomes: [],
+        actions: [],
+        voice: { language: 'en-IN' },
+        phoneNumberId: null,
+      }],
+      agents: [{ id: 'ag_1', tenantId: 't1', name: 'Maya', persona: 'You are Maya.', greeting: 'Hello' }],
+      workflows: [],
+      knowledgeEntries: [],
+      phoneNumbers: [],
+      calls: [],
+      leads: [],
+    };
+    const payload = journey.buildJourneyPayload(db, db.tenants[0], { mode: 'live' });
+    assert.equal(payload.mode, 'live');
+    assert.equal(payload.call.status, 'Ready');
+    assert.equal(payload.call.demoPreview, false);
+    assert.equal((payload.call.transcript || []).length, 0);
+    assert.equal(payload.routing.businessNumber.unassigned, true);
+    assert.equal(payload.routing.businessNumber.e164, null);
+    assert.match(String(payload.routing.businessNumber.preferredDid), /918065353938/);
+    assert.equal((payload.language.providers || []).length, 0);
+    assert.ok((payload.language.advancedProviders || []).length > 0);
   });
 
   it('Cal.com Connected when CALCOM_API_KEY set, without illustrative note', () => {

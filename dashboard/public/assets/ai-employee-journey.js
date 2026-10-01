@@ -22,12 +22,14 @@
     payload: null,
     step: 'employee',
     mode: 'live',
+    path: 'configure', // configure | demonstrate
     dirtyPrompt: null,
     talk: null,
     voicePlaying: false,
     voiceProgress: 0,
     voiceTimer: null,
     selectedVoiceId: 'maya',
+    autoStartTalk: false,
   };
 
   function stepIndex(id) {
@@ -90,13 +92,60 @@
 
   function demoBadge(show) {
     if (!show) return null;
-    return el('span', { class: 'journey-demo-badge' }, 'Demo preview');
+    return el('span', { class: 'journey-demo-badge' }, 'DEMO PREVIEW');
   }
 
   function chromeLabel() {
-    return JourneyState.mode === 'demo'
-      ? 'Astra Voice · workspace (sample data)'
-      : 'Astra Voice · live workspace';
+    // Global chrome: AstraConnect Workspace. Demo adds DEMO PREVIEW badge separately.
+    return 'AstraConnect Workspace';
+  }
+
+  function pathCtas(data) {
+    return el('div', { class: 'journey-path-ctas' }, [
+      el('button', {
+        class: 'journey-cta journey-cta-configure'
+          + (JourneyState.path === 'configure' && JourneyState.mode === 'live' ? ' is-on' : ''),
+        type: 'button',
+        onclick: () => startConfigure(),
+      }, [
+        el('strong', {}, 'Configure Maya'),
+        el('span', {}, '7-step setup with Live workspace data'),
+      ]),
+      el('button', {
+        class: 'journey-cta journey-cta-live'
+          + (JourneyState.path === 'demonstrate' ? ' is-on' : ''),
+        type: 'button',
+        onclick: () => startLiveDemo(),
+      }, [
+        el('strong', {}, 'Run Live Demo'),
+        el('span', {}, 'Skip config · Live Talk → outcome → next action'),
+      ]),
+    ]);
+  }
+
+  async function startConfigure() {
+    JourneyState.path = 'configure';
+    JourneyState.mode = 'live';
+    JourneyState.autoStartTalk = false;
+    JourneyState.step = 'employee';
+    stopTalk();
+    stopVoicePreview();
+    saveLocal({ path: 'configure', mode: 'live', step: 'employee' });
+    try { await saveJourney({ mode: 'live', step: 'employee' }); } catch (_) {}
+    toast('Configure Maya · Live workspace.', 'ok');
+    await refresh();
+  }
+
+  async function startLiveDemo() {
+    JourneyState.path = 'demonstrate';
+    JourneyState.mode = 'live';
+    JourneyState.autoStartTalk = true;
+    JourneyState.step = 'call';
+    stopVoicePreview();
+    saveLocal({ path: 'demonstrate', mode: 'live', step: 'call' });
+    try { await saveJourney({ mode: 'live', step: 'call' }); } catch (_) {}
+    toast('Run Live Demo · jumping to Live conversation.', 'ok');
+    await refresh();
   }
 
   async function fetchJourney(opts) {
@@ -165,6 +214,7 @@
     const e = data.employee || {};
     if (e.empty) {
       return el('div', { class: 'journey-body' }, [
+        pathCtas(data),
         el('div', { class: 'journey-empty' }, [
           el('p', {}, e.message || 'No employee found.'),
           el('a', { class: 'btn btn-primary', href: '#/employees?create=1', style: 'margin-top:12px' }, 'Create employee'),
@@ -174,6 +224,7 @@
     const name = e.name || 'Employee';
     const ready = e.readiness || {};
     return el('div', { class: 'journey-body' }, [
+      pathCtas(data),
       el('div', { class: 'journey-profile' }, [
         el('div', { class: 'journey-avatar' }, initials(name)),
         el('div', { class: 'meta' }, [
@@ -441,25 +492,32 @@
 
     const draftControls = L.demoPreview ? null : el('div', { class: 'journey-select-row' }, [
       el('label', {}, [
-        'Provider',
+        'Voice draft',
         el('select', { id: 'journeyProvider' }, [
-          el('option', { value: 'dograh' }, 'Dograh Managed'),
-          el('option', { value: 'deepgram' }, 'Deepgram Aura'),
-          el('option', { value: 'sarvam' }, 'Sarvam'),
-          el('option', { value: 'rumik' }, 'Rumik'),
+          el('option', { value: 'managed' }, 'Astra Auto (managed)'),
+          el('option', { value: 'custom' }, 'Custom draft (advanced)'),
         ]),
       ]),
       el('button', {
         class: 'btn btn-ghost btn-sm',
         type: 'button',
         onclick: async () => {
-          const provider = (document.getElementById('journeyProvider') || {}).value || 'dograh';
+          const choice = (document.getElementById('journeyProvider') || {}).value || 'managed';
+          const provider = choice === 'managed' ? 'dograh' : 'rumik';
           try {
             await api('/api/voice/draft-prefs', {
               method: 'PUT',
-              body: { voice_mode: provider === 'dograh' ? 'dograh_managed' : 'byok', provider: provider, apply_live: false },
+              body: {
+                voice_mode: choice === 'managed' ? 'dograh_managed' : 'byok',
+                provider: provider,
+                apply_live: false,
+              },
             });
-            await saveJourney({ mode: 'live', step: 'language', voiceDraft: { provider: provider, apply_live: false } });
+            await saveJourney({
+              mode: 'live',
+              step: 'language',
+              voiceDraft: { provider: provider, apply_live: false, label: choice === 'managed' ? 'Astra Auto' : 'Custom draft' },
+            });
             toast('Voice draft saved. Maya production voice unchanged.', 'ok');
           } catch (err) {
             toast(err.message || 'Could not save voice draft.', 'err');
@@ -529,7 +587,10 @@
           el('div', { class: 'ico', html: icon('routing') }),
           el('div', {}, [
             el('div', { class: 'label' }, 'Business number'),
-            el('div', { class: 'value' }, (num.e164 || '-') + (num.direction ? (' · ' + num.direction) : '')),
+            el('div', { class: 'value' },
+              num.e164
+                ? ((num.e164 || '-') + (num.direction ? (' · ' + num.direction) : ''))
+                : (num.note || ('Unassigned · prefer ' + (num.preferredDid || '+918065353938')))),
           ]),
         ]),
         el('div', { class: 'journey-routing-row' }, [
@@ -591,12 +652,17 @@
 
   function renderCall(data) {
     const c = data.call || {};
-    const initialStatus = c.demoPreview ? 'Connected' : 'Ready';
+    // Live never pretends Connected. Demo preview may show illustrative Connected.
+    const initialStatus = c.demoPreview
+      ? (c.status || 'Connected')
+      : ((JourneyState.talk && JourneyState.talk.running) ? 'Connected' : (c.status || 'Ready'));
     const statusEl = el('span', {
       class: 'journey-pill',
       'data-status': statusKey(initialStatus),
     }, initialStatus);
-    const timerEl = el('span', {}, c.timer || '00:00');
+    const timerEl = el('span', {}, (JourneyState.talk && JourneyState.talk.running)
+      ? (c.timer || '00:00')
+      : (c.demoPreview ? (c.timer || '00:00') : '00:00'));
     function setCallStatus(s) {
       statusEl.textContent = s;
       statusEl.setAttribute('data-status', statusKey(s));
@@ -628,66 +694,96 @@
       wave.appendChild(el('i', { style: 'height:' + h + '%' }));
     });
 
+    const toolChips = el('div', { class: 'journey-tool-chips' },
+      (c.toolChips || c.statuses || ['Listening', 'Speaking', 'Tool call']).slice(0, 5).map((chip) =>
+        el('span', { class: 'journey-tool-chip' }, chip)));
+
+    async function beginLiveCall() {
+      if (c.demoPreview) return toast('DEMO PREVIEW call only. Use Run Live Demo or switch to Live.', 'info');
+      if (!c.agentId) return toast('Employee has no linked agent for realtime Talk.', 'err');
+      if (JourneyState.talk && JourneyState.talk.running) {
+        stopTalk();
+        setCallStatus('Completed');
+        startBtn.textContent = 'Start live call';
+        return;
+      }
+      await startRealtimeCall(c.agentId, {
+        onStatus: (s) => { setCallStatus(s); },
+        onTick: (sec) => {
+          const m = String(Math.floor(sec / 60)).padStart(2, '0');
+          const s2 = String(sec % 60).padStart(2, '0');
+          timerEl.textContent = m + ':' + s2;
+        },
+        onTranscript: (row) => {
+          if (!transcriptHost.querySelector('.journey-bubble')) transcriptHost.innerHTML = '';
+          const isAgent = row.role === 'agent';
+          transcriptHost.appendChild(el('div', {
+            class: 'journey-bubble' + (isAgent ? '' : ' is-caller'),
+          }, [
+            el('div', { class: 'who' }, (row.speaker || row.role || 'Speaker').toUpperCase()),
+            el('div', {}, row.text || ''),
+          ]));
+        },
+      });
+      startBtn.textContent = 'End call';
+    }
+
     const startBtn = el('button', {
       class: 'btn btn-primary btn-sm',
       type: 'button',
       disabled: !!c.demoPreview || !c.realtimeAvailable || !c.agentId,
-      onclick: async () => {
-        if (c.demoPreview) return toast('Demo preview call only. Switch to Live mode.', 'info');
-        if (!c.agentId) return toast('Employee has no linked agent for realtime Talk.', 'err');
-        if (JourneyState.talk && JourneyState.talk.running) {
-          stopTalk();
-          setCallStatus('Completed');
-          startBtn.textContent = 'Start live call';
-          return;
-        }
-        await startRealtimeCall(c.agentId, {
-          onStatus: (s) => { setCallStatus(s); },
-          onTick: (sec) => {
-            const m = String(Math.floor(sec / 60)).padStart(2, '0');
-            const s2 = String(sec % 60).padStart(2, '0');
-            timerEl.textContent = m + ':' + s2;
-          },
-          onTranscript: (row) => {
-            if (!transcriptHost.querySelector('.journey-bubble')) transcriptHost.innerHTML = '';
-            const isAgent = row.role === 'agent';
-            transcriptHost.appendChild(el('div', {
-              class: 'journey-bubble' + (isAgent ? '' : ' is-caller'),
-            }, [
-              el('div', { class: 'who' }, (row.speaker || row.role || 'Speaker').toUpperCase()),
-              el('div', {}, row.text || ''),
-            ]));
-          },
-        });
-        startBtn.textContent = 'End call';
-      },
-    }, c.demoPreview ? 'Demo preview only' : (c.realtimeAvailable ? 'Start live call' : 'Realtime unavailable'));
+      onclick: () => beginLiveCall(),
+    }, c.demoPreview
+      ? 'DEMO PREVIEW only'
+      : (JourneyState.talk && JourneyState.talk.running
+        ? 'End call'
+        : (c.realtimeAvailable ? 'Start live call' : 'Realtime unavailable')));
+
+    // Investor path: auto-start Live Talk once when entering demonstrate.
+    if (JourneyState.autoStartTalk && !c.demoPreview && c.realtimeAvailable && c.agentId
+      && !(JourneyState.talk && JourneyState.talk.running)) {
+      JourneyState.autoStartTalk = false;
+      setTimeout(() => { beginLiveCall().catch(() => {}); }, 80);
+    } else if (JourneyState.autoStartTalk && (!c.realtimeAvailable || !c.agentId)) {
+      JourneyState.autoStartTalk = false;
+      if (!c.agentId) toast('Link an agent to Maya before Run Live Demo.', 'err');
+      else toast('Realtime Talk is not configured yet (embed token / base URL).', 'info');
+    }
+
+    const callerName = (c.participant && c.participant.name)
+      || (c.demoPreview ? 'Demo Caller' : (c.employeeName || 'Live caller'));
 
     return el('div', { class: 'journey-body' }, [
       el('div', { class: 'journey-call-top' }, [
         el('div', {}, [
-          el('div', { class: 'journey-live-label' }, 'LIVE CALL'),
-          el('h4', { class: 'journey-caller-name' }, (c.participant && c.participant.name) || (c.demoPreview ? 'Arjun Mehta' : 'Caller')),
+          el('div', { class: 'journey-live-label' }, c.demoPreview ? 'DEMO PREVIEW CALL' : 'LIVE CALL'),
+          el('h4', { class: 'journey-caller-name' }, callerName),
           el('p', { class: 'journey-note', style: 'margin-top:2px;font-size:.875rem' },
             (c.participant && c.participant.context) || (c.note || 'Realtime Talk uses the employee agent when available.')),
         ]),
         el('div', { class: 'journey-call-badges' }, [
           statusEl,
           el('span', { class: 'journey-pill is-dark' }, [timerEl]),
-          el('span', { class: 'journey-pill is-outline' }, c.language || (c.demoPreview ? 'Telugu · Demo preview' : 'Live')),
+          el('span', { class: 'journey-pill is-outline' }, c.language || (c.demoPreview ? 'Telugu · DEMO PREVIEW' : 'Live')),
         ]),
       ]),
+      toolChips,
       wave,
       transcriptHost,
       el('div', { class: 'journey-regional-foot' }, [
         statusPill('Regional language', { outline: true }),
         el('span', {}, c.demoPreview
-          ? 'Conversation continues in Telugu + English · illustrative demo'
+          ? 'Illustrative Telugu + English · DEMO PREVIEW only'
           : 'Live mode never invents transcripts.'),
       ]),
       el('div', { class: 'flex gap-2', style: 'flex-wrap:wrap' }, [
         startBtn,
         el('a', { class: 'btn btn-ghost btn-sm', href: '#/talk' }, 'Open Talk'),
+        c.demoPreview ? null : el('button', {
+          class: 'btn btn-ghost btn-sm',
+          type: 'button',
+          onclick: () => goStep('outcome'),
+        }, 'View structured result'),
       ]),
     ]);
   }
@@ -896,15 +992,21 @@
 
   async function setMode(mode) {
     JourneyState.mode = mode === 'demo' ? 'demo' : 'live';
-    saveLocal({ mode: JourneyState.mode, step: JourneyState.step });
+    if (JourneyState.mode === 'demo') {
+      JourneyState.path = 'configure';
+      JourneyState.autoStartTalk = false;
+      stopTalk();
+    }
+    saveLocal({ mode: JourneyState.mode, step: JourneyState.step, path: JourneyState.path });
     try { await saveJourney({ mode: JourneyState.mode, step: JourneyState.step }); } catch (_) {}
     await refresh();
   }
 
   async function goStep(stepId) {
     stopVoicePreview();
+    if (stepId !== 'call') JourneyState.autoStartTalk = false;
     JourneyState.step = stepId;
-    saveLocal({ step: stepId, mode: JourneyState.mode });
+    saveLocal({ step: stepId, mode: JourneyState.mode, path: JourneyState.path });
     try { await saveJourney({ step: stepId, mode: JourneyState.mode }); } catch (_) {}
     await refresh();
   }
@@ -928,9 +1030,17 @@
   }
 
   function paint(root, data) {
-    stopTalk();
     const idx = stepIndex(JourneyState.step);
     const step = STEPS[idx];
+    const leavingCall = step.id !== 'call';
+    if (leavingCall) stopTalk();
+
+    function progressMark(i) {
+      if (i < idx) return '✓';
+      if (i === idx) return '●';
+      return '○';
+    }
+
     // Horizontal 01-07 progress rail above the Frame (not a left column).
     const progress = el('nav', {
       class: 'journey-progress',
@@ -938,15 +1048,24 @@
     }, STEPS.map((s, i) => el('button', {
       class: 'journey-progress-item'
         + (s.id === step.id ? ' is-active' : '')
-        + (i < idx ? ' is-done' : ''),
+        + (i < idx ? ' is-done' : '')
+        + (i > idx ? ' is-todo' : ''),
       type: 'button',
       'aria-current': s.id === step.id ? 'step' : undefined,
-      onclick: () => goStep(s.id),
+      onclick: () => {
+        if (JourneyState.path === 'demonstrate' && i < stepIndex('call')) {
+          // Allow back into configure from demonstrate.
+          JourneyState.path = 'configure';
+        }
+        goStep(s.id);
+      },
     }, [
       el('span', {
         class: 'journey-progress-dot',
+        'aria-hidden': 'true',
         html: i < idx ? icon('check') : '',
       }),
+      el('span', { class: 'journey-progress-mark', 'aria-hidden': 'true' }, progressMark(i)),
       el('span', { class: 'journey-progress-num' }, '0' + (i + 1)),
       el('span', { class: 'journey-progress-label' }, s.timeline),
     ])));
@@ -976,9 +1095,12 @@
       onclick: async () => {
         if (idx >= STEPS.length - 1) {
           JourneyState.step = 'employee';
+          JourneyState.path = 'configure';
           JourneyState.dirtyPrompt = null;
+          JourneyState.autoStartTalk = false;
           stopVoicePreview();
-          saveLocal({ step: 'employee', mode: JourneyState.mode });
+          stopTalk();
+          saveLocal({ step: 'employee', mode: JourneyState.mode, path: 'configure' });
           try { await saveJourney({ step: 'employee', mode: JourneyState.mode }); } catch (_) {}
           toast('Journey restarted.', 'ok');
           await refresh();
@@ -996,6 +1118,7 @@
         el('h2', {}, panelTitle(data)),
         el('div', { class: 'step-meta' }, 'Step ' + (idx + 1) + ' of 7'),
       ]),
+      step.id === 'employee' ? null : null,
       bodyHost,
       el('div', { class: 'journey-footer' }, [
         idx > 0 ? back : null,
@@ -1005,8 +1128,23 @@
 
     const frame = el('div', { class: 'journey-chrome' }, [
       el('div', { class: 'journey-chrome-bar' }, [
-        el('span', { class: 'chrome-title' }, chromeLabel()),
+        el('div', { class: 'chrome-title-row' }, [
+          el('span', { class: 'chrome-title' }, chromeLabel()),
+          JourneyState.mode === 'demo' ? demoBadge(true) : el('span', { class: 'journey-live-badge' }, 'LIVE'),
+        ]),
         el('div', { class: 'chrome-right' }, [
+          el('div', { class: 'journey-header-ctas' }, [
+            el('button', {
+              type: 'button',
+              class: 'journey-header-cta' + (JourneyState.path === 'configure' && JourneyState.mode === 'live' ? ' is-on' : ''),
+              onclick: () => startConfigure(),
+            }, 'Configure Maya'),
+            el('button', {
+              type: 'button',
+              class: 'journey-header-cta journey-header-cta-live' + (JourneyState.path === 'demonstrate' ? ' is-on' : ''),
+              onclick: () => startLiveDemo(),
+            }, 'Run Live Demo'),
+          ]),
           el('div', { class: 'journey-mode-mini' }, [
             el('button', {
               type: 'button',
@@ -1017,7 +1155,7 @@
               type: 'button',
               class: JourneyState.mode === 'demo' ? 'is-on' : '',
               onclick: () => setMode('demo'),
-            }, 'Demo preview'),
+            }, 'DEMO PREVIEW'),
           ]),
           el('span', { class: 'journey-traffic', 'aria-hidden': 'true' }, [
             el('span', { class: 'r' }), el('span', { class: 'y' }), el('span', { class: 'g' }),
@@ -1040,6 +1178,8 @@
     const local = loadLocal();
     JourneyState.step = local.step || 'employee';
     JourneyState.mode = local.mode || 'live';
+    JourneyState.path = local.path === 'demonstrate' ? 'demonstrate' : 'configure';
+    JourneyState.autoStartTalk = false;
     JourneyState.dirtyPrompt = null;
 
     // No extra page chrome: the Frame itself is the product surface.
