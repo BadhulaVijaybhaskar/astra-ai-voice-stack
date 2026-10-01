@@ -72,6 +72,29 @@ Settings and Employee Voice panels surface:
 
 Astra Auto is the long-term product abstraction. Dograh remains the engine underneath.
 
+## Voice personas (multilingual routing)
+
+AI Employee **voice identity** (e.g. Vaani) is separate from the TTS **engine** (Rumik / Sarvam / Deepgram).
+
+| Mode | Language list |
+| --- | --- |
+| **Astra Auto** | Persona `language_routes` across curated `ASTRA_SUPPORTED_LANGUAGES` |
+| **Provider = Rumik** | Only languages Rumik genuinely supports (`en-IN`) |
+
+Default Vaani routes (female Natural):
+
+| Language | Provider | Voice |
+| --- | --- | --- |
+| en-IN | Rumik | `speaker_2` / mulberry |
+| hi-IN | Sarvam | `priya` / bulbul:v3 |
+| te-IN | Sarvam | `neha` / bulbul:v3 |
+| ta-IN | Sarvam | `ishita` / bulbul:v3 |
+| kn/ml/mr/bn/gu/pa | Sarvam | mapped female Bulbul v3 |
+
+Fallbacks never send Indic text to an English-only engine. Maya has a persona map for Auto catalog only; **Maya production TTS / Dograh WF8 are not mutated**.
+
+`GET /api/voice/catalog` includes `voice_personas` and `persona_routes_debug` (no credentials).
+
 ## Production safety
 
 - Process default remains `TTS_PROVIDER=rumik` (or whatever is already set).

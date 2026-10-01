@@ -1169,9 +1169,39 @@ function employeeVoiceIdentity(emp) {
   }
   const profile = String(v.profileLabel || '');
   if (profile && !/standard\s+voice\s+profile/i.test(profile)) return profile;
-  if (/^maya$/i.test(name)) return 'Maya · Natural';
+  const personaId = String(v.persona_id || v.personaId || '').trim().toLowerCase();
+  if (personaId === 'vaani' || /^vaani$/i.test(name)) return 'Vaani · Natural';
+  if (personaId === 'maya' || /^maya$/i.test(name) || String(emp && emp.id) === 'emp_33eae8ef454680f0') {
+    return 'Maya · Natural';
+  }
   return name + ' · Natural';
 }
+
+/** Resolve product persona id for multilingual routing (Vaani / Maya). */
+function employeePersonaId(emp) {
+  const v = (emp && emp.voice) || {};
+  const explicit = String(v.persona_id || v.personaId || '').trim().toLowerCase();
+  if (explicit === 'vaani' || explicit === 'maya') return explicit;
+  const name = String((emp && emp.name) || '').trim().toLowerCase();
+  if (name === 'vaani' || name === 'maya') return name;
+  if (String(emp && emp.id) === 'emp_33eae8ef454680f0') return 'maya';
+  if (String(emp && emp.id) === 'emp_f85510806c9de004') return 'vaani';
+  return null;
+}
+
+/** Short chip labels for "Test {persona} in" multilingual preview. */
+const PERSONA_PREVIEW_LANG_LABELS = {
+  'en-IN': 'English',
+  'hi-IN': 'Hindi',
+  'te-IN': 'Telugu',
+  'ta-IN': 'Tamil',
+  'kn-IN': 'Kannada',
+  'ml-IN': 'Malayalam',
+  'mr-IN': 'Marathi',
+  'bn-IN': 'Bengali',
+  'gu-IN': 'Gujarati',
+  'pa-IN': 'Punjabi',
+};
 
 function demoOutcomeFixture(emp) {
   const who = (emp && emp.name) || 'Employee';
@@ -3117,10 +3147,34 @@ async function viewEmployeeStudio(root, id) {
 
     function languagesForSelection() {
       const curated = curatedLanguages();
-      if (selectedProvider === 'auto') return curated;
+      const personaId = employeePersonaId(emp);
+      const persona = personaId && catalog && Array.isArray(catalog.voice_personas)
+        ? catalog.voice_personas.find((p) => p.persona_id === personaId)
+        : null;
+
+      // Astra Auto: languages from persona language_routes (full Astra multilingual catalog).
+      // Do NOT restrict to Rumik just because Vaani English uses Rumik.
+      if (selectedProvider === 'auto' || voiceMode === 'astra_auto') {
+        if (persona && persona.language_routes) {
+          const routeIds = new Set(Object.keys(persona.language_routes));
+          return curated.filter((l) => routeIds.has(l.id)).map((l) => ({
+            ...l,
+            supported: true,
+            source: 'persona_route',
+          }));
+        }
+        return curated.map((l) => ({ ...l, supported: true }));
+      }
+
+      // Explicit provider mode (e.g. Rumik): only languages that provider genuinely supports.
       const block = providerBlocks().find((p) => p.provider === selectedProvider);
-      if (!block || !Array.isArray(block.languages)) return curated;
-      // Product languages only (curated). Merge support flags from provider block.
+      if (!block || !Array.isArray(block.languages)) {
+        // Fallback: Rumik / Deepgram English-only when blocks missing.
+        if (selectedProvider === 'rumik' || selectedProvider === 'deepgram') {
+          return curated.filter((l) => l.id === 'en-IN').map((l) => ({ ...l, supported: true }));
+        }
+        return curated;
+      }
       const byId = new Map(block.languages.map((l) => [l.id, l]));
       return curated.map((l) => {
         const hit = byId.get(l.id);
@@ -3130,6 +3184,14 @@ async function viewEmployeeStudio(root, id) {
           statusLabel: l.statusLabel || l.status || 'Available',
         };
       }).filter((l) => l.supported !== false);
+    }
+
+    function personaRouteForLanguage(langId) {
+      const personaId = employeePersonaId(emp);
+      if (!personaId || !catalog || !Array.isArray(catalog.voice_personas)) return null;
+      const persona = catalog.voice_personas.find((p) => p.persona_id === personaId);
+      if (!persona || !persona.language_routes) return null;
+      return persona.language_routes[langId] || null;
     }
 
     function voicesForSelection() {
@@ -3274,9 +3336,14 @@ async function viewEmployeeStudio(root, id) {
           onclick: () => {
             if (selectedLanguage === l.id) return;
             selectedLanguage = l.id;
-            const voices = voicesForSelection();
-            if (!voices.some((vv) => (vv.id || vv.voice_id) === selectedVoiceId) && voices[0]) {
-              selectedVoiceId = voices[0].id || voices[0].voice_id || '';
+            const route = personaRouteForLanguage(l.id);
+            if ((selectedProvider === 'auto' || voiceMode === 'astra_auto') && route && route.voice_id) {
+              selectedVoiceId = route.voice_id;
+            } else {
+              const voices = voicesForSelection();
+              if (!voices.some((vv) => (vv.id || vv.voice_id) === selectedVoiceId) && voices[0]) {
+                selectedVoiceId = voices[0].id || voices[0].voice_id || '';
+              }
             }
             renderCascade();
           },
@@ -3303,7 +3370,12 @@ async function viewEmployeeStudio(root, id) {
       };
       cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
         el('h4', { class: 't-h4' }, 'Language'),
-        el('p', { class: 'muted' }, 'Curated Astra languages only. Provider extras stay under Advanced.'),
+        el('p', { class: 'muted' },
+          (selectedProvider === 'auto' || voiceMode === 'astra_auto')
+            ? 'Astra Auto uses this employee’s voice persona across Astra-supported languages. Engines stay internal.'
+            : (selectedProvider === 'rumik'
+              ? 'Rumik mode shows only languages Rumik genuinely supports.'
+              : 'Languages for the selected provider. Provider extras stay under Advanced.')),
         langBar,
         el('div', { class: 'emp-lang-legend' }, [
           el('span', {}, 'Tested'),
@@ -3312,6 +3384,125 @@ async function viewEmployeeStudio(root, id) {
         ]),
         saveLang,
       ]));
+
+      // Multilingual persona preview: Test Vaani in [English ▶] … Does NOT change primary language.
+      const personaIdForPreview = employeePersonaId(emp);
+      const personaName = (personaIdForPreview === 'vaani') ? 'Vaani'
+        : (personaIdForPreview === 'maya') ? 'Maya'
+          : (emp.name || 'Employee');
+      if (personaIdForPreview || voiceMode === 'astra_auto' || selectedProvider === 'auto') {
+        const previewLangs = (selectedProvider === 'auto' || voiceMode === 'astra_auto')
+          ? languagesForSelection()
+          : curatedLanguages().filter((l) => {
+            if (selectedProvider === 'rumik' || selectedProvider === 'deepgram') return l.id === 'en-IN';
+            return true;
+          });
+        const multiBar = el('div', {
+          class: 'emp-lang-chips emp-persona-preview-chips',
+          role: 'group',
+          'aria-label': 'Test ' + personaName + ' in',
+        });
+        let multiBusy = null;
+        previewLangs.forEach((l) => {
+          const short = PERSONA_PREVIEW_LANG_LABELS[l.id] || l.nativeLabel || l.label || l.id;
+          const btn = el('button', {
+            class: 'emp-lang-chip emp-persona-preview-chip',
+            type: 'button',
+            title: 'Preview ' + personaName + ' in ' + short + ' without changing primary language',
+          }, [
+            el('span', { class: 'emp-lang-chip-label' }, short + ' ▶'),
+          ]);
+          btn.onclick = async () => {
+            if (multiBusy) return;
+            const route = personaRouteForLanguage(l.id);
+            const provider = (selectedProvider === 'auto' || voiceMode === 'astra_auto')
+              ? 'auto'
+              : selectedProvider;
+            if (provider === 'rumik' && l.id !== 'en-IN') {
+              toast('Language not supported by selected provider', 'err');
+              return;
+            }
+            if (provider === 'dograh') {
+              toast('Voice unavailable', 'err');
+              return;
+            }
+            const primaryBefore = (emp.voice && emp.voice.language) || emp.language || selectedLanguage;
+            multiBusy = l.id;
+            btn.classList.add('is-active');
+            btn.querySelector('.emp-lang-chip-label').textContent = short + ' …';
+            try {
+              const body = {
+                provider,
+                language: l.id,
+                employeeId: emp.id,
+                persona_id: personaIdForPreview || undefined,
+                voice_mode: voiceMode || 'astra_auto',
+                // Native-language text omitted: server fills persona preview copy.
+              };
+              if (route && route.voice_id && provider !== 'auto') {
+                body.voice_id = route.voice_id;
+              } else if (route && route.voice_id && provider === 'auto') {
+                // Auto resolves from persona routes; voice_id optional.
+              } else if (selectedVoiceId) {
+                body.voice_id = selectedVoiceId;
+              }
+              // When Auto, omit voice_id so persona router picks the mapped speaker.
+              if (provider === 'auto') delete body.voice_id;
+
+              const res = await api('/api/voice/preview', {
+                method: 'POST',
+                timeoutMs: 45000,
+                body,
+              });
+              // Primary language must remain unchanged by multilingual preview.
+              if (emp.voice && primaryBefore && emp.voice.language !== primaryBefore) {
+                emp.voice.language = primaryBefore;
+              }
+              if (!res || typeof res.blob !== 'function' || !res.ok) {
+                throw Object.assign(new Error('Audio generation failed'), {
+                  data: { code: 'audio_generation_failed' },
+                  status: res && res.status,
+                });
+              }
+              const ct = String(res.headers.get('content-type') || '').split(';')[0].trim();
+              if (!ct || ct.indexOf('audio/') !== 0) {
+                throw Object.assign(new Error('Audio generation failed'), {
+                  data: { code: 'audio_generation_failed' },
+                });
+              }
+              const blob = await res.blob();
+              if (!blob || !blob.size) {
+                throw Object.assign(new Error('Audio generation failed'), {
+                  data: { code: 'audio_generation_failed' },
+                });
+              }
+              const url = URL.createObjectURL(blob);
+              const audio = new Audio(url);
+              audio.onended = () => { try { URL.revokeObjectURL(url); } catch (_) {} };
+              await audio.play();
+              toast('Playing ' + personaName + ' · ' + short + ' · Primary language unchanged', 'ok');
+            } catch (e) {
+              const code = (e && e.data && (e.data.code || e.data.category)) || e.code || '';
+              const msg = code === 'needs_funding' ? 'Preview disabled — funding required'
+                : code === 'provider_language_unsupported' ? 'Language not supported by selected provider'
+                  : (e && e.message) || 'Audio generation failed';
+              toast(msg, 'err');
+            } finally {
+              multiBusy = null;
+              btn.classList.remove('is-active');
+              btn.querySelector('.emp-lang-chip-label').textContent = short + ' ▶';
+            }
+          };
+          multiBar.appendChild(btn);
+        });
+        cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-bottom:14px' }, [
+          el('h4', { class: 't-h4' }, 'Test ' + personaName + ' in'),
+          el('p', { class: 'muted' },
+            'Preview the same voice identity in another language. Does not change the employee’s primary language ('
+            + (PERSONA_PREVIEW_LANG_LABELS[selectedLanguage] || selectedLanguage) + ').'),
+          multiBar,
+        ]));
+      }
 
       // 4. Filtered voice
       const voices = voicesForSelection();
@@ -3410,15 +3601,24 @@ async function viewEmployeeStudio(root, id) {
         if (previewBtn.dataset.busy === '1') return;
 
         const provider = selectedProvider === 'auto' ? 'auto' : selectedProvider;
-        const voice_id = String(selectedVoiceId || '').trim();
         const language = String(selectedLanguage || '').trim();
-        if (!voice_id) {
+        // Astra Auto: omit voice_id so persona language_routes pick the mapped speaker.
+        let voice_id = String(selectedVoiceId || '').trim();
+        if (provider === 'auto') {
+          const route = personaRouteForLanguage(language);
+          voice_id = route && route.voice_id ? route.voice_id : voice_id;
+        }
+        if (!voice_id && provider !== 'auto') {
           toast('Voice unavailable', 'err');
           return;
         }
         // Never silent Maya fallback. Preview uses the currently selected chips.
         if (provider === 'dograh') {
           toast('Voice unavailable', 'err');
+          return;
+        }
+        if (provider === 'rumik' && language && language !== 'en-IN') {
+          toast('Language not supported by selected provider', 'err');
           return;
         }
 
@@ -3428,16 +3628,22 @@ async function viewEmployeeStudio(root, id) {
         stopPreviewPlayback();
 
         try {
+          const body = {
+            provider,
+            language,
+            employeeId: emp.id,
+            persona_id: employeePersonaId(emp) || undefined,
+            voice_mode: voiceMode || 'astra_auto',
+            text: 'Hello, this is a preview from Astra Voice.',
+          };
+          if (voice_id) body.voice_id = voice_id;
+          if (provider === 'auto' && !voice_id) {
+            // Server resolves from persona language_routes.
+          }
           const res = await api('/api/voice/preview', {
             method: 'POST',
             timeoutMs: 45000,
-            body: {
-              provider,
-              voice_id,
-              language,
-              text: 'Hello, this is a preview from Astra Voice.',
-              employeeId: emp.id,
-            },
+            body,
           });
           if (!res || typeof res.blob !== 'function') {
             throw Object.assign(new Error('Audio generation failed'), {
@@ -3564,7 +3770,9 @@ async function viewEmployeeStudio(root, id) {
       cascadeHost.appendChild(el('div', { class: 'emp-panel', style: 'margin-top:16px' }, [
         el('h4', { class: 't-h4' }, 'Voice'),
         el('p', { class: 'muted' },
-          'Selected · ' + employeeVoiceIdentity(emp) + ' · Draft voice · Not active'),
+          'Voice: ' + employeeVoiceIdentity(emp)
+          + ' · Mode: ' + ((modes.find((m) => m.id === voiceMode) || {}).label || voiceMode)
+          + ' · Draft voice · Not active'),
         field('Voice', voiceSel),
         el('div', { class: 'flex gap-2 items-center', style: 'margin:10px 0;flex-wrap:wrap' }, [
           el('label', { class: 'muted' }, 'Speed'),
@@ -3579,6 +3787,25 @@ async function viewEmployeeStudio(root, id) {
             'Preview and Activate disabled · ' + (meta.state_label || 'Unavailable'))
           : null,
       ]));
+
+      // Advanced: persona route debug (provider stays internal branding for ops).
+      const personaIdDbg = employeePersonaId(emp);
+      const dbgRoutes = (catalog && catalog.persona_routes_debug && personaIdDbg)
+        ? (catalog.persona_routes_debug[personaIdDbg] || [])
+        : [];
+      if (dbgRoutes.length && !isInvestorDemo()) {
+        const advRoutes = el('details', { class: 'emp-panel', style: 'margin-top:14px' });
+        advRoutes.appendChild(el('summary', { class: 't-h4', style: 'cursor:pointer' }, 'Advanced · Persona routes'));
+        advRoutes.appendChild(el('p', { class: 'muted' },
+          'Internal Astra Voice routing for ' + employeeVoiceIdentity(emp)
+          + '. Customer identity stays the persona. Engines are not customer-facing labels.'));
+        const list = el('ul', { class: 'emp-persona-route-list' });
+        dbgRoutes.forEach((r) => {
+          list.appendChild(el('li', {}, r.summary || (r.language + ' → ' + r.provider + ' / ' + r.voice_id)));
+        });
+        advRoutes.appendChild(list);
+        cascadeHost.appendChild(advRoutes);
+      }
 
       // Advanced AI Settings (LLM / Transcriber / Embedding) — employee scoped
       const adv = el('div', { class: 'emp-panel', style: 'margin-top:18px' });

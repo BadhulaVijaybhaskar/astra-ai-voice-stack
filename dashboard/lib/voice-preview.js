@@ -13,6 +13,7 @@
 const providers = require('./providers');
 const voiceCatalog = require('./tts-voice-catalog');
 const unified = require('./voice-catalog');
+const personaRouter = require('./voice-persona-router');
 
 const DEFAULT_PREVIEW_TEXT = 'Hello, this is a preview from Astra Voice.';
 const PREVIEW_MAX_TEXT = 500;
@@ -58,8 +59,20 @@ function normalizeProviderId(raw) {
 /**
  * Auto picks an explicit previewable TTS. Never silently uses process-default
  * Maya / Rumik without naming the provider in the response.
+ *
+ * When a persona is known, prefer persona language_routes (Astra Auto) so
+ * Indic languages route to Sarvam instead of inventing Rumik multilingual.
  */
-function resolveAutoProvider(voiceId, language) {
+function resolveAutoProvider(voiceId, language, opts = {}) {
+  const personaId = opts.personaId || null;
+  const persona = opts.persona || (personaId ? personaRouter.getPersona(personaId) : null);
+  if (persona) {
+    const resolved = personaRouter.resolvePersonaRoute(persona, language, 'astra_auto');
+    if (resolved.ok && resolved.route && resolved.route.provider) {
+      const state = unified.resolveProviderState(resolved.route.provider);
+      if (state.can_preview) return resolved.route.provider;
+    }
+  }
   if (voiceId) {
     for (const pid of ['deepgram', 'sarvam', 'rumik']) {
       const hit = voiceCatalog.findVoice(pid, voiceId);
@@ -68,6 +81,12 @@ function resolveAutoProvider(voiceId, language) {
         if (state.can_preview) return pid;
       }
     }
+  }
+  const lang = personaRouter.normalizeLanguageCode(language) || language;
+  // Indic / non-English: prefer Sarvam. Never pick Rumik for Hindi/Telugu/etc.
+  if (lang && !personaRouter.isEnglishLanguage(lang)) {
+    if (unified.resolveProviderState('sarvam').can_preview) return 'sarvam';
+    return null;
   }
   const prefer = ['deepgram', 'rumik', 'sarvam'];
   for (const pid of prefer) {
@@ -193,15 +212,34 @@ function buildSynthesizeOpts(providerId, voiceId, language, text) {
  * Optional asJsonUrl: when true and a public URL is available, callers may
  * prefer { audio_url, mime_type }. This path always returns bytes today.
  */
+async function synthesizeWithProvider(provider, voiceId, language, text) {
+  gateProvider(provider);
+  const opts = buildSynthesizeOpts(provider, voiceId, language, text);
+  let adapter;
+  try {
+    adapter = providers.get('tts', provider);
+  } catch (e) {
+    throw mapUpstreamPreviewError(e, provider);
+  }
+  let out;
+  try {
+    out = await adapter.synthesize(opts);
+  } catch (e) {
+    throw mapUpstreamPreviewError(e, provider);
+  }
+  if (!out || !out.buffer || !out.buffer.length) {
+    throw new PreviewError(
+      'Audio generation failed',
+      502,
+      'audio_generation_failed',
+      { provider, reason: 'empty_buffer' },
+    );
+  }
+  return out;
+}
+
 async function synthesizePreview(input = {}) {
-  const text = String(input.text != null ? input.text : DEFAULT_PREVIEW_TEXT).slice(0, PREVIEW_MAX_TEXT);
-  if (!text.trim()) throw new PreviewError('text is required', 422, 'no_text');
-
-  let provider = normalizeProviderId(input.provider);
-  const voiceId = String(input.voice_id || input.voiceId || input.speaker || '').trim();
-  const language = String(input.language || input.language_code || '').trim();
   const employeeId = String(input.employeeId || input.employee_id || '').trim();
-
   let employee = null;
   if (employeeId) {
     if (typeof input.findEmployee !== 'function') {
@@ -214,19 +252,95 @@ async function synthesizePreview(input = {}) {
   }
 
   // Employee isolation: never silently substitute Maya / another employee voice.
-  // Selected provider/language/voice from the request win. EmployeeId only gates
-  // tenant ownership. Language may fill from the employee when omitted.
-  const effectiveLanguage = language
-    || (employee && employee.voice && employee.voice.language)
+  // Preview language override must NOT mutate employee.primaryLanguage / voice.language.
+  const primaryLanguage = (employee && employee.voice && employee.voice.language)
     || (employee && employee.language)
     || '';
+  const language = String(input.language || input.language_code || '').trim();
+  const effectiveLanguage = language || primaryLanguage || '';
+  // Snapshot for callers / tests proving preview isolation.
+  const primaryLanguageBefore = primaryLanguage;
+
+  const personaId = String(
+    input.persona_id || input.personaId
+      || personaRouter.resolvePersonaId(employee)
+      || '',
+  ).trim().toLowerCase() || null;
+  const persona = personaId ? personaRouter.getPersona(personaId) : null;
+
+  let provider = normalizeProviderId(input.provider);
+  let voiceId = String(input.voice_id || input.voiceId || input.speaker || '').trim();
+  let routeMeta = null;
+
+  // Explicit Rumik (or other provider) mode: block languages the engine cannot speak.
+  if (provider && provider !== 'auto' && provider !== 'dograh' && effectiveLanguage) {
+    if (!personaRouter.providerSupportsLanguage(provider, effectiveLanguage)
+      && !(provider === 'sarvam' && voiceCatalog.isAstraSupportedLanguage(
+        personaRouter.normalizeLanguageCode(effectiveLanguage),
+      ))) {
+      throw new PreviewError(
+        'Language not supported by selected provider',
+        422,
+        'provider_language_unsupported',
+        {
+          provider,
+          language: personaRouter.normalizeLanguageCode(effectiveLanguage) || effectiveLanguage,
+          supported: (personaRouter.PROVIDER_SUPPORTED_LANGUAGES[provider] || []).slice(),
+        },
+      );
+    }
+  }
+
+  // Astra Auto / auto: resolve persona language_routes when available.
+  // Explicit provider (e.g. Rumik) wins over Auto and must not be rewritten.
+  const usePersonaAuto = persona && (!provider || provider === 'auto');
+
+  if (usePersonaAuto) {
+    const resolved = personaRouter.resolvePersonaRoute(
+      persona,
+      effectiveLanguage || 'en-IN',
+      'astra_auto',
+    );
+    if (!resolved.ok) {
+      throw new PreviewError(
+        resolved.error || 'Voice unavailable',
+        422,
+        resolved.code || 'voice_unavailable',
+        {
+          persona_id: personaId,
+          language: effectiveLanguage,
+          reason: resolved.code,
+        },
+      );
+    }
+    routeMeta = resolved;
+    provider = resolved.route.provider;
+    // Prefer persona-mapped speaker. Only keep caller voice_id when it belongs
+    // to the resolved provider (avoids Rumik speaker_2 leaking into Sarvam Indic).
+    if (!voiceId) {
+      voiceId = resolved.route.voice_id;
+    } else {
+      const known = voiceCatalog.findVoice(provider, voiceId);
+      if (!known) voiceId = resolved.route.voice_id;
+    }
+  }
+
+  const displayName = (persona && persona.display_name)
+    || (employee && employee.name)
+    || 'Astra';
+  const text = String(
+    input.text != null
+      ? input.text
+      : personaRouter.getPreviewText(effectiveLanguage || 'en-IN', displayName),
+  ).slice(0, PREVIEW_MAX_TEXT);
+  if (!text.trim()) throw new PreviewError('text is required', 422, 'no_text');
 
   if (!provider) {
     throw new PreviewError('provider is required', 422, 'provider_required');
   }
 
   if (provider === 'auto') {
-    provider = resolveAutoProvider(voiceId, effectiveLanguage);
+    provider = resolveAutoProvider(voiceId, effectiveLanguage, { personaId, persona });
     if (!provider) {
       throw new PreviewError(
         'Voice unavailable',
@@ -234,6 +348,10 @@ async function synthesizePreview(input = {}) {
         'voice_unavailable',
         { reason: 'no_previewable_provider' },
       );
+    }
+    if (persona && !voiceId) {
+      const resolved = personaRouter.resolvePersonaRoute(persona, effectiveLanguage, 'astra_auto');
+      if (resolved.ok) voiceId = resolved.route.voice_id;
     }
   }
 
@@ -256,40 +374,55 @@ async function synthesizePreview(input = {}) {
     );
   }
 
-  gateProvider(provider);
-
   if (!voiceId) {
     throw new PreviewError('Voice unavailable', 422, 'voice_unavailable', { reason: 'voice_id_required' });
   }
 
-  const opts = buildSynthesizeOpts(provider, voiceId, effectiveLanguage, text);
-
-  let adapter;
-  try {
-    adapter = providers.get('tts', provider);
-  } catch (e) {
-    throw mapUpstreamPreviewError(e, provider);
-  }
-
   let out;
+  let usedFallback = false;
+  let fallbackRoute = null;
   try {
-    out = await adapter.synthesize(opts);
+    out = await synthesizeWithProvider(provider, voiceId, effectiveLanguage, text);
   } catch (e) {
-    throw mapUpstreamPreviewError(e, provider);
-  }
-
-  if (!out || !out.buffer || !out.buffer.length) {
-    throw new PreviewError(
-      'Audio generation failed',
-      502,
-      'audio_generation_failed',
-      { provider, reason: 'empty_buffer' },
-    );
+    // Attempt compatible fallback. Never English-only engine for Indic.
+    if (persona && effectiveLanguage) {
+      const fb = personaRouter.resolveFallbackRoute(persona, effectiveLanguage, provider, {
+        failedVoiceId: voiceId,
+      });
+      if (fb.ok && fb.route
+        && !(personaRouter.isEnglishOnlyProvider(fb.route.provider)
+          && !personaRouter.isEnglishLanguage(effectiveLanguage))) {
+        try {
+          out = await synthesizeWithProvider(
+            fb.route.provider,
+            fb.route.voice_id,
+            effectiveLanguage,
+            text,
+          );
+          usedFallback = true;
+          fallbackRoute = fb.route;
+          provider = fb.route.provider;
+          voiceId = fb.route.voice_id;
+        } catch (e2) {
+          throw e2 instanceof PreviewError ? e2 : mapUpstreamPreviewError(e2, provider);
+        }
+      } else {
+        throw e instanceof PreviewError ? e : mapUpstreamPreviewError(e, provider);
+      }
+    } else {
+      throw e instanceof PreviewError ? e : mapUpstreamPreviewError(e, provider);
+    }
   }
 
   const contentType = String(out.contentType || sniffContentType(out.buffer) || 'audio/wav')
     .split(';')[0]
     .trim() || 'audio/wav';
+
+  // Prove preview did not mutate employee language.
+  if (employee && employee.voice && primaryLanguageBefore
+    && employee.voice.language !== primaryLanguageBefore) {
+    employee.voice.language = primaryLanguageBefore;
+  }
 
   return {
     buffer: out.buffer,
@@ -298,7 +431,14 @@ async function synthesizePreview(input = {}) {
     chars: out.chars || text.length,
     provider,
     voice_id: voiceId,
-    language: effectiveLanguage || opts.language || '',
+    language: effectiveLanguage || '',
+    primaryLanguage: primaryLanguageBefore || null,
+    previewLanguage: effectiveLanguage || '',
+    primaryLanguageMutated: false,
+    persona_id: personaId,
+    route: routeMeta && routeMeta.route ? routeMeta.route : null,
+    used_fallback: usedFallback,
+    fallback_route: fallbackRoute,
     employeeId: employee ? employee.id : null,
     credits: out.credits || '',
   };
@@ -316,6 +456,11 @@ function publicPreviewError(err) {
     audio_generation_failed: 'Audio generation failed',
     network_error: 'Network error',
     playback_blocked: 'Browser playback blocked',
+    provider_language_unsupported: 'Language not supported by selected provider',
+    unsupported_language: 'Unsupported language',
+    persona_route_missing: 'Voice unavailable',
+    unknown_persona: 'Voice unavailable',
+    fallback_unavailable: 'Voice unavailable',
   };
   return {
     status,
@@ -341,4 +486,5 @@ module.exports = {
   gateProvider,
   mapUpstreamPreviewError,
   buildSynthesizeOpts,
+  synthesizeWithProvider,
 };

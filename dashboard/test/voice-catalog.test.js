@@ -105,6 +105,17 @@ test('GET unified catalog includes dograh managed + deepgram + sarvam + rumik', 
     assert.ok(cat.discovery.sources.some((s) => s.includes('Dograh') || s.includes('fallback')));
     assert.equal(JSON.stringify(cat).includes('API_KEY'), false);
     assert.equal(JSON.stringify(cat).toLowerCase().includes('subscription'), false);
+
+    // Multilingual persona maps (Vaani / Maya). No credentials.
+    assert.ok(Array.isArray(cat.voice_personas));
+    const vaani = cat.voice_personas.find((p) => p.persona_id === 'vaani');
+    assert.ok(vaani);
+    assert.equal(vaani.display_name, 'Vaani');
+    assert.equal(vaani.language_routes['en-IN'].provider, 'rumik');
+    assert.equal(vaani.language_routes['hi-IN'].provider, 'sarvam');
+    assert.equal(vaani.language_routes['te-IN'].provider, 'sarvam');
+    assert.ok(Array.isArray(cat.persona_routes_debug.vaani));
+    assert.ok(cat.persona_routes_debug.vaani.some((r) => /Hindi → sarvam/i.test(r.summary)));
   } finally {
     if (prevBase === undefined) delete process.env.DOGRAH_BASE_URL; else process.env.DOGRAH_BASE_URL = prevBase;
     if (prevKey === undefined) delete process.env.DOGRAH_API_KEY; else process.env.DOGRAH_API_KEY = prevKey;
