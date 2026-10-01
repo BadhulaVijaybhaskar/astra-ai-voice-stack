@@ -607,6 +607,23 @@ function publicEmployee(row, db, opts = {}) {
     voiceTier: normalizeVoiceTier((row.voice && row.voice.tier) || DEFAULT_VOICE_TIER),
     assignedNumber: number,
     phoneConfig: phoneConfigSummary,
+    callbackRules: row.callbackRules && typeof row.callbackRules === 'object'
+      ? {
+        onBookingConfirmation: row.callbackRules.onBookingConfirmation !== false,
+        remindBeforeMinutes: Array.isArray(row.callbackRules.remindBeforeMinutes)
+          ? row.callbackRules.remindBeforeMinutes.slice(0, 8)
+          : [60, 1440],
+        customOffsetsMinutes: Array.isArray(row.callbackRules.customOffsetsMinutes)
+          ? row.callbackRules.customOffsetsMinutes.slice(0, 8)
+          : [],
+        timezone: String(row.callbackRules.timezone || 'Asia/Kolkata'),
+      }
+      : {
+        onBookingConfirmation: true,
+        remindBeforeMinutes: [60, 1440],
+        customOffsetsMinutes: [],
+        timezone: 'Asia/Kolkata',
+      },
     agentName: names.agentName,
     workflowName: names.workflowName,
     runtimeConfig: row.runtimeConfig ? {
@@ -837,6 +854,12 @@ function createEmployee(db, tenantId, input, actorUserId, opts = {}) {
       Array.isArray(b.outcomes) ? b.outcomes : template.outcomes.slice(),
     ),
     actions: normalizeActionsList(Array.isArray(b.actions) ? b.actions : []),
+    callbackRules: {
+      onBookingConfirmation: true,
+      remindBeforeMinutes: [60, 1440],
+      customOffsetsMinutes: [],
+      timezone: 'Asia/Kolkata',
+    },
     lastActiveAt: null,
     createdBy: actorUserId || null,
     createdAt: ts,
@@ -879,6 +902,24 @@ function updateEmployee(db, tenantId, id, patch) {
       return { ok: false, status: 422, error: 'actions must be an array', code: 'bad_actions' };
     }
     row.actions = normalizeActionsList(b.actions);
+  }
+  if (b.callbackRules !== undefined || b.callback_rules !== undefined) {
+    const src = b.callbackRules || b.callback_rules || {};
+    if (!src || typeof src !== 'object') {
+      return { ok: false, status: 422, error: 'callbackRules must be an object', code: 'bad_callback_rules' };
+    }
+    const remind = Array.isArray(src.remindBeforeMinutes)
+      ? src.remindBeforeMinutes.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0).slice(0, 8)
+      : (row.callbackRules && row.callbackRules.remindBeforeMinutes) || [60, 1440];
+    const custom = Array.isArray(src.customOffsetsMinutes)
+      ? src.customOffsetsMinutes.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0).slice(0, 8)
+      : (row.callbackRules && row.callbackRules.customOffsetsMinutes) || [];
+    row.callbackRules = {
+      onBookingConfirmation: src.onBookingConfirmation !== false,
+      remindBeforeMinutes: remind,
+      customOffsetsMinutes: custom,
+      timezone: String(src.timezone || (row.callbackRules && row.callbackRules.timezone) || 'Asia/Kolkata').slice(0, 64),
+    };
   }
 
   const refs = validateRefs(db, tenantId, b);

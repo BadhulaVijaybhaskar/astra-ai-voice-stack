@@ -167,9 +167,24 @@ Schema version 8 adds `leads` and `callJobs` for Instant Leads (Lead → CallJob
 - Phone Number assign via `employeeId` + Studio Assign Number tab (Phase 13). Campaigns attach Employee and enqueue CallJobs (Phase 14). Performance aggregates (Phase 15). Journey nav (Phase 16).
 - Customer UI never shows Dograh / VoBiz / Deepgram / Groq / Rumik terminology. See `docs/EMPLOYEES.md`, `docs/INSTRUCTIONS.md`, `docs/OUTCOMES.md`, `docs/LEADS.md`, `docs/TIMELINE.md`, `docs/CONVERSATIONS.md`, `docs/PHONE-NUMBERS.md`, `docs/CAMPAIGNS-ANALYTICS.md`, `docs/NAV-IA.md`.
 
+## Continuous Customer Context
+
+Persisted contacts + outbound follow-up jobs in `db.json` (no Supabase). See `docs/CUSTOMER-CONTEXT.md`.
+
+- `POST /api/contacts/resolve` E.164 normalize → find or create Contact + compact injection.
+- `GET /api/contacts`, `GET /api/contacts/:id`, `PATCH /api/contacts/:id`
+- `GET /api/contacts/:id/context` compact LLM injection (no transcripts).
+- `GET /api/contacts/:id/timeline` customer timeline (inbound, booked, follow-up, confirmation).
+- `POST /api/contacts/:id/handoff` Maya → Vaani (tenant-scoped).
+- `POST /api/contacts/:id/appointments` persist appointment; may schedule outbound jobs (no PSTN).
+- `POST /api/contacts/callback-request` natural-language when (Asia/Kolkata) → persisted job; verbal confirm only after persist.
+- `POST /api/contacts/end-of-call` transcript → summary → extraction → contact/jobs update.
+- `POST /api/contacts/events` event trigger engine.
+- `GET` / `POST /api/outbound-jobs`, `GET` / `PATCH /api/outbound-jobs/:id` (never auto-dial).
+
 ## Persistence collections
 
-Schema version 13 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, `campaignLeads`, `workflows`, `leads`, `callJobs`, and `employees`. Startup migration is additive (structured employee outcomes, `lead.employeeId`, `callJobs.employeeId`, `phoneNumbers.assignedEmployeeId`, `campaigns.employeeId`, Phone Number inbound greeting/hours, Employee `actions`, voice language normalize, tenant `includedEmployees` / `includedMinutes`). Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
+Schema version 16 includes `wallets`, `ledger`, `paymentIntents`, `supportTickets`, `supportMessages`, `auditEvents`, `presets`, `byonConnections`, `hvacJobs`, `hvacSettings`, `paymentEvents`, `demoLinks`, `callbackJobs`, `phoneNumbers`, `providerResources`, `calls`, `knowledgeEntries`, `integrationWebhooks`, `campaigns`, `campaignLeads`, `workflows`, `leads`, `callJobs`, `employees`, `contacts`, and `outboundJobs`. Startup migration is additive (structured employee outcomes, `lead.employeeId`, `callJobs.employeeId`, `phoneNumbers.assignedEmployeeId`, `campaigns.employeeId`, Phone Number inbound greeting/hours, Employee `actions` / `callbackRules` / `phoneConfig`, voice language normalize, tenant `includedEmployees` / `includedMinutes`, continuous customer context). Existing agents, usage, tenants, users, and sessions remain valid. New session and demo-link tokens are stored as SHA-256 hashes; legacy sessions continue to resolve during migration.
 
 The JSON store remains suitable for a single-process demo. Production must move these contracts to transactional PostgreSQL before accepting money. PayU success redirects must never credit a wallet. Only a verified, idempotent server callback may convert a payment intent into a ledger credit.
 

@@ -49,7 +49,7 @@ function addLedgerEntry(d, tenantId, amountPaise, type, reference, actorUserId, 
   return entry;
 }
 
-test('schema v15 migrates inbound config, actions, language, plan entitlements, runtimeConfig, phoneConfig', () => {
+test('schema v16 migrates inbound config, actions, language, plan entitlements, runtimeConfig, phoneConfig, contacts', () => {
   const migrated = core.migrateDb({
     schemaVersion: 12,
     tenants: [{ id: 't_a', name: 'A', plan: 'growth' }],
@@ -63,7 +63,9 @@ test('schema v15 migrates inbound config, actions, language, plan entitlements, 
       voice: { language: 'hindi', model: 'mulberry', speaker: 'speaker_1' },
     }],
   });
-  assert.equal(migrated.schemaVersion, 15);
+  assert.equal(migrated.schemaVersion, 16);
+  assert.ok(Array.isArray(migrated.contacts));
+  assert.ok(Array.isArray(migrated.outboundJobs));
   assert.equal(migrated.phoneNumbers[0].inboundGreeting, null);
   assert.equal(migrated.phoneNumbers[0].inboundHours.timezone, 'Asia/Kolkata');
   assert.equal(migrated.phoneNumbers[0].inboundHours.mode, 'always');
@@ -75,6 +77,8 @@ test('schema v15 migrates inbound config, actions, language, plan entitlements, 
   assert.equal(migrated.employees[0].runtimeConfig.draft, null);
   assert.ok(migrated.employees[0].phoneConfig);
   assert.equal(migrated.employees[0].phoneConfig.direction, 'none');
+  assert.ok(migrated.employees[0].callbackRules);
+  assert.equal(migrated.employees[0].callbackRules.timezone, 'Asia/Kolkata');
   assert.equal(migrated.tenants[0].includedNumbers, 3);
   assert.equal(migrated.tenants[0].includedEmployees, 10);
   assert.equal(migrated.tenants[0].includedMinutes, 1000);
