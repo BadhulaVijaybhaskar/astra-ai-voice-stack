@@ -73,10 +73,12 @@ services:
   "temperature": 0.6,
   "top_p": 0.95,
   "top_k": 50,
-  "full_response_aggregation": true
+  "full_response_aggregation": false
 }
 ```
 
 `mulberry` is the fast model and the right default for phone. `muga` is more
-expressive and costs roughly twice as much. `description` is a free-text voice
+expressive. Set `full_response_aggregation` to **false** so TTS can start on the
+first safe phrase while the LLM continues (sub-1000ms first-audio path). Sarvam
+Maya production uses `silence_time_s=0.2` in the overlay service factory.expressive and costs roughly twice as much. `description` is a free-text voice
 prompt, it is worth tuning by ear before shipping.

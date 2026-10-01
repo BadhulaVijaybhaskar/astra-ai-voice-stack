@@ -70,6 +70,9 @@ const aiEmployeeJourney = require('./lib/ai-employee-journey');
 const asrSanityGuard = require('./lib/asr-sanity-guard');
 const mayaConversationPolicy = require('./lib/maya-conversation-policy');
 const turnLatency = require('./lib/turn-latency');
+const llmStream = require('./lib/llm-stream');
+const voiceFastPath = require('./lib/voice-fast-path');
+const wf8NodeTrace = require('./lib/wf8-node-trace');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
@@ -930,6 +933,7 @@ async function apiWsConnect(req, res, ctx) {
 
 // POST /api/chat -> { text, finish, model, latency_ms } (Brain).
 // ASR sanity guard: garbage last-user turns never enter normal business dialogue.
+// Prefer /api/chat/stream for sub-1000ms first-audio (never wait llm_complete for TTS).
 async function apiChat(req, res, ctx) {
   const b = ctx.body || {};
   try {
@@ -954,21 +958,22 @@ async function apiChat(req, res, ctx) {
           confidence: guard.confidence,
         },
         llm_input_allowed: false,
+        turn_path: voiceFastPath.classifyTurnPath(lastText),
       });
     }
 
-    // Maya policy: booking intent must not be treated as end-of-dialogue by the brain alone.
     let system = String(b.system || '');
-    if (b.employeeId && mayaConversationPolicy.isMayaEmployee({ id: b.employeeId, name: b.employeeName })) {
-      system = mayaConversationPolicy.GLOBAL_PROMPT + (system ? ('\n\n' + system) : '');
-    } else if (b.applyMayaPolicy) {
-      system = mayaConversationPolicy.GLOBAL_PROMPT + (system ? ('\n\n' + system) : '');
+    const isMaya = (b.employeeId && mayaConversationPolicy.isMayaEmployee({ id: b.employeeId, name: b.employeeName }))
+      || !!b.applyMayaPolicy;
+    if (isMaya && !/CONVERSATION POLICY \(MANDATORY\)/.test(system)) {
+      const cached = voiceFastPath.getCachedStatic('maya_global_prompt', () => mayaConversationPolicy.GLOBAL_PROMPT);
+      system = cached.value + (system ? ('\n\n' + system) : '');
     }
 
+    const turnPath = voiceFastPath.classifyTurnPath(lastText);
     const llmStarted = Date.now();
     const selected = providers.resolveSelection('llm', { provider: b.provider, model: b.model });
     const out = await selected.adapter.chat({ messages: b.messages, system, model: selected.model });
-    // Rough token accounting for the usage view (4 chars ~= 1 token).
     const approxTokens = Math.ceil((out.text || '').length / 4);
     bumpUsage(ctx.tenant.id, 'llmTokens', approxTokens).catch(() => {});
     const { provider: _provider, ...safe } = out && typeof out === 'object' ? out : {};
@@ -981,7 +986,6 @@ async function apiChat(req, res, ctx) {
         source: 'browser_talk',
         llm_request_ms: llmStarted,
         llm_complete_ms: Date.now(),
-        // Providers that do not stream still mark first token ~= complete for evidence.
         llm_first_token_ms: b.llm_first_token_ms || (llmStarted + Math.max(1, (safe.latency_ms || 1) * 0.4)),
         llm: { provider: selected.adapter.id || selected.id, model: selected.model },
       });
@@ -991,9 +995,167 @@ async function apiChat(req, res, ctx) {
       asr_guard: { ok: true, action: 'accept', reasons: [] },
       llm_input_allowed: true,
       booking_intent: asrSanityGuard.isBookingOrScheduleIntent(lastText),
+      booking_ack: turnPath.ack,
+      turn_path: turnPath,
+      prefer_stream: true,
     });
   } catch (e) {
     handleProviderError(res, e);
+  }
+}
+
+/**
+ * POST /api/chat/stream — NDJSON brain stream for sub-1000ms first audio.
+ * Events: meta | first_token | first_phrase | delta | done | error
+ * Client MUST start TTS on first_phrase without waiting for done.
+ */
+async function apiChatStream(req, res, ctx) {
+  const b = ctx.body || {};
+  const messages = Array.isArray(b.messages) ? b.messages : [];
+  const lastUser = [...messages].reverse().find((m) => m && (m.role === 'user' || m.role === 'human'));
+  const lastText = lastUser ? String(lastUser.text || lastUser.content || '') : '';
+  const turnPath = voiceFastPath.classifyTurnPath(lastText);
+
+  res.writeHead(200, {
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Accel-Buffering': 'no',
+  });
+  const write = (obj) => {
+    try { res.write(JSON.stringify(obj) + '\n'); } catch (_) {}
+  };
+
+  const guard = asrSanityGuard.evaluateTranscript(lastText, {
+    confidence: b.asr_confidence != null ? b.asr_confidence : b.confidence,
+    stt: b.stt || asrSanityGuard.VALIDATED_MULTILINGUAL_STT,
+  });
+  if (guard.action === 'reject' || guard.action === 'clarify') {
+    const clarify = asrSanityGuard.clarificationPrompt(guard);
+    write({
+      type: 'first_phrase',
+      phrase: clarify,
+      at_ms: Date.now(),
+      asr_guard: true,
+    });
+    write({
+      type: 'done',
+      text: clarify,
+      finish: 'asr_guard',
+      latency_ms: 0,
+      llm_input_allowed: false,
+      booking_intent: false,
+      turn_path: turnPath,
+    });
+    return res.end();
+  }
+
+  let system = String(b.system || '');
+  const isMaya = (b.employeeId && mayaConversationPolicy.isMayaEmployee({ id: b.employeeId, name: b.employeeName }))
+    || !!b.applyMayaPolicy;
+  if (isMaya && !/CONVERSATION POLICY \(MANDATORY\)/.test(system)) {
+    const cached = voiceFastPath.getCachedStatic('maya_global_prompt', () => mayaConversationPolicy.GLOBAL_PROMPT);
+    system = cached.value + (system ? ('\n\n' + system) : '');
+  }
+
+  // Booking tool path: emit ack phrase immediately so TTS can start before Groq.
+  if (turnPath.path === 'tool' && turnPath.ack && turnPath.ack.text) {
+    write({
+      type: 'first_phrase',
+      phrase: turnPath.ack.text,
+      at_ms: Date.now(),
+      booking_ack: true,
+      language: turnPath.ack.language,
+    });
+    if (b.turn_id || b.record_latency) {
+      turnLatency.ingestTurnTiming({
+        turn_id: b.turn_id,
+        session_id: b.session_id,
+        employee_id: b.employeeId,
+        booking_ack: true,
+        tool_assisted: true,
+        tool_start_ms: Date.now(),
+        note: 'booking_ack_emitted_before_llm',
+      });
+    }
+  }
+
+  write({
+    type: 'meta',
+    turn_path: turnPath,
+    booking_intent: !!turnPath.ack,
+    model: providers.llm.model,
+    targets: voiceFastPath.latencyBudgets(),
+  });
+
+  const llmStarted = Date.now();
+  try {
+    const selected = providers.resolveSelection('llm', { provider: b.provider, model: b.model });
+    const adapter = selected.adapter;
+    const streamFn = typeof adapter.chatStream === 'function'
+      ? adapter.chatStream.bind(adapter)
+      : (opts) => llmStream.streamGroqChat({ ...opts, model: selected.model });
+
+    const out = await streamFn({
+      messages: b.messages,
+      system,
+      model: selected.model,
+      onFirstToken: (ev) => {
+        write({ type: 'first_token', ...ev });
+        if (b.turn_id || b.record_latency) {
+          turnLatency.ingestTurnTiming({
+            turn_id: b.turn_id,
+            session_id: b.session_id,
+            employee_id: b.employeeId,
+            llm_request_ms: llmStarted,
+            llm_first_token_ms: ev.at_ms,
+            llm: { provider: adapter.id || selected.id, model: selected.model },
+          });
+        }
+      },
+      onFirstPhrase: (ev) => {
+        // Skip duplicate first_phrase if booking ack already started TTS.
+        if (turnPath.path === 'tool' && turnPath.ack) {
+          write({ type: 'continue_phrase', ...ev });
+          return;
+        }
+        write({ type: 'first_phrase', ...ev, streamed_first_phrase: true });
+      },
+      onDelta: (ev) => write({ type: 'delta', text: ev.text }),
+    });
+
+    bumpUsage(ctx.tenant.id, 'llmTokens', Math.ceil((out.text || '').length / 4)).catch(() => {});
+    if (b.turn_id || b.record_latency) {
+      turnLatency.ingestTurnTiming({
+        turn_id: b.turn_id,
+        session_id: b.session_id,
+        employee_id: b.employeeId,
+        llm_complete_ms: Date.now(),
+        streamed_first_phrase: true,
+      });
+    }
+    write({
+      type: 'done',
+      text: out.text,
+      finish: out.finish,
+      model: out.model,
+      latency_ms: out.latency_ms,
+      first_token_ms: out.first_token_ms,
+      first_phrase: out.first_phrase,
+      first_phrase_ms: out.first_phrase_ms,
+      llm_input_allowed: true,
+      booking_intent: asrSanityGuard.isBookingOrScheduleIntent(lastText),
+      booking_ack: turnPath.ack,
+      turn_path: turnPath,
+      streamed: true,
+    });
+    res.end();
+  } catch (e) {
+    write({
+      type: 'error',
+      error: String((e && e.message) || e).slice(0, 300),
+      code: (e && e.code) || 'upstream',
+    });
+    res.end();
   }
 }
 
@@ -1057,16 +1219,59 @@ async function apiTalkLatencyIngest(req, res, ctx) {
 /** GET /api/talk/latency — list recent turn traces (optional slowOnly). */
 async function apiTalkLatencyList(req, res, ctx) {
   const url = new URL(req.url || '/', 'http://localhost');
+  if (url.searchParams.get('summary') === '1') {
+    return core.sendJson(res, 200, turnLatency.summarizeEvidence({
+      employee_id: url.searchParams.get('employee_id') || undefined,
+    }));
+  }
   const rows = turnLatency.listTraces({
     limit: url.searchParams.get('limit'),
     slowOnly: url.searchParams.get('slowOnly') === '1' || url.searchParams.get('slow') === '1',
+    silentFailOnly: url.searchParams.get('silentFail') === '1',
     employee_id: url.searchParams.get('employee_id') || undefined,
+    language_bucket: url.searchParams.get('language_bucket') || undefined,
   });
   core.sendJson(res, 200, {
     traces: rows,
     stages: turnLatency.STAGE_ORDER.slice(),
-    slow_threshold_ms: 9000,
+    targets: turnLatency.TARGETS,
+    slow_threshold_ms: turnLatency.TARGETS.critical_slow_first_audio_ms,
+    budgets: voiceFastPath.latencyBudgets(),
   });
+}
+
+/** GET /api/talk/latency/report — FINAL REPORT shaped evidence. */
+async function apiTalkLatencyReport(req, res) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  core.sendJson(res, 200, {
+    report: turnLatency.summarizeEvidence({
+      employee_id: url.searchParams.get('employee_id') || mayaConversationPolicy.MAYA_EMPLOYEE_ID,
+    }),
+    designed: turnLatency.syntheticBudgetComparison(),
+    wf8_node_trace: wf8NodeTrace.buildWf8NodeTrace(),
+    prompt_audit: voiceFastPath.auditPromptTokens({
+      maya_global: mayaConversationPolicy.GLOBAL_PROMPT,
+      booking: mayaConversationPolicy.BOOKING_STAGES.map((s) => s.prompt).join('\n'),
+      __required: { maya_global: true, booking: false },
+    }),
+  });
+}
+
+/** POST /api/talk/booking-ack — resolve immediate booking ack text (no LLM). */
+async function apiTalkBookingAck(req, res, ctx) {
+  const b = ctx.body || {};
+  const text = b.lastUserText || b.transcript || b.text || '';
+  const pathInfo = voiceFastPath.classifyTurnPath(text);
+  core.sendJson(res, 200, {
+    ...pathInfo,
+    booking_intent: mayaConversationPolicy.detectBookingIntent(text),
+    ack: mayaConversationPolicy.bookingAckSpeech(text),
+  });
+}
+
+/** GET /api/employees/maya/wf8-node-trace — required-for-first-response audit. */
+async function apiMayaWf8NodeTrace(req, res) {
+  core.sendJson(res, 200, wf8NodeTrace.buildWf8NodeTrace());
 }
 
 /** POST /api/talk/hangup-trace — classify hangup cause without placing PSTN (P0-2). */
@@ -5070,9 +5275,9 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsList);
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);
         if (route === '/api/talk/latency') return core.requireAuth(req, res, apiTalkLatencyList);
-        if (route === '/api/employees/maya/conversation-policy') {
-          return core.requireAuth(req, res, apiMayaConversationPolicy);
-        }
+        if (route === '/api/talk/latency/report') return core.requireAuth(req, res, apiTalkLatencyReport);
+        if (route === '/api/employees/maya/conversation-policy') return core.requireAuth(req, res, apiMayaConversationPolicy);
+        if (route === '/api/employees/maya/wf8-node-trace') return core.requireAuth(req, res, apiMayaWf8NodeTrace);
         if (route === '/api/telephony/status') return core.requireAuth(req, res, apiTelephonyStatus);
         if (route === '/api/presets') return core.requireAuth(req, res, apiPresets);
         if (route === '/api/agent-types') return core.requireAuth(req, res, apiAgentTypes);
@@ -5474,8 +5679,10 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/voice/preview') return core.requireAuth(req, res, apiVoicePreview, body);
       if (route === '/api/ws-connect') return core.requireAuth(req, res, apiWsConnect, body);
       if (route === '/api/chat') return core.requireAuth(req, res, apiChat, body);
+      if (route === '/api/chat/stream') return core.requireAuth(req, res, apiChatStream, body);
       if (route === '/api/stt') return core.requireAuth(req, res, apiStt, body);
       if (route === '/api/talk/latency') return core.requireAuth(req, res, apiTalkLatencyIngest, body);
+      if (route === '/api/talk/booking-ack') return core.requireAuth(req, res, apiTalkBookingAck, body);
       if (route === '/api/talk/hangup-trace') return core.requireAuth(req, res, apiTalkHangupTrace, body);
       if (route === '/api/voice/session') return core.requireAuth(req, res, apiVoiceSession, body);
       if (route === '/api/voice/session/language') return core.requireAuth(req, res, apiVoiceSessionLanguage, body);
@@ -5736,8 +5943,9 @@ sttWss.on('connection', (client) => {
     smart_format: 'true',
     punctuate: 'true',
     interim_results: 'true',
-    endpointing: '300',
-    utterance_end_ms: '1000',
+    // Align with Dograh overlay (endpointing=100) for speech_end→stt_final <=250ms.
+    endpointing: '100',
+    utterance_end_ms: '700',
     vad_events: 'true',
   });
   const upstream = new WebSocket(`wss://api.deepgram.com/v1/listen?${query}`, {

@@ -36,7 +36,8 @@ test('nextDialogueAction enters booking and stops selling', () => {
   const a = maya.nextDialogueAction('qualify', 'Okay, demo schedule kar sakte ho?');
   assert.equal(a.phase, 'booking');
   assert.equal(a.action, 'enter_booking');
-  assert.equal(a.stage, 'ask_email');
+  assert.equal(a.stage, 'ack_then_ask_email');
+  assert.equal(a.speak_ack_first, true);
 
   const b = maya.nextDialogueAction('booking', 'my email is vijay@company.com');
   assert.equal(b.phase, 'booking');

@@ -156,6 +156,27 @@ function httpsPatch(host, pathname, headers, bodyBuf) {
   return httpsRequest(host, pathname, { method: 'PATCH', headers, bodyBuf, timeoutMs: 60000 });
 }
 
+/**
+ * Streaming HTTPS POST for SSE / chunked upstreams (Groq chat completions stream).
+ * Calls onChunk(buffer) for each data chunk. Resolves { status, headers }.
+ */
+function httpsPostStream(host, pathname, headers, bodyBuf, onChunk, options = {}) {
+  const timeoutMs = Number(options.timeoutMs) || 60000;
+  return new Promise((resolve, reject) => {
+    const r = https.request({ host, path: pathname, method: 'POST', headers }, (resp) => {
+      resp.on('data', (d) => {
+        try { if (typeof onChunk === 'function') onChunk(d, resp); } catch (e) { /* ignore consumer errors */ }
+      });
+      resp.on('end', () => resolve({ status: resp.statusCode, headers: resp.headers }));
+      resp.on('error', reject);
+    });
+    r.on('error', reject);
+    r.setTimeout(timeoutMs, () => r.destroy(new Error('upstream stream timeout')));
+    if (bodyBuf) r.write(bodyBuf);
+    r.end();
+  });
+}
+
 /* ==========================================================================
    3. htmlEscape (XSS guard for any user string injected into the DOM)
    ========================================================================== */
@@ -697,7 +718,7 @@ function genId(prefix) {
 module.exports = {
   ROOT, DATA_DIR, DB_FILE, PUBLIC_DIR,
   loadEnv,
-  send, sendJson, readBody, httpsPost, httpsGet, httpsRequest, httpsPut, httpsPatch,
+  send, sendJson, readBody, httpsPost, httpsGet, httpsRequest, httpsPut, httpsPatch, httpsPostStream,
   htmlEscape,
   db, mutate, loadDb, defaultDb, migrateDb,
   hashPassword, verifyPassword,

@@ -404,8 +404,9 @@ function buildContextInjection(contact, opts = {}) {
   }
 
   let block = lines.join('\n');
-  if (block.length > MAX_INJECTION_CHARS) {
-    block = block.slice(0, MAX_INJECTION_CHARS - 1) + '…';
+  const maxChars = Number(opts.maxChars) || (opts.firstResponse ? 420 : MAX_INJECTION_CHARS);
+  if (block.length > maxChars) {
+    block = block.slice(0, maxChars - 1) + '...';
   }
   // Rough token estimate: ~4 chars per token.
   const tokensEstimate = Math.ceil(block.length / 4);
@@ -416,6 +417,7 @@ function buildContextInjection(contact, opts = {}) {
     preferred_language: contact.preferredLanguage || null,
     contact_id: contact.id,
     compact: true,
+    first_response_compact: !!opts.firstResponse || maxChars < MAX_INJECTION_CHARS,
     includes_transcript: false,
   };
 }
