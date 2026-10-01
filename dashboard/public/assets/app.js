@@ -42,6 +42,7 @@ const State = {
   telephony: null,
   phoneNumbers: null,
   availableNumbers: null,
+  phoneMarketplace: null,
   wallet: null,
   presets: [],
   agentTypes: [],
@@ -2332,7 +2333,7 @@ async function viewEmployeeStudio(root, id) {
   } else if (tab === 'routing' || tab === 'number') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Routing & Connections'));
     body.appendChild(el('p', { class: 'muted' },
-      'Business number, inbound/outbound, working hours, escalation, and calendar.'));
+      'Assign or change this employee\'s business number. Buying new numbers happens in Phone Numbers.'));
     const current = emp.assignedNumber;
     const didLabel = (current && current.e164) || '—';
     body.appendChild(el('div', { class: 'emp-meta emp-panel', style: 'margin-bottom:16px' }, [
@@ -2378,10 +2379,17 @@ async function viewEmployeeStudio(root, id) {
       body.appendChild(el('p', { class: 'muted' }, 'Could not load Phone Numbers. ' + esc(e.message)));
       return;
     }
-    const available = pnData.available || [];
     const mine = (pnData.numbers || []).filter((n) => n.assignedEmployeeId === emp.id || n.id === emp.phoneNumberId);
+    const assignRow = el('div', { class: 'flex gap-2', style: 'flex-wrap:wrap;margin-top:8px' });
+
     if (mine.length) {
-      const unBtn = el('button', { class: 'btn btn-ghost' + (isInvestorDemo() ? ' hide' : '') }, 'Unassign Phone Number');
+      const changeBtn = el('button', { class: 'btn btn-primary' }, 'Change Number');
+      changeBtn.onclick = () => openAssignSelector({
+        employeeId: emp.id,
+        numberId: mine[0].id,
+        currentEmployeeId: emp.id,
+      });
+      const unBtn = el('button', { class: 'btn btn-ghost' + (isInvestorDemo() ? ' hide' : '') }, 'Unassign');
       unBtn.onclick = () => {
         modal({
           title: 'Unassign Phone Number',
@@ -2397,7 +2405,9 @@ async function viewEmployeeStudio(root, id) {
           },
         });
       };
-      body.appendChild(unBtn);
+      assignRow.appendChild(changeBtn);
+      assignRow.appendChild(unBtn);
+      body.appendChild(assignRow);
 
       let inboundPayload;
       try {
@@ -2453,36 +2463,16 @@ async function viewEmployeeStudio(root, id) {
         body.appendChild(field('Timezone', tzIn));
         body.appendChild(saveInbound);
       }
-    }
-    if (!available.length && !mine.length) {
-      body.appendChild(el('p', { class: 'muted', style: 'margin-top:14px' },
-        'No Phone Numbers available. Open Phone Numbers to manage inventory.'));
-      body.appendChild(el('button', {
-        class: 'btn btn-ghost', style: 'margin-top:10px', onclick: () => goto('numbers'),
-      }, 'Open Phone Numbers'));
-    } else if (available.length && !mine.length) {
-      const sel = el('select', { class: 'select' }, [
-        el('option', { value: '' }, 'Select Phone Number'),
-      ].concat(available.map((n) => el('option', { value: n.id }, (n.e164 || n.id) + (n.label ? ' · ' + n.label : '')))));
+    } else {
       const assignBtn = el('button', { class: 'btn btn-primary' }, 'Assign Number');
-      assignBtn.onclick = async () => {
-        if (!sel.value) { toast('Choose a Phone Number.', 'err'); return; }
-        if (!emp.agentId) { toast('Employee needs a linked agent before assign.', 'err'); return; }
-        assignBtn.disabled = true;
-        try {
-          await api('/api/phone-numbers/' + encodeURIComponent(sel.value) + '/assign', {
-            method: 'POST',
-            body: { employeeId: emp.id, inboundEnabled: true, outboundEnabled: true },
-          });
-          State.loaded.phoneNumbers = false;
-          State.loaded.employees = false;
-          toast('Phone Number assigned.', 'ok');
-          onRoute();
-        } catch (e) { toast(e.message, 'err'); }
-        finally { assignBtn.disabled = false; }
-      };
-      body.appendChild(field('Available Phone Numbers', sel));
-      body.appendChild(assignBtn);
+      assignBtn.onclick = () => openAssignSelector({ employeeId: emp.id });
+      const buyBtn = el('button', { class: 'btn btn-ghost' }, 'Get New Number');
+      buyBtn.onclick = () => gotoPhoneNumbersTab('buy');
+      assignRow.appendChild(assignBtn);
+      assignRow.appendChild(buyBtn);
+      body.appendChild(el('p', { class: 'muted', style: 'margin-top:8px' },
+        'Choose from Phone Numbers inventory, or buy a new number in the Phone Numbers workspace.'));
+      body.appendChild(assignRow);
     }
   } else if (tab === 'leads') {
     body.appendChild(el('h3', { class: 't-h3' }, 'Connect Leads'));
@@ -5606,11 +5596,15 @@ function paintWorkflowBuilder(host, wf) {
 }
 
 /* ===========================================================================
-   5. PHONE NUMBERS (Astra-first inventory + assign)
+   5. PHONE NUMBERS WORKSPACE (My Numbers | Buy | Assignments | Usage)
    =========================================================================== */
 async function ensurePhoneNumbers(force) {
   if (State.loaded.phoneNumbers && !force) {
-    return { numbers: State.phoneNumbers || [], available: State.availableNumbers || [] };
+    return {
+      numbers: State.phoneNumbers || [],
+      available: State.availableNumbers || [],
+      marketplace: State.phoneMarketplace || null,
+    };
   }
   const [mine, avail, agentsRes, wfRes] = await Promise.all([
     api('/api/phone-numbers'),
@@ -5620,209 +5614,781 @@ async function ensurePhoneNumbers(force) {
   ]);
   State.phoneNumbers = mine.numbers || [];
   State.availableNumbers = avail.numbers || [];
+  State.phoneMarketplace = mine.marketplace || avail.marketplace || null;
   State.agents = agentsRes.agents || State.agents || [];
   State.workflows = wfRes.workflows || State.workflows || [];
   State.loaded.agents = true;
   State.loaded.workflows = true;
   State.loaded.phoneNumbers = true;
-  return { numbers: State.phoneNumbers, available: State.availableNumbers };
+  return {
+    numbers: State.phoneNumbers,
+    available: State.availableNumbers,
+    marketplace: State.phoneMarketplace,
+  };
+}
+
+function phoneNumbersQuery() {
+  return new URLSearchParams((location.hash.split('?')[1] || ''));
+}
+
+function phoneNumbersTab() {
+  const t = String(phoneNumbersQuery().get('tab') || 'mine').toLowerCase();
+  if (t === 'buy' || t === 'get' || t === 'purchase') return 'buy';
+  if (t === 'assignments' || t === 'assign') return 'assignments';
+  if (t === 'usage' || t === 'cost') return 'usage';
+  if (t === 'detail') return 'detail';
+  return 'mine';
+}
+
+function gotoPhoneNumbersTab(tab, extra) {
+  const params = new URLSearchParams();
+  params.set('tab', tab || 'mine');
+  if (extra && typeof extra === 'object') {
+    Object.keys(extra).forEach((k) => {
+      if (extra[k] != null && extra[k] !== '') params.set(k, String(extra[k]));
+    });
+  }
+  location.hash = '#/numbers?' + params.toString();
+}
+
+function fmtMoney(amount, currency) {
+  if (amount == null || !Number.isFinite(Number(amount))) return '—';
+  const cur = currency || 'INR';
+  const n = Number(amount);
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur, maximumFractionDigits: 2 }).format(n);
+  } catch (_) {
+    return cur + ' ' + n;
+  }
+}
+
+function capabilityChips(caps) {
+  const list = Array.isArray(caps) ? caps : [];
+  if (!list.length) return el('span', { class: 'muted' }, '—');
+  return el('div', { class: 'pn-caps' }, list.map((c) => el('span', { class: 'pn-cap' }, String(c))));
+}
+
+function connectionBadge(n) {
+  if (n && n.connected) {
+    return el('span', { class: 'pn-status is-connected' }, [el('span', { class: 'dot' }), 'Connected']);
+  }
+  const s = String((n && n.connectionStatus) || 'available');
+  if (s === 'provisioning') return el('span', { class: 'pn-status is-pending' }, [el('span', { class: 'dot' }), 'Provisioning']);
+  if (s === 'mapping_pending') return el('span', { class: 'pn-status is-pending' }, [el('span', { class: 'dot' }), 'Mapping']);
+  if (s === 'verification_failed') return el('span', { class: 'pn-status is-err' }, [el('span', { class: 'dot' }), 'Verify failed']);
+  return el('span', { class: 'pn-status' }, [el('span', { class: 'dot' }), 'Available']);
+}
+
+function directionText(n) {
+  const d = (n && n.direction) || '';
+  if (d === 'inbound_outbound') return 'Inbound + Outbound';
+  if (d === 'inbound') return 'Inbound';
+  if (d === 'outbound') return 'Outbound';
+  const inn = !n || n.inboundEnabled !== false;
+  const out = !n || n.outboundEnabled !== false;
+  if (inn && out) return 'Inbound + Outbound';
+  if (inn) return 'Inbound';
+  if (out) return 'Outbound';
+  return '—';
+}
+
+function metricOrDash(v) {
+  return v == null || v === '' ? '—' : String(v);
 }
 
 async function viewPhoneNumbers(root) {
-  root.appendChild(viewHead(
-    'Phone Numbers',
-    'List, search, and assign Phone Numbers to Employees. Provider portals stay invisible.'
-  ));
+  const params = phoneNumbersQuery();
+  const tab = phoneNumbersTab();
+  const detailId = params.get('id');
 
-  const search = el('input', {
-    class: 'input',
-    placeholder: 'Search by number, label, or employee',
-    style: 'max-width:360px;margin-bottom:14px',
+  const headActions = el('div', { class: 'pn-head-actions' }, [
+    el('button', {
+      class: 'btn btn-primary',
+      onclick: () => gotoPhoneNumbersTab('buy'),
+    }, 'Get New Number'),
+  ]);
+  root.appendChild(el('div', { class: 'view-head pn-workspace-head' }, [
+    el('div', {}, [
+      el('h2', {}, 'Phone Numbers'),
+      el('p', {}, 'Buy, assign, and route business numbers inside Astra Voice. Provider portals stay invisible.'),
+    ]),
+    headActions,
+  ]));
+
+  const tabs = [
+    { id: 'mine', label: 'My Numbers' },
+    { id: 'buy', label: 'Buy Number' },
+    { id: 'assignments', label: 'Assignments' },
+    { id: 'usage', label: 'Usage & Cost' },
+  ];
+  const tabBar = el('div', { class: 'pn-tabs', role: 'tablist' });
+  tabs.forEach((t) => {
+    const btn = el('button', {
+      class: 'pn-tab' + ((tab === t.id || (tab === 'detail' && t.id === 'mine')) ? ' is-active' : ''),
+      type: 'button',
+      role: 'tab',
+      onclick: () => gotoPhoneNumbersTab(t.id),
+    }, t.label);
+    tabBar.appendChild(btn);
   });
-  const assignedHost = el('div', { class: 'card card-pad', id: 'pnAssigned' }, skeleton('sk-line', 4));
-  const availableHost = el('div', { class: 'card card-pad', id: 'pnAvailable' }, skeleton('sk-line', 3));
-  const dialHost = el('div', { class: 'card card-pad' }, dialForm());
-  root.appendChild(search);
-  root.appendChild(el('div', { class: 'tel-grid' }, [assignedHost, availableHost]));
-  root.appendChild(el('div', { style: 'margin-top:18px' }, dialHost));
+  root.appendChild(tabBar);
 
-  async function reload(q) {
-    try {
-      await ensureEmployees();
-      const [mine, avail] = await Promise.all([
-        api('/api/phone-numbers' + (q ? ('?q=' + encodeURIComponent(q)) : '')),
-        api('/api/phone-numbers/available'),
-      ]);
-      State.phoneNumbers = mine.numbers || [];
-      State.availableNumbers = avail.numbers || [];
-      State.loaded.phoneNumbers = true;
-      paintAssignedNumbers(assignedHost, State.phoneNumbers);
-      paintAvailableNumbers(availableHost, State.availableNumbers);
-    } catch (e) {
-      assignedHost.innerHTML = '';
-      assignedHost.appendChild(el('div', { class: 'muted' }, 'Could not load Phone Numbers. ' + esc(e.message)));
-      availableHost.innerHTML = '';
+  const host = el('div', { class: 'pn-workspace', id: 'pnWorkspace' }, skeleton('sk-line', 5));
+  root.appendChild(host);
+
+  try {
+    await ensureEmployees().catch(() => []);
+    await ensureWorkflows().catch(() => []);
+    const data = await ensurePhoneNumbers(true);
+    host.innerHTML = '';
+    if (tab === 'detail' && detailId) {
+      await paintNumberDetail(host, detailId);
+    } else if (tab === 'buy') {
+      await paintBuyNumberTab(host, data);
+    } else if (tab === 'assignments') {
+      paintAssignmentsTab(host, data);
+    } else if (tab === 'usage') {
+      await paintUsageTab(host);
+    } else {
+      paintMyNumbersTab(host, data);
+    }
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('div', { class: 'muted' }, 'Could not load Phone Numbers. ' + esc(e.message)));
+  }
+}
+
+function paintMyNumbersTab(host, data) {
+  const numbers = data.numbers || [];
+  const available = data.available || [];
+  const marketplace = data.marketplace || State.phoneMarketplace || {};
+
+  host.appendChild(el('div', { class: 'pn-section-head' }, [
+    el('h3', { class: 't-h3' }, 'My Numbers'),
+    el('span', { class: 'pill' }, String(numbers.length) + ' assigned'),
+  ]));
+
+  if (!numbers.length) {
+    host.appendChild(el('div', { class: 'empty empty-rich', style: 'padding:28px 12px' }, [
+      el('div', { class: 'ttl' }, 'No Phone Numbers yet'),
+      el('p', {}, 'Get a new number or assign one from platform inventory.'),
+      el('div', { class: 'flex gap-2', style: 'margin-top:12px;justify-content:center' }, [
+        el('button', { class: 'btn btn-primary', onclick: () => gotoPhoneNumbersTab('buy') }, 'Get New Number'),
+        available.length
+          ? el('button', { class: 'btn btn-ghost', onclick: () => gotoPhoneNumbersTab('assignments') }, 'Assign inventory')
+          : null,
+      ]),
+    ]));
+  } else {
+    const grid = el('div', { class: 'pn-card-grid' });
+    numbers.forEach((n) => grid.appendChild(renderNumberCard(n)));
+    host.appendChild(grid);
+  }
+
+  // Platform inventory strip (kept until marketplace search is live).
+  if (!marketplace.searchLive) {
+    host.appendChild(el('div', { class: 'pn-section-head', style: 'margin-top:28px' }, [
+      el('h3', { class: 't-h3' }, 'Available to assign'),
+      el('span', { class: 'pill' }, 'test inventory'),
+    ]));
+    host.appendChild(el('p', { class: 'muted', style: 'font-size:.84rem;margin:0 0 12px;line-height:1.5' },
+      'Platform-owned Phone Numbers for testing. Purchase marketplace activates when telephony inventory search is configured.'));
+    if (!available.length) {
+      host.appendChild(el('div', { class: 'empty', style: 'padding:18px 12px' }, [
+        el('p', {}, 'All test Phone Numbers are assigned.'),
+      ]));
+    } else {
+      available.forEach((n) => {
+        host.appendChild(renderInventoryAssignRow(n));
+      });
     }
   }
 
-  let searchTimer = null;
-  search.addEventListener('input', () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => reload(search.value.trim()), 220);
-  });
-
-  await reload('');
+  host.appendChild(el('div', { class: 'card card-pad', style: 'margin-top:22px' }, dialForm()));
 }
 
-function paintAssignedNumbers(host, numbers) {
-  host.innerHTML = '';
-  host.appendChild(el('div', { class: 'flex items-center justify-between', style: 'margin-bottom:14px' }, [
-    el('h3', { class: 't-h3' }, 'Your numbers'),
-    el('span', { class: 'pill' }, [
-      el('span', { class: 'dot' }),
-      String((numbers || []).length) + ' assigned'
-    ])
+function renderNumberCard(n) {
+  const openBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Open');
+  openBtn.onclick = () => gotoPhoneNumbersTab('detail', { id: n.id });
+  const changeBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Change Assignment');
+  changeBtn.onclick = () => openAssignSelector({ numberId: n.id, currentEmployeeId: n.assignedEmployeeId });
+  const testBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Test');
+  testBtn.onclick = () => testNumberConnection(n);
+
+  return el('div', { class: 'pn-card' }, [
+    el('div', { class: 'pn-card-top' }, [
+      el('div', { class: 'pn-card-num' }, n.e164 || '—'),
+      connectionBadge(n),
+    ]),
+    el('div', { class: 'pn-card-meta' }, [
+      el('div', {}, [el('span', { class: 'muted' }, 'Label'), el('b', {}, n.label || '—')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Assigned to'), el('b', {}, n.assignedEmployeeName || '—')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Routing'), el('b', {}, directionText(n))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Capabilities'), capabilityChips(n.capabilities)]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Today calls'), el('b', {}, metricOrDash(n.todayCalls))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Today minutes'), el('b', {}, metricOrDash(n.todayMinutes))]),
+    ]),
+    el('div', { class: 'pn-card-actions' }, [openBtn, changeBtn, testBtn]),
+  ]);
+}
+
+function renderInventoryAssignRow(n) {
+  const employees = (State.employees || []).filter((e) => e.status !== 'ARCHIVED');
+  const empSel = el('select', { class: 'select' }, [
+    el('option', { value: '' }, 'Select employee'),
+  ].concat(employees.map((e) => el('option', { value: e.id }, e.name || e.id))));
+  const assignBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Assign');
+  assignBtn.onclick = async () => {
+    const employeeId = empSel.value;
+    if (!employeeId) { toast('Choose an employee first.', 'err'); return; }
+    assignBtn.disabled = true;
+    try {
+      await api('/api/phone-numbers/' + encodeURIComponent(n.id) + '/assign', {
+        method: 'POST',
+        body: { employeeId, inboundEnabled: true, outboundEnabled: true },
+      });
+      State.loaded.phoneNumbers = false;
+      State.loaded.employees = false;
+      toast('Assigned ' + n.e164 + '.', 'ok');
+      onRoute();
+    } catch (ex) {
+      toast(ex.message || 'Assign failed.', 'err');
+    } finally {
+      assignBtn.disabled = false;
+    }
+  };
+  return el('div', { class: 'did-row pn-row pn-row-assign' }, [
+    el('div', {}, [
+      el('div', { class: 'num' }, n.e164),
+      el('div', { class: 'exp' }, n.label || 'Available Phone Number'),
+    ]),
+    el('div', { class: 'pn-assign' }, [empSel, assignBtn]),
+  ]);
+}
+
+async function paintBuyNumberTab(host, data) {
+  const marketplace = data.marketplace || State.phoneMarketplace || {};
+  host.appendChild(el('div', { class: 'pn-section-head' }, [
+    el('h3', { class: 't-h3' }, 'Buy Number'),
+    el('span', { class: 'pill' }, marketplace.searchLive ? 'Marketplace' : 'Setup required'),
   ]));
 
-  if (!numbers || !numbers.length) {
-    host.appendChild(el('div', { class: 'empty', style: 'padding:28px 12px' }, [
-      el('div', { class: 'ttl' }, 'No Phone Numbers assigned yet'),
-      el('p', {}, 'Pick a Phone Number from available inventory and assign it to an employee.')
+  if (!marketplace.searchLive) {
+    host.appendChild(el('div', { class: 'card card-pad' }, [
+      el('h4', { class: 't-h4' }, 'Inventory search not configured'),
+      el('p', { class: 'muted' },
+        'Connect telephony credentials on the server to search live inventory and show real rental prices. Until then, use platform test inventory under My Numbers. No prices are invented.'),
+      el('button', {
+        class: 'btn btn-ghost',
+        style: 'margin-top:10px',
+        onclick: () => gotoPhoneNumbersTab('mine'),
+      }, 'Back to My Numbers'),
     ]));
     return;
   }
 
-  numbers.forEach((n) => {
-    const inbound = el('label', { class: 'streamtoggle pn-toggle' }, [
-      el('input', { type: 'checkbox', checked: n.inboundEnabled !== false ? 'checked' : null }),
-      document.createTextNode('Inbound')
-    ]);
-    const outbound = el('label', { class: 'streamtoggle pn-toggle' }, [
-      el('input', { type: 'checkbox', checked: n.outboundEnabled !== false ? 'checked' : null }),
-      document.createTextNode('Outbound')
-    ]);
-    inbound.querySelector('input').onchange = async (ev) => {
-      try {
-        await api('/api/phone-numbers/' + encodeURIComponent(n.id), {
-          method: 'PATCH', body: { inboundEnabled: ev.target.checked }
-        });
-        State.loaded.phoneNumbers = false;
-        toast('Inbound ' + (ev.target.checked ? 'enabled' : 'disabled') + '.', 'ok');
-      } catch (ex) {
-        ev.target.checked = !ev.target.checked;
-        toast(ex.message || 'Update failed.', 'err');
-      }
-    };
-    outbound.querySelector('input').onchange = async (ev) => {
-      try {
-        await api('/api/phone-numbers/' + encodeURIComponent(n.id), {
-          method: 'PATCH', body: { outboundEnabled: ev.target.checked }
-        });
-        State.loaded.phoneNumbers = false;
-        toast('Outbound ' + (ev.target.checked ? 'enabled' : 'disabled') + '.', 'ok');
-      } catch (ex) {
-        ev.target.checked = !ev.target.checked;
-        toast(ex.message || 'Update failed.', 'err');
-      }
-    };
+  const countryIn = el('select', { class: 'select' }, [
+    el('option', { value: 'IN' }, 'India'),
+    el('option', { value: 'US' }, 'United States'),
+    el('option', { value: 'GB' }, 'United Kingdom'),
+  ]);
+  const cityIn = el('input', { class: 'input', placeholder: 'City / area (optional)' });
+  const typeIn = el('select', { class: 'select' }, [
+    el('option', { value: '' }, 'Any type'),
+    el('option', { value: 'local' }, 'Local'),
+    el('option', { value: 'mobile' }, 'Mobile'),
+    el('option', { value: 'tollfree' }, 'Toll-free'),
+    el('option', { value: 'national' }, 'National'),
+  ]);
+  const capIn = el('select', { class: 'select' }, [
+    el('option', { value: '' }, 'Any capability'),
+    el('option', { value: 'inbound' }, 'Inbound voice'),
+    el('option', { value: 'outbound' }, 'Outbound voice'),
+    el('option', { value: 'sms' }, 'SMS'),
+  ]);
+  const priceIn = el('input', { class: 'input', type: 'number', min: '0', step: '1', placeholder: 'Max monthly (optional)' });
+  const searchIn = el('input', { class: 'input', placeholder: 'Search digits or area' });
+  const resultsHost = el('div', { class: 'pn-buy-results' }, [
+    el('p', { class: 'muted' }, 'Search to load available numbers with provider pricing.'),
+  ]);
 
-    const unassignBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Unassign');
-    unassignBtn.onclick = () => {
+  const searchBtn = el('button', { class: 'btn btn-primary' }, 'Search numbers');
+  searchBtn.onclick = async () => {
+    searchBtn.disabled = true;
+    searchBtn.textContent = 'Searching...';
+    resultsHost.innerHTML = '';
+    resultsHost.appendChild(el('div', {}, skeleton('sk-line', 3)));
+    try {
+      const body = {
+        country: countryIn.value || undefined,
+        city: cityIn.value.trim() || undefined,
+        area: cityIn.value.trim() || undefined,
+        numberType: typeIn.value || undefined,
+        capability: capIn.value || undefined,
+        q: searchIn.value.trim() || undefined,
+        maxMonthlyFee: priceIn.value !== '' ? Number(priceIn.value) : undefined,
+      };
+      const res = await api('/api/phone-numbers/search', { method: 'POST', body });
+      resultsHost.innerHTML = '';
+      const list = res.numbers || [];
+      if (!list.length) {
+        resultsHost.appendChild(el('div', { class: 'empty' }, [
+          el('div', { class: 'ttl' }, 'No numbers matched'),
+          el('p', {}, 'Try another country, city, or clear filters.'),
+        ]));
+        return;
+      }
+      const grid = el('div', { class: 'pn-card-grid' });
+      list.forEach((item) => grid.appendChild(renderMarketplaceCard(item)));
+      resultsHost.appendChild(grid);
+    } catch (e) {
+      resultsHost.innerHTML = '';
+      resultsHost.appendChild(el('div', { class: 'muted' }, esc(e.message || 'Search failed')));
+    } finally {
+      searchBtn.disabled = false;
+      searchBtn.textContent = 'Search numbers';
+    }
+  };
+
+  host.appendChild(el('div', { class: 'card card-pad pn-buy-filters' }, [
+    el('div', { class: 'pn-filter-grid' }, [
+      field('Country', countryIn),
+      field('City / Area', cityIn),
+      field('Number type', typeIn),
+      field('Capabilities', capIn),
+      field('Max monthly price', priceIn),
+      field('Search', searchIn),
+    ]),
+    el('div', { class: 'flex gap-2', style: 'margin-top:12px' }, [
+      searchBtn,
+      el('button', {
+        class: 'btn btn-ghost',
+        onclick: () => {
+          cityIn.value = '';
+          typeIn.value = '';
+          capIn.value = '';
+          priceIn.value = '';
+          searchIn.value = '';
+          resultsHost.innerHTML = '';
+          resultsHost.appendChild(el('p', { class: 'muted' }, 'Filters cleared.'));
+        },
+      }, 'Cancel'),
+    ]),
+  ]));
+  host.appendChild(resultsHost);
+}
+
+function renderMarketplaceCard(item) {
+  const hasPrice = item.monthlyFee != null || item.setupFee != null;
+  const selectBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Select');
+  selectBtn.onclick = () => openBuyConfirmDrawer(item);
+  return el('div', { class: 'pn-card pn-buy-card' }, [
+    el('div', { class: 'pn-card-top' }, [
+      el('div', { class: 'pn-card-num' }, item.e164 || '—'),
+      el('span', { class: 'pill' }, item.numberType || item.country || 'Number'),
+    ]),
+    el('div', { class: 'pn-card-meta' }, [
+      el('div', {}, [el('span', { class: 'muted' }, 'Country'), el('b', {}, item.country || '—')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Area'), el('b', {}, item.area || item.region || item.city || '—')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Capabilities'), capabilityChips(item.capabilities)]),
+      el('div', {}, [
+        el('span', { class: 'muted' }, 'Monthly'),
+        el('b', {}, hasPrice && item.monthlyFee != null ? fmtMoney(item.monthlyFee, item.currency) : '—'),
+      ]),
+      el('div', {}, [
+        el('span', { class: 'muted' }, 'Setup'),
+        el('b', {}, hasPrice && item.setupFee != null ? fmtMoney(item.setupFee, item.currency) : '—'),
+      ]),
+    ]),
+    el('div', { class: 'pn-card-actions' }, [
+      hasPrice ? selectBtn : el('span', { class: 'muted' }, 'Pricing unavailable'),
+    ]),
+  ]);
+}
+
+function openBuyConfirmDrawer(item) {
+  const employees = (State.employees || []).filter((e) => e.status !== 'ARCHIVED');
+  const empSel = el('select', { class: 'select' }, [
+    el('option', { value: '' }, 'Assign later'),
+  ].concat(employees.map((e) => el('option', { value: e.id }, e.name || e.id))));
+  // Prefer Vaani when present; never auto-select Maya for a new purchase.
+  const vaani = employees.find((e) => /vaani/i.test(String(e.name || '')));
+  if (vaani) empSel.value = vaani.id;
+
+  const dirSel = el('select', { class: 'select' }, [
+    el('option', { value: 'both' }, 'Inbound + Outbound'),
+    el('option', { value: 'inbound' }, 'Inbound only'),
+    el('option', { value: 'outbound' }, 'Outbound only'),
+  ]);
+
+  const body = el('div', { class: 'pn-drawer-body' }, [
+    el('p', { class: 'muted' }, 'Review number and fees before purchase. Nothing is charged until you confirm.'),
+    el('div', { class: 'pn-confirm-grid' }, [
+      el('div', {}, [el('span', { class: 'muted' }, 'Number'), el('b', {}, item.e164)]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Country'), el('b', {}, item.country || '—')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Type'), el('b', {}, item.numberType || '—')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Monthly rental'), el('b', {}, fmtMoney(item.monthlyFee, item.currency))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Setup fee'), el('b', {}, fmtMoney(item.setupFee, item.currency))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Taxes'), el('b', {}, item.taxes != null ? fmtMoney(item.taxes, item.currency) : '—')]),
+    ]),
+    field('Assign to employee', empSel),
+    field('Direction', dirSel),
+    el('div', { class: 'danger-note', style: 'margin-top:12px' },
+      'Buy & Assign provisions this number. Live purchase requires server allow-flag. Development uses a simulated path only.'),
+  ]);
+
+  modal({
+    title: 'Confirm purchase',
+    body,
+    confirmText: 'Buy & Assign',
+    confirmKind: 'danger',
+    cancelText: 'Cancel',
+    onConfirm: async () => {
+      const direction = dirSel.value;
+      const payload = {
+        e164: item.e164,
+        confirm: true,
+        // Dev / CI: never live-buy unless explicitly allowed server-side.
+        // simulate:true runs the full provision path with a mock when live is off.
+        simulate: true,
+        expectedMonthlyFee: item.monthlyFee,
+        expectedSetupFee: item.setupFee,
+        monthlyFee: item.monthlyFee,
+        setupFee: item.setupFee,
+        taxes: item.taxes,
+        currency: item.currency,
+        country: item.country,
+        region: item.region || item.area,
+        city: item.city,
+        numberType: item.numberType,
+        capabilities: item.capabilities,
+        employeeId: empSel.value || undefined,
+        inboundEnabled: direction !== 'outbound',
+        outboundEnabled: direction !== 'inbound',
+      };
+      const res = await api('/api/phone-numbers/purchase', { method: 'POST', body: payload });
+      State.loaded.phoneNumbers = false;
+      State.loaded.employees = false;
+      const connected = res && res.connected;
+      toast(
+        connected
+          ? ('Purchased ' + item.e164 + ' · Connected')
+          : ('Purchased ' + item.e164 + ' · provisioning'),
+        'ok',
+      );
+      if (res && res.number && res.number.id) {
+        gotoPhoneNumbersTab('detail', { id: res.number.id });
+      } else {
+        gotoPhoneNumbersTab('mine');
+      }
+    },
+  });
+}
+
+function paintAssignmentsTab(host, data) {
+  const numbers = data.numbers || [];
+  host.appendChild(el('div', { class: 'pn-section-head' }, [
+    el('h3', { class: 't-h3' }, 'Assignments'),
+    el('span', { class: 'pill' }, String(numbers.length)),
+  ]));
+  host.appendChild(el('p', { class: 'muted', style: 'margin:0 0 14px' },
+    'Change employee or workflow from here. Numbers never move silently between employees.'));
+
+  if (!numbers.length) {
+    host.appendChild(el('div', { class: 'empty' }, [
+      el('div', { class: 'ttl' }, 'No assignments'),
+      el('p', {}, 'Assign a number from inventory or buy a new one.'),
+    ]));
+    return;
+  }
+
+  const table = el('div', { class: 'pn-table' });
+  table.appendChild(el('div', { class: 'pn-table-head' }, [
+    el('span', {}, 'Number'),
+    el('span', {}, 'Employee'),
+    el('span', {}, 'Direction'),
+    el('span', {}, 'Workflow'),
+    el('span', {}, 'Status'),
+    el('span', {}, 'Actions'),
+  ]));
+  numbers.forEach((n) => {
+    const changeEmp = el('button', { class: 'btn btn-ghost btn-sm' }, 'Change employee');
+    changeEmp.onclick = () => openAssignSelector({ numberId: n.id, currentEmployeeId: n.assignedEmployeeId });
+    const changeWf = el('button', { class: 'btn btn-ghost btn-sm' }, 'Change workflow');
+    changeWf.onclick = () => openWorkflowAssign(n);
+    const unBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Unassign');
+    unBtn.onclick = () => {
       modal({
         title: 'Unassign number',
-        body: el('p', {}, ['Release ', el('b', {}, n.e164), ' back to platform inventory?']),
-        confirmText: 'Unassign', confirmKind: 'danger',
+        body: el('p', {}, ['Release ', el('b', {}, n.e164), ' back to inventory?']),
+        confirmText: 'Unassign',
+        confirmKind: 'danger',
         onConfirm: async () => {
           await api('/api/phone-numbers/' + encodeURIComponent(n.id) + '/unassign', { method: 'POST', body: {} });
           State.loaded.phoneNumbers = false;
+          State.loaded.employees = false;
           toast('Number unassigned.', 'ok');
-          if (currentRoute() === 'numbers') onRoute();
-          else goto('numbers');
-        }
+          onRoute();
+        },
       });
     };
-
-    const inboundBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Inbound');
-    inboundBtn.onclick = () => {
-      if (n.assignedEmployeeId) {
-        location.hash = '#/employees?id=' + encodeURIComponent(n.assignedEmployeeId) + '&tab=number';
-      } else {
-        toast('Assign this Phone Number to an Employee to edit Inbound greeting and hours.', 'info');
-      }
-    };
-
-    host.appendChild(el('div', { class: 'did-row pn-row' }, [
-      el('div', {}, [
-        el('div', { class: 'num' }, n.e164),
-        el('div', { class: 'exp' }, (n.label || 'Phone Number')
-          + (n.assignedEmployeeName ? ' · Employee ' + n.assignedEmployeeName : (n.assignedAgentName ? ' · ' + n.assignedAgentName : ''))
-          + (n.inbound && n.inbound.answer === false ? ' · Inbound off' : '')
-          + (n.inboundWorkflowName ? ' · ' + n.inboundWorkflowName : ''))
-      ]),
-      el('div', { class: 'pn-actions' }, [inbound, outbound, inboundBtn, unassignBtn])
+    const testBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Test');
+    testBtn.onclick = () => testNumberConnection(n);
+    table.appendChild(el('div', { class: 'pn-table-row' }, [
+      el('span', {}, n.e164 || '—'),
+      el('span', {}, n.assignedEmployeeName || '—'),
+      el('span', {}, directionText(n)),
+      el('span', {}, n.inboundWorkflowName || n.outboundWorkflowName || '—'),
+      el('span', {}, connectionBadge(n)),
+      el('span', { class: 'pn-table-actions' }, [changeEmp, changeWf, unBtn, testBtn]),
     ]));
+  });
+  host.appendChild(table);
+}
+
+function openAssignSelector(opts) {
+  const employees = (State.employees || []).filter((e) => e.status !== 'ARCHIVED');
+  const numbers = [
+    ...(State.availableNumbers || []),
+    ...(State.phoneNumbers || []).filter((n) => n.id === opts.numberId),
+  ];
+  // Deduplicate
+  const seen = new Set();
+  const options = [];
+  numbers.forEach((n) => {
+    if (seen.has(n.id)) return;
+    seen.add(n.id);
+    options.push(n);
+  });
+  // Also allow selecting from all tenant numbers when changing employee on an existing number
+  (State.phoneNumbers || []).forEach((n) => {
+    if (seen.has(n.id)) return;
+    seen.add(n.id);
+    options.push(n);
+  });
+
+  const numSel = el('select', { class: 'select' }, options.map((n) =>
+    el('option', { value: n.id, selected: n.id === opts.numberId ? 'selected' : null },
+      (n.e164 || n.id) + (n.label ? ' · ' + n.label : ''))));
+  if (opts.numberId) numSel.value = opts.numberId;
+  if (opts.lockNumber) numSel.disabled = true;
+
+  const empSel = el('select', { class: 'select' }, [
+    el('option', { value: '' }, 'Select employee'),
+  ].concat(employees.map((e) => el('option', { value: e.id }, e.name || e.id))));
+  if (opts.employeeId) empSel.value = opts.employeeId;
+  else if (opts.currentEmployeeId) empSel.value = opts.currentEmployeeId;
+
+  modal({
+    title: opts.employeeId && !opts.numberId ? 'Assign Phone Number' : 'Change assignment',
+    body: el('div', {}, [
+      el('p', { class: 'muted' }, 'Pick a number and employee. Moving an already-assigned number requires confirmation.'),
+      field('Phone Number', numSel),
+      field('Employee', empSel),
+    ]),
+    confirmText: 'Assign',
+    onConfirm: async () => {
+      const numberId = numSel.value;
+      const employeeId = empSel.value;
+      if (!numberId || !employeeId) throw new Error('Choose both a number and an employee.');
+      const existing = (State.phoneNumbers || []).find((n) => n.id === numberId);
+      const needsConfirm = !!(existing && existing.assignedEmployeeId && existing.assignedEmployeeId !== employeeId);
+      await api('/api/phone-numbers/' + encodeURIComponent(numberId) + '/assign', {
+        method: 'POST',
+        body: {
+          employeeId,
+          inboundEnabled: true,
+          outboundEnabled: true,
+          confirmReassign: needsConfirm,
+        },
+      });
+      State.loaded.phoneNumbers = false;
+      State.loaded.employees = false;
+      toast('Assignment updated.', 'ok');
+      if (currentRoute() === 'numbers') onRoute();
+      else if (currentRoute() === 'employees') onRoute();
+      else gotoPhoneNumbersTab('assignments');
+    },
   });
 }
 
-function paintAvailableNumbers(host, numbers) {
-  host.innerHTML = '';
-  host.appendChild(el('div', { class: 'flex items-center justify-between', style: 'margin-bottom:14px' }, [
-    el('h3', { class: 't-h3' }, 'Available to assign'),
-    el('span', { class: 'pill' }, [
-      el('span', { class: 'dot' }),
-      'test inventory'
-    ])
-  ]));
-  host.appendChild(el('p', { class: 'muted', style: 'font-size:.84rem;margin:0 0 12px;line-height:1.5' },
-    'Platform-owned Phone Numbers for testing. Purchase is not available yet.'));
+function openWorkflowAssign(n) {
+  const wfs = State.workflows || [];
+  const sel = el('select', { class: 'select' }, [
+    el('option', { value: '' }, 'No workflow'),
+  ].concat(wfs.map((w) => el('option', { value: w.id }, w.name || w.id))));
+  if (n.inboundWorkflowId) sel.value = n.inboundWorkflowId;
+  modal({
+    title: 'Change workflow',
+    body: el('div', {}, [
+      el('p', { class: 'muted' }, 'Inbound workflow for ' + (n.e164 || '') + '.'),
+      field('Workflow', sel),
+    ]),
+    confirmText: 'Save',
+    onConfirm: async () => {
+      await api('/api/phone-numbers/' + encodeURIComponent(n.id), {
+        method: 'PATCH',
+        body: { inboundWorkflowId: sel.value || null },
+      });
+      State.loaded.phoneNumbers = false;
+      toast('Workflow updated.', 'ok');
+      onRoute();
+    },
+  });
+}
 
-  if (!numbers || !numbers.length) {
-    host.appendChild(el('div', { class: 'empty', style: 'padding:28px 12px' }, [
-      el('div', { class: 'ttl' }, 'No inventory right now'),
-      el('p', {}, 'All test Phone Numbers are assigned. Unassign one to free it for another employee.')
+async function testNumberConnection(n) {
+  try {
+    const res = await api('/api/phone-numbers/' + encodeURIComponent(n.id) + '/status', { method: 'POST', body: {} });
+    State.loaded.phoneNumbers = false;
+    if (res.connected) toast(n.e164 + ' · Connected (verified without placing a call).', 'ok');
+    else toast(n.e164 + ' · Not fully connected yet.', 'info');
+    if (currentRoute() === 'numbers') onRoute();
+  } catch (e) {
+    toast(e.message || 'Verification failed.', 'err');
+  }
+}
+
+async function paintUsageTab(host) {
+  host.appendChild(el('div', { class: 'pn-section-head' }, [
+    el('h3', { class: 't-h3' }, 'Usage & Cost'),
+  ]));
+  try {
+    const usage = await api('/api/phone-numbers/usage');
+    host.appendChild(el('p', { class: 'muted', style: 'margin:0 0 14px' },
+      (usage.label || 'Usage from Astra call records')
+      + (usage.estimated ? ' · Estimated' : '')
+      + '. Empty metrics show as — and are never invented.'));
+    const rows = usage.rows || [];
+    if (!rows.length) {
+      host.appendChild(el('div', { class: 'empty' }, [
+        el('div', { class: 'ttl' }, 'No usage yet'),
+        el('p', {}, 'Assign numbers and place tracked calls to see real usage here.'),
+      ]));
+      return;
+    }
+    const table = el('div', { class: 'pn-table pn-table-usage' });
+    table.appendChild(el('div', { class: 'pn-table-head' }, [
+      el('span', {}, 'Number'),
+      el('span', {}, 'Today calls'),
+      el('span', {}, 'Today minutes'),
+      el('span', {}, 'Monthly rental'),
     ]));
+    rows.forEach((r) => {
+      table.appendChild(el('div', { class: 'pn-table-row' }, [
+        el('span', {}, r.e164 || '—'),
+        el('span', {}, metricOrDash(r.todayCalls)),
+        el('span', {}, metricOrDash(r.todayMinutes)),
+        el('span', {}, r.monthlyFee != null ? fmtMoney(r.monthlyFee, r.currency) : '—'),
+      ]));
+    });
+    host.appendChild(table);
+  } catch (e) {
+    host.appendChild(el('div', { class: 'muted' }, esc(e.message || 'Usage unavailable')));
+  }
+}
+
+async function paintNumberDetail(host, numberId) {
+  let payload;
+  try {
+    payload = await api('/api/phone-numbers/' + encodeURIComponent(numberId));
+  } catch (e) {
+    host.appendChild(el('div', { class: 'muted' }, esc(e.message)));
+    return;
+  }
+  const n = payload.number;
+  if (!n) {
+    host.appendChild(el('div', { class: 'muted' }, 'Number not found.'));
     return;
   }
 
-  const employees = (State.employees || []).filter((e) => e.status !== 'ARCHIVED');
-  numbers.forEach((n) => {
-    const empSel = el('select', { class: 'select' }, [
-      el('option', { value: '' }, 'Select employee')
-    ].concat(employees.map((e) => el('option', { value: e.id }, e.name || e.id))));
-    const assignBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Assign');
-    assignBtn.onclick = async () => {
-      const employeeId = empSel.value;
-      if (!employeeId) { toast('Choose an employee first.', 'err'); return; }
-      assignBtn.disabled = true;
-      try {
-        await api('/api/phone-numbers/' + encodeURIComponent(n.id) + '/assign', {
-          method: 'POST',
-          body: {
-            employeeId,
-            inboundEnabled: true,
-            outboundEnabled: true,
-          }
-        });
-        State.loaded.phoneNumbers = false;
-        State.loaded.employees = false;
-        toast('Assigned ' + n.e164 + ' to employee.', 'ok');
-        if (currentRoute() === 'numbers') onRoute();
-        else goto('numbers');
-      } catch (ex) {
-        toast(ex.message || 'Assign failed.', 'err');
-      } finally {
-        assignBtn.disabled = false;
-      }
-    };
+  host.appendChild(el('button', {
+    class: 'btn btn-ghost btn-sm',
+    style: 'margin-bottom:12px',
+    onclick: () => gotoPhoneNumbersTab('mine'),
+  }, '← Back to My Numbers'));
 
-    host.appendChild(el('div', { class: 'did-row pn-row pn-row-assign' }, [
+  host.appendChild(el('div', { class: 'pn-card pn-detail-hero' }, [
+    el('div', { class: 'pn-card-top' }, [
+      el('div', { class: 'pn-card-num' }, n.e164),
+      connectionBadge(n),
+    ]),
+    el('div', { class: 'pn-card-meta' }, [
+      el('div', {}, [el('span', { class: 'muted' }, 'Label'), el('b', {}, n.label || '—')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Assigned to'), el('b', {}, n.assignedEmployeeName || '—')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Direction'), el('b', {}, directionText(n))]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Type'), el('b', {}, n.numberType || '—')]),
+      el('div', {}, [el('span', { class: 'muted' }, 'Capabilities'), capabilityChips(n.capabilities)]),
       el('div', {}, [
-        el('div', { class: 'num' }, n.e164),
-        el('div', { class: 'exp' }, n.label || 'Available Phone Number')
+        el('span', { class: 'muted' }, 'Monthly'),
+        el('b', {}, n.pricing && n.pricing.monthlyFee != null
+          ? fmtMoney(n.pricing.monthlyFee, n.pricing.currency) : '—'),
       ]),
-      el('div', { class: 'pn-assign' }, [empSel, assignBtn])
-    ]));
-  });
+    ]),
+  ]));
+
+  const actions = el('div', { class: 'flex gap-2', style: 'margin:14px 0 22px;flex-wrap:wrap' }, [
+    el('button', {
+      class: 'btn btn-ghost btn-sm',
+      onclick: () => openAssignSelector({ numberId: n.id, currentEmployeeId: n.assignedEmployeeId }),
+    }, 'Change Assignment'),
+    el('button', {
+      class: 'btn btn-ghost btn-sm',
+      onclick: () => testNumberConnection(n),
+    }, 'Test connection'),
+  ]);
+  if (!n.isProtected) {
+    const releaseBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Release number');
+    releaseBtn.onclick = () => {
+      modal({
+        title: 'Release Phone Number',
+        body: el('div', {}, [
+          el('p', {}, ['Permanently release ', el('b', {}, n.e164), ' from this workspace?']),
+          el('div', { class: 'danger-note' }, 'This cannot be undone from Astra. Confirm to continue.'),
+        ]),
+        confirmText: 'Release',
+        confirmKind: 'danger',
+        onConfirm: async () => {
+          await api('/api/phone-numbers/' + encodeURIComponent(n.id) + '/release', {
+            method: 'POST',
+            body: { confirm: true },
+          });
+          State.loaded.phoneNumbers = false;
+          toast('Number released.', 'ok');
+          gotoPhoneNumbersTab('mine');
+        },
+      });
+    };
+    actions.appendChild(releaseBtn);
+  }
+  host.appendChild(actions);
+
+  // Sections: overview already shown; assignment / routing / calls / usage / configuration
+  host.appendChild(el('div', { class: 'card card-pad', style: 'margin-bottom:14px' }, [
+    el('h4', { class: 't-h4' }, 'Assignment'),
+    el('p', {}, 'Employee: ' + (n.assignedEmployeeName || '—')),
+    el('p', { class: 'muted' }, 'Workflow: ' + (n.inboundWorkflowName || n.outboundWorkflowName || '—')),
+  ]));
+  host.appendChild(el('div', { class: 'card card-pad', style: 'margin-bottom:14px' }, [
+    el('h4', { class: 't-h4' }, 'Routing'),
+    el('p', {}, directionText(n)),
+    el('p', { class: 'muted' },
+      'Inbound ' + (n.inboundEnabled !== false ? 'on' : 'off')
+      + ' · Outbound ' + (n.outboundEnabled !== false ? 'on' : 'off')),
+  ]));
+  host.appendChild(el('div', { class: 'card card-pad', style: 'margin-bottom:14px' }, [
+    el('h4', { class: 't-h4' }, 'Calls & usage today'),
+    el('p', {}, 'Calls: ' + metricOrDash(n.todayCalls) + ' · Minutes: ' + metricOrDash(n.todayMinutes)),
+    el('p', { class: 'muted' }, 'Only real Astra call records. — means unknown.'),
+  ]));
+  host.appendChild(el('div', { class: 'card card-pad' }, [
+    el('h4', { class: 't-h4' }, 'Configuration'),
+    el('p', {}, 'Connection: ' + (n.connected ? 'Connected' : (n.connectionStatus || '—'))),
+    el('p', { class: 'muted' },
+      'Provider verified: ' + ((n.connection && n.connection.providerVerified) ? 'yes' : 'no')
+      + ' · Mapping: ' + ((n.connection && n.connection.mappingVerified) ? 'yes' : 'no')
+      + ' · Callbacks: ' + ((n.connection && n.connection.callbacksConfigured) ? 'yes' : 'no')),
+  ]));
 }
 
 function dialForm() {

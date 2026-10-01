@@ -1,74 +1,59 @@
-# Phone Numbers (Phases 13 + Sprint 1)
+# Phone Numbers Workspace
 
-Astra-first Phone Number control plane. Customers manage numbers inside Astra only. Provider plumbing (Dograh / VoBiz) stays server-side behind `DograhVobizProvider`. Customer UI language is **Phone Number** only. Never SIP, DID portal, or provider console terms.
+Astra Voice Phone Numbers is a dedicated top-level product section. Customers buy, assign, and route numbers inside Astra. Provider portals (VoBiz / Dograh) stay invisible in normal UI (Advanced / Super Admin only).
 
-## Test inventory (no purchase)
+## Tabs
 
-Purchase is deferred (`POST /api/phone-numbers/purchase` returns **501** `purchase_deferred`).
-
-On boot the dashboard seeds one platform-owned number:
-
-| Field | Value |
+| Tab | Purpose |
 | --- | --- |
-| id | `pn_platform_astranova_main` |
-| e164 | `+918065353938` |
-| label | AstraNova Main Line |
-| status | `available` until assigned |
+| My Numbers | Rich cards: number, Connected, label, assignee, capabilities, routing, today calls/minutes (`—` when unknown) |
+| Buy Number | Marketplace search + confirmation drawer (Buy & Assign) |
+| Assignments | Table: number / employee / direction / workflow / status + Change / Unassign / Test |
+| Usage & Cost | Real Astra call aggregates only. Never invent metrics. |
 
-Secrets and API keys are never returned. Public JSON exposes Astra `id`, `e164`, label, capabilities, status, Employee assignment, inbound/outbound toggles only.
+Header **Get New Number** opens the Buy tab.
 
-## Assign to Employee (Phase 13)
+Employee **Routing** is assign / change / unassign only. Change opens the central inventory selector. Purchasing is not embedded in employee pages.
 
-`POST /api/phone-numbers/:id/assign` accepts `{ employeeId }` (preferred) or legacy `{ agentId }`.
+## Safety
 
-- Resolves the Employee's linked `agentId` for telephony DID wiring
-- Sets `number.assignedEmployeeId` and `employee.phoneNumberId` to the same `pn_` id
-- Unassign clears both sides and returns the number to inventory
+- Purchase requires `confirm: true` and price match on quoted monthly / setup fees.
+- Live VoBiz debit requires `ASTRA_ALLOW_LIVE_NUMBER_PURCHASE=1`.
+- UI and tests use `simulate: true` (or mock client) so development never charges.
+- Release requires `confirm: true`. Maya platform number `+918065353938` cannot be released.
+- Moving an assigned number between employees requires `confirmReassign: true` (no silent moves).
+- **Connected** only after provider verified + Dograh mapping + callback URLs all pass. Status checks do not place PSTN calls.
 
-Studio **Assign Number** tab and the Phone Numbers page both use real `pn_` ids end to end.
-
-## Inbound ownership (Phase 17)
-
-Customers configure Inbound on an assigned Phone Number → Employee:
-
-```bash
-curl -s -b cookies.txt http://localhost:8787/api/phone-numbers/pn_platform_astranova_main/inbound
-
-curl -s -b cookies.txt -X PUT http://localhost:8787/api/phone-numbers/pn_platform_astranova_main/inbound \
-  -H 'Content-Type: application/json' \
-  -d '{"answer":true,"greeting":"Namaste, how can I help?","hours":{"timezone":"Asia/Kolkata","mode":"always"}}'
-```
-
-Greeting syncs onto the linked Employee agent. Customer copy: Phone Number / Employee / Inbound. Never SIP or trunk jargon. See [INBOUND.md](./INBOUND.md).
-
-## API (cookie auth, tenant scoped)
+## API
 
 ```bash
-# Tenant's assigned Phone Numbers (optional ?q= search)
-curl -s -b cookies.txt 'http://localhost:8787/api/phone-numbers?q=Astra'
-
-# Platform inventory available to assign
-curl -s -b cookies.txt http://localhost:8787/api/phone-numbers/available
-
-# Assign to an Employee
-curl -s -b cookies.txt -X POST http://localhost:8787/api/phone-numbers/pn_platform_astranova_main/assign \
-  -H 'Content-Type: application/json' \
-  -d '{"employeeId":"emp_...","inboundEnabled":true,"outboundEnabled":true}'
-
-# Unassign
-curl -s -b cookies.txt -X POST http://localhost:8787/api/phone-numbers/pn_platform_astranova_main/unassign \
-  -H 'Content-Type: application/json' -d '{}'
+GET  /api/phone-numbers
+GET  /api/phone-numbers/available
+POST /api/phone-numbers/search
+GET|POST /api/phone-numbers/pricing?e164=+91...
+POST /api/phone-numbers/purchase   # confirm:true required
+GET  /api/phone-numbers/usage
+GET  /api/phone-numbers/:id
+POST /api/phone-numbers/:id/assign
+POST /api/phone-numbers/:id/unassign
+POST /api/phone-numbers/:id/release   # confirm:true
+POST /api/phone-numbers/:id/configure
+POST /api/phone-numbers/:id/status    # verify without dialing
 ```
 
-## Schema
+## TelephonyProvider
 
-Additive **schemaVersion 13**: `phoneNumbers.assignedEmployeeId`, inbound greeting/hours. See [EMPLOYEES.md](./EMPLOYEES.md), [INBOUND.md](./INBOUND.md).
+`listNumbers`, `searchAvailableNumbers`, `getPricing`, `purchaseNumber`, `releaseNumber`, `assignNumber`, `configureNumber`, `getUsage`, `getNumberStatus`.
 
-## Adapter
+Initial adapter: `DograhVobizProvider` (VoBiz inventory + Dograh bind).
 
-- `dashboard/lib/phone-numbers.js`: seed, list/search, assign/unassign/patch, inbound get/set, public serialization
-- `dashboard/lib/telephony-provider.js`: `assignNumber` passes `employeeId`
+## Env
 
-## UI
+```
+VOBIZ_AUTH_ID=
+VOBIZ_AUTH_TOKEN=
+# Required for a real paid purchase (never set in CI):
+# ASTRA_ALLOW_LIVE_NUMBER_PURCHASE=1
+```
 
-Sidebar **Phone Numbers**: search, assigned list, available inventory with Employee dropdown, Inbound link. Employee Studio **Assign Number** tab with Inbound answer/greeting/hours. Outbound dial still requires explicit confirm.
+Until VoBiz inventory credentials are configured, Buy shows setup guidance and My Numbers keeps platform test inventory. When search is live, the "purchase not available" copy is removed.

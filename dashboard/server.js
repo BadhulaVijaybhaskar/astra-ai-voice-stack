@@ -1263,11 +1263,13 @@ function serializeWorkflow(row, ctx) {
 }
 
 function serializePhoneNumber(n, tenantId) {
+  const usage = phoneNumbers.usageTodayByNumberId(core.db(), tenantId);
   return phoneNumbers.publicPhoneNumber(
     n,
     agentsMapForTenant(tenantId),
     workflowsMapForTenant(tenantId),
     employeesMapForTenant(tenantId),
+    usage,
   );
 }
 
@@ -1276,13 +1278,131 @@ function apiPhoneNumbersList(req, res, ctx) {
   const q = url.searchParams.get('q') || url.searchParams.get('search') || '';
   const numbers = phoneNumbers.listTenantNumbers(core.db(), ctx.tenant.id, { q })
     .map((n) => serializePhoneNumber(n, ctx.tenant.id));
-  core.sendJson(res, 200, { numbers });
+  const marketplace = telephonyProvider.marketplaceStatus
+    ? telephonyProvider.marketplaceStatus()
+    : { configured: false, livePurchaseEnabled: false, searchLive: false };
+  core.sendJson(res, 200, { numbers, marketplace });
 }
 
 async function apiPhoneNumbersAvailable(req, res, ctx) {
   try {
     const numbers = await telephonyProvider.listInventory(ctx.tenant.id);
-    core.sendJson(res, 200, { numbers });
+    const marketplace = telephonyProvider.marketplaceStatus
+      ? telephonyProvider.marketplaceStatus()
+      : { configured: false, livePurchaseEnabled: false, searchLive: false };
+    core.sendJson(res, 200, { numbers, marketplace });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiPhoneNumbersSearch(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const body = ctx.body || {};
+  try {
+    const result = await telephonyProvider.searchAvailableNumbers({
+      tenantId: ctx.tenant.id,
+      country: body.country || url.searchParams.get('country') || undefined,
+      city: body.city || url.searchParams.get('city') || undefined,
+      area: body.area || url.searchParams.get('area') || undefined,
+      numberType: body.numberType || url.searchParams.get('numberType') || undefined,
+      capability: body.capability || url.searchParams.get('capability') || undefined,
+      q: body.q || body.search || url.searchParams.get('q') || url.searchParams.get('search') || undefined,
+      search: body.search || url.searchParams.get('search') || undefined,
+      maxMonthlyFee: body.maxMonthlyFee != null
+        ? body.maxMonthlyFee
+        : (url.searchParams.get('maxMonthlyFee') || undefined),
+      page: body.page || url.searchParams.get('page') || undefined,
+      perPage: body.perPage || url.searchParams.get('perPage') || undefined,
+    });
+    core.sendJson(res, 200, result);
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiPhoneNumbersPricing(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const e164 = phoneNumbers.normalizeE164(
+    (ctx.body && (ctx.body.e164 || ctx.body.number))
+    || url.searchParams.get('e164')
+    || url.searchParams.get('number')
+    || '',
+  );
+  if (!e164) {
+    return core.sendJson(res, 422, { error: 'e164 is required', code: 'validation' });
+  }
+  try {
+    const pricing = await telephonyProvider.getPricing(e164, ctx.tenant.id);
+    core.sendJson(res, 200, pricing);
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiPhoneNumbersUsage(req, res, ctx) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  try {
+    const usage = await telephonyProvider.getUsage(ctx.tenant.id, {
+      numberId: url.searchParams.get('numberId') || undefined,
+    });
+    core.sendJson(res, 200, usage);
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiPhoneNumbersGetOne(req, res, ctx) {
+  const number = phoneNumbers.findNumber(core.db(), ctx.params.id);
+  if (!number || number.status === 'released') {
+    return core.sendJson(res, 404, { error: 'phone number not found', code: 'not_found' });
+  }
+  if (number.tenantId && number.tenantId !== ctx.tenant.id) {
+    return core.sendJson(res, 403, { error: 'forbidden', code: 'forbidden' });
+  }
+  if (!number.tenantId && number.status !== 'available') {
+    return core.sendJson(res, 404, { error: 'phone number not found', code: 'not_found' });
+  }
+  core.sendJson(res, 200, { number: serializePhoneNumber(number, ctx.tenant.id) });
+}
+
+async function apiPhoneNumbersStatus(req, res, ctx) {
+  try {
+    const status = await telephonyProvider.getNumberStatus(ctx.params.id, ctx.tenant.id);
+    core.sendJson(res, 200, status);
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiPhoneNumbersRelease(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  try {
+    const number = await telephonyProvider.releaseNumber(ctx.params.id, ctx.tenant.id, {
+      confirm: b.confirm === true,
+    });
+    await core.mutate((d) => {
+      addAudit(d, ctx, 'phone_number.released', 'phone_number', number.id, { e164: number.e164 });
+    });
+    core.sendJson(res, 200, { number });
+  } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+async function apiPhoneNumbersConfigure(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
+  try {
+    const number = await telephonyProvider.configureNumber(ctx.params.id, ctx.tenant.id, b);
+    await core.mutate((d) => {
+      addAudit(d, ctx, 'phone_number.configured', 'phone_number', number.id, {
+        inboundEnabled: number.inboundEnabled,
+        outboundEnabled: number.outboundEnabled,
+      });
+    });
+    core.sendJson(res, 200, { number });
   } catch (e) {
     handleProviderError(res, e);
   }
@@ -1304,6 +1424,7 @@ async function apiPhoneNumbersAssign(req, res, ctx) {
       outboundEnabled: b.outboundEnabled,
       inboundWorkflowId: b.inboundWorkflowId,
       outboundWorkflowId: b.outboundWorkflowId,
+      confirmReassign: b.confirmReassign === true || b.allowReassign === true,
     });
     await core.mutate((d) => {
       addAudit(d, ctx, 'phone_number.assigned', 'phone_number', number.id, {
@@ -1394,9 +1515,43 @@ async function apiPhoneNumbersInboundPut(req, res, ctx) {
   core.sendJson(res, 200, { inbound: result.inbound });
 }
 
-async function apiPhoneNumbersPurchase(req, res) {
+async function apiPhoneNumbersPurchase(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const b = ctx.body || {};
   try {
-    await telephonyProvider.purchaseNumber();
+    const result = await telephonyProvider.purchaseNumber({
+      tenantId: ctx.tenant.id,
+      e164: b.e164 || b.number,
+      confirm: b.confirm === true,
+      simulate: b.simulate === true,
+      expectedMonthlyFee: b.expectedMonthlyFee != null ? b.expectedMonthlyFee : b.monthlyFee,
+      expectedSetupFee: b.expectedSetupFee != null ? b.expectedSetupFee : b.setupFee,
+      monthlyFee: b.monthlyFee,
+      setupFee: b.setupFee,
+      taxes: b.taxes,
+      currency: b.currency,
+      country: b.country,
+      region: b.region,
+      city: b.city,
+      numberType: b.numberType,
+      capabilities: b.capabilities,
+      employeeId: b.employeeId,
+      agentId: b.agentId,
+      inboundEnabled: b.inboundEnabled,
+      outboundEnabled: b.outboundEnabled,
+      inboundWorkflowId: b.inboundWorkflowId,
+      outboundWorkflowId: b.outboundWorkflowId,
+      label: b.label,
+    });
+    await core.mutate((d) => {
+      addAudit(d, ctx, 'phone_number.purchased', 'phone_number', result.number.id, {
+        e164: result.number.e164,
+        simulated: !!result.simulated,
+        employeeId: result.number.assignedEmployeeId || null,
+        connected: !!result.connected,
+      });
+    });
+    core.sendJson(res, 200, result);
   } catch (e) {
     handleProviderError(res, e);
   }
@@ -1405,13 +1560,22 @@ async function apiPhoneNumbersPurchase(req, res) {
 function matchPhoneNumberRoute(route) {
   if (route === '/api/phone-numbers') return { action: 'list' };
   if (route === '/api/phone-numbers/available') return { action: 'available' };
+  if (route === '/api/phone-numbers/search') return { action: 'search' };
+  if (route === '/api/phone-numbers/pricing') return { action: 'pricing' };
   if (route === '/api/phone-numbers/purchase') return { action: 'purchase' };
+  if (route === '/api/phone-numbers/usage') return { action: 'usage' };
   const assign = route.match(/^\/api\/phone-numbers\/([^/]+)\/assign$/);
   if (assign) return { action: 'assign', id: decodeURIComponent(assign[1]) };
   const unassign = route.match(/^\/api\/phone-numbers\/([^/]+)\/unassign$/);
   if (unassign) return { action: 'unassign', id: decodeURIComponent(unassign[1]) };
   const inbound = route.match(/^\/api\/phone-numbers\/([^/]+)\/inbound$/);
   if (inbound) return { action: 'inbound', id: decodeURIComponent(inbound[1]) };
+  const status = route.match(/^\/api\/phone-numbers\/([^/]+)\/status$/);
+  if (status) return { action: 'status', id: decodeURIComponent(status[1]) };
+  const release = route.match(/^\/api\/phone-numbers\/([^/]+)\/release$/);
+  if (release) return { action: 'release', id: decodeURIComponent(release[1]) };
+  const configure = route.match(/^\/api\/phone-numbers\/([^/]+)\/configure$/);
+  if (configure) return { action: 'configure', id: decodeURIComponent(configure[1]) };
   const one = route.match(/^\/api\/phone-numbers\/([^/]+)$/);
   if (one) return { action: 'one', id: decodeURIComponent(one[1]) };
   return null;
@@ -3868,6 +4032,15 @@ const server = http.createServer(async (req, res) => {
         if (pnGet) {
           if (pnGet.action === 'list') return core.requireAuth(req, res, apiPhoneNumbersList);
           if (pnGet.action === 'available') return core.requireAuth(req, res, apiPhoneNumbersAvailable);
+          if (pnGet.action === 'search') return core.requireAuth(req, res, apiPhoneNumbersSearch);
+          if (pnGet.action === 'pricing') return core.requireAuth(req, res, apiPhoneNumbersPricing);
+          if (pnGet.action === 'usage') return core.requireAuth(req, res, apiPhoneNumbersUsage);
+          if (pnGet.action === 'one') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersGetOne(rq, rs, { ...ctx, params: { id: pnGet.id } }));
+          }
+          if (pnGet.action === 'status') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersStatus(rq, rs, { ...ctx, params: { id: pnGet.id } }));
+          }
           if (pnGet.action === 'inbound') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersInboundGet(rq, rs, { ...ctx, params: { id: pnGet.id } }));
           }
@@ -4216,6 +4389,21 @@ const server = http.createServer(async (req, res) => {
         }
         if (pnPost.action === 'purchase') {
           return core.requireAuth(req, res, apiPhoneNumbersPurchase, body);
+        }
+        if (pnPost.action === 'search') {
+          return core.requireAuth(req, res, apiPhoneNumbersSearch, body);
+        }
+        if (pnPost.action === 'pricing') {
+          return core.requireAuth(req, res, apiPhoneNumbersPricing, body);
+        }
+        if (pnPost.action === 'release') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersRelease(rq, rs, { ...ctx, params: { id: pnPost.id } }), body);
+        }
+        if (pnPost.action === 'configure') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersConfigure(rq, rs, { ...ctx, params: { id: pnPost.id } }), body);
+        }
+        if (pnPost.action === 'status') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiPhoneNumbersStatus(rq, rs, { ...ctx, params: { id: pnPost.id } }), body);
         }
         return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
       }
