@@ -35,21 +35,22 @@ test('fold: prefer_local_policy on all Maya workflow edges', () => {
   }
 });
 
-test('fold: Sarvam TOKEN aggregation + min_buffer_size=20 in overlay', () => {
+test('fold: Sarvam TOKEN aggregation + min_buffer_size≥50 in overlay', () => {
   const factory = fs.readFileSync(
     path.join(__dirname, '..', '..', 'rumik-overlay-local', 'service_factory.py'),
     'utf8'
   );
   assert.ok(/TextAggregationMode\.TOKEN/.test(factory));
   assert.ok(/silence_time_s\s*=\s*0\.2/.test(factory));
-  assert.ok(/min_buffer_size.*=.*20|else 20/.test(factory));
+  // Sarvam rejects min_buffer_size < 50 (HTTP 422) → TTS WS dead → PSTN silence
+  assert.ok(/max\(50,\s*int\(min_buf\)\)|else 50/.test(factory));
   assert.ok(/def create_llm_service\(/.test(factory));
   assert.ok(/return create_llm_service_with_model_override\(/.test(factory));
   const registry = fs.readFileSync(
     path.join(__dirname, '..', '..', 'rumik-overlay-local', 'registry.py'),
     'utf8'
   );
-  assert.ok(/min_buffer_size:\s*int\s*=\s*Field\(\s*default=20/.test(registry));
+  assert.ok(/min_buffer_size:\s*int\s*=\s*Field\(\s*default=50/.test(registry));
 });
 
 test('keep #55: planPreSpeechLlm + planFirstAudio employee-agnostic', () => {
