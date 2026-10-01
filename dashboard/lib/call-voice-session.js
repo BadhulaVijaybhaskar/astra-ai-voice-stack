@@ -17,6 +17,7 @@
 
 const crypto = require('crypto');
 const personaRouter = require('./voice-persona-router');
+const multilingualRuntime = require('./multilingual-runtime');
 
 /** In-memory active call voice sessions. Not durable across process restarts. */
 const ACTIVE = new Map();
@@ -44,11 +45,15 @@ function publicSession(row) {
     employee_id: row.employee_id,
     initial_language: row.initial_language,
     current_language: row.current_language,
+    primary_language: row.primary_language || row.initial_language,
+    allowed_languages: Array.isArray(row.allowed_languages) ? row.allowed_languages.slice() : [],
     preferred_language: row.preferred_language || null,
     voice_lock: personaRouter.publicVoiceLock(row.voice_lock),
     voice_switch_policy: row.voice_switch_policy,
     locked: true,
     route_semantics: 'call_start_only',
+    tts_language: row.current_language || row.initial_language,
+    stt: row.stt || multilingualRuntime.PLATFORM_STT,
     created_at: row.created_at,
     updated_at: row.updated_at,
     workflow_run_id: row.workflow_run_id || null,
@@ -59,6 +64,7 @@ function publicSession(row) {
 /**
  * Establish call-start voice lock for any channel.
  * preferred_language is start-seed only. voice_lock is per-call only.
+ * Builds shared multilingual runtime (primary + allowed + STT multi).
  */
 function startCallVoiceSession(input = {}) {
   const channel = String(input.channel || CHANNELS.BROWSER).trim().toLowerCase() || CHANNELS.BROWSER;
@@ -66,11 +72,21 @@ function startCallVoiceSession(input = {}) {
     input.preferred_language || input.preferredLanguage || '',
   ) || null;
 
+  const runtime = multilingualRuntime.buildSessionMultilingualRuntime(input.employee, {
+    language: input.language || input.initial_language || preferredLanguage,
+    primary_language: input.primary_language
+      || (input.employee && input.employee.voice && input.employee.voice.language)
+      || input.language,
+    allowed_languages: input.allowed_languages,
+    stt: input.stt || input.pipelineStt,
+  });
+
   const established = personaRouter.resolveCallVoice({
     employee: input.employee,
     employee_id: input.employee_id || input.employeeId,
     persona: input.persona || input.persona_id || input.personaId,
-    language: input.language || input.initial_language,
+    // preferred_language seeds start only when explicit language omitted.
+    language: input.language || input.initial_language || preferredLanguage || runtime.primary_language,
     preferred_language: preferredLanguage,
     mode: input.mode || 'astra_auto',
     provider: input.provider,
@@ -90,10 +106,14 @@ function startCallVoiceSession(input = {}) {
     employee_id: established.employee_id,
     initial_language: established.initial_language,
     current_language: established.current_language || established.initial_language,
+    primary_language: runtime.primary_language || established.initial_language,
+    allowed_languages: runtime.allowed_languages.slice(),
     preferred_language: preferredLanguage,
     voice_lock: established.voice_lock,
     voice_switch_policy: established.voice_switch_policy
       || personaRouter.DEFAULT_VOICE_SWITCH_POLICY,
+    stt: runtime.stt,
+    turn_trace: [],
     workflow_run_id: input.workflow_run_id || input.workflowRunId || null,
     call_id: input.call_id || input.callId || null,
     created_at: nowIso(),
@@ -108,6 +128,7 @@ function startCallVoiceSession(input = {}) {
     persona: established.persona || null,
     source: established.source,
     mode: established.mode,
+    multilingual: runtime,
   };
 }
 
@@ -137,6 +158,7 @@ function bindCallVoiceSession(callSessionId, meta = {}) {
 /**
  * Mid-call language change. Speaker/provider stay locked unless policy allows
  * fallback AND locked engine cannot speak the target language.
+ * Under locked policy with Sarvam: only language_code (current_language) changes.
  */
 function applyCallLanguage(callSessionId, language, opts = {}) {
   const id = String(callSessionId || '').trim();
@@ -158,8 +180,14 @@ function applyCallLanguage(callSessionId, language, opts = {}) {
       employee_id: row.employee_id,
       initial_language: row.initial_language,
       current_language: row.current_language,
+      primary_language: row.primary_language || row.initial_language,
+      allowed_languages: Array.isArray(row.allowed_languages) ? row.allowed_languages.slice() : [],
       voice_lock: personaRouter.publicVoiceLock(row.voice_lock),
       voice_switch_policy: row.voice_switch_policy,
+      tts_language: row.current_language,
+      recovery_prompt: multilingualRuntime.recoveryPrompt(
+        row.current_language || row.primary_language || row.initial_language,
+      ),
     };
   }
 
@@ -173,6 +201,7 @@ function applyCallLanguage(callSessionId, language, opts = {}) {
       speaker: resolved.voice_lock.speaker,
       model: resolved.voice_lock.model || '',
       persona: resolved.voice_lock.persona || row.voice_lock.persona || null,
+      speed: row.voice_lock.speed,
     });
     row.current_language = resolved.language;
   } else {
@@ -188,7 +217,38 @@ function applyCallLanguage(callSessionId, language, opts = {}) {
     speaker_unchanged: !!resolved.speaker_unchanged,
     provider_unchanged: !!resolved.provider_unchanged,
     source: resolved.source,
+    tts_language: row.current_language,
   };
+}
+
+/**
+ * Record one turn of language/STT/ASR/TTS observability on the session.
+ */
+function recordLanguageTurn(callSessionId, turn = {}) {
+  const id = String(callSessionId || '').trim();
+  const row = ACTIVE.get(id);
+  if (!row) {
+    return { ok: false, code: 'call_voice_session_missing' };
+  }
+  const entry = {
+    at: nowIso(),
+    primary_language: row.primary_language || row.initial_language,
+    allowed_languages: Array.isArray(row.allowed_languages) ? row.allowed_languages.slice() : [],
+    detected_language: turn.detected_language || null,
+    response_language: turn.response_language || row.current_language,
+    raw_transcript: turn.raw_transcript != null ? String(turn.raw_transcript).slice(0, 500) : null,
+    final_transcript: turn.final_transcript != null ? String(turn.final_transcript).slice(0, 500) : null,
+    asr_guard: turn.asr_guard || null,
+    tts_language: turn.tts_language || row.current_language,
+    tts_voice: (row.voice_lock && (row.voice_lock.speaker || row.voice_lock.voice_id)) || null,
+    stt: row.stt || multilingualRuntime.PLATFORM_STT,
+  };
+  if (!Array.isArray(row.turn_trace)) row.turn_trace = [];
+  row.turn_trace.push(entry);
+  if (row.turn_trace.length > 40) row.turn_trace = row.turn_trace.slice(-40);
+  row.updated_at = nowIso();
+  ACTIVE.set(id, row);
+  return { ok: true, turn: entry, call_session_id: id };
 }
 
 /**
@@ -249,6 +309,13 @@ function voiceLockContextVariables(session) {
   if (!session || !session.voice_lock) return {};
   const lock = session.voice_lock;
   const speed = lock.speed != null ? String(lock.speed) : '';
+  const multi = multilingualRuntime.multilingualContextVariables({
+    primary_language: session.primary_language || session.initial_language,
+    allowed_languages: session.allowed_languages,
+    response_language: session.current_language || session.initial_language,
+    stt: session.stt || multilingualRuntime.PLATFORM_STT,
+    multilingual: Array.isArray(session.allowed_languages) && session.allowed_languages.length > 1,
+  });
   return {
     astra_voice_lock_provider: lock.provider || '',
     astra_voice_lock_speaker: lock.speaker || lock.voice_id || '',
@@ -261,10 +328,12 @@ function voiceLockContextVariables(session) {
     astra_voice_current_language: session.current_language || session.initial_language || '',
     astra_call_session_id: session.call_session_id || '',
     // TTS snapshot follows the lock (speaker + speed stay for the call).
+    // language_code MUST track current_language (never stuck at en-IN).
     astra_tts_provider: lock.provider || '',
     astra_tts_voice: lock.speaker || lock.voice_id || '',
     astra_tts_language: session.current_language || session.initial_language || '',
     astra_tts_speed: speed || '',
+    ...multi,
   };
 }
 
@@ -282,6 +351,7 @@ module.exports = {
   getCallVoiceSession,
   bindCallVoiceSession,
   applyCallLanguage,
+  recordLanguageTurn,
   endCallVoiceSession,
   resolveChannelVoice,
   voiceLockContextVariables,

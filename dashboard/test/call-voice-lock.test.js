@@ -49,18 +49,52 @@ test('INITIAL LANGUAGE ROUTING: Vaani Telugu starts on Sarvam neha and locks', (
   assert.equal(started.route_semantics, 'call_start_only');
 });
 
-test('SESSION VOICE LOCK: Hindi start locks priya; English start locks Rumik speaker_2', () => {
+test('SESSION VOICE LOCK: Hindi persona start locks priya; EN persona stays Rumik (no silent remount)', () => {
   const hi = router.createSessionVoiceLock({
     persona: 'vaani', language: 'hi-IN', mode: 'astra_auto',
   });
   assert.equal(hi.voice_lock.speaker, 'priya');
   assert.equal(hi.voice_lock.provider, 'sarvam');
 
+  // Without UI selection, persona EN route is Rumik. Platform must NOT silently
+  // remount onto Sarvam/priya. Mid-call Indic then fails under locked policy
+  // (UI should select a multilingual Sarvam speaker for bilingual employees).
   const en = router.createSessionVoiceLock({
     persona: 'vaani', language: 'en-IN', mode: 'astra_auto',
   });
   assert.equal(en.voice_lock.provider, 'rumik');
   assert.equal(en.voice_lock.speaker, 'speaker_2');
+  const mid = router.resolveLockedVoice(en.voice_lock, 'te-IN', { voice_switch_policy: 'locked' });
+  assert.equal(mid.ok, false);
+  assert.equal(mid.code, 'locked_voice_language_unsupported');
+});
+
+test('UI-selected Sarvam speaker locks for EN start and stays through TE mid-call', () => {
+  const started = router.createSessionVoiceLock({
+    employee: {
+      id: 'emp_ui_voice',
+      voice: {
+        language: 'en-IN',
+        languageVoiceConfig: {
+          'en-IN': { voice_id: 'tanya', speed: 1, provider: 'sarvam', model: 'bulbul:v3' },
+          'te-IN': { voice_id: 'tanya', speed: 1 },
+          'hi-IN': { voice_id: 'tanya', speed: 1 },
+        },
+      },
+    },
+    persona: 'vaani',
+    language: 'en-IN',
+    mode: 'astra_auto',
+  });
+  assert.equal(started.ok, true);
+  assert.equal(started.source, 'language_voice_config');
+  assert.equal(started.voice_lock.provider, 'sarvam');
+  assert.equal(started.voice_lock.speaker, 'tanya');
+  const mid = router.resolveLockedVoice(started.voice_lock, 'te-IN', { voice_switch_policy: 'locked' });
+  assert.equal(mid.ok, true);
+  assert.equal(mid.language, 'te-IN');
+  assert.equal(mid.route.voice_id, 'tanya');
+  assert.equal(mid.speaker_unchanged, true);
 });
 
 test('MID-CALL LANGUAGE SWITCH + SPEAKER STAYS SAME: Sarvam lock keeps speaker', () => {
@@ -80,11 +114,15 @@ test('MID-CALL LANGUAGE SWITCH + SPEAKER STAYS SAME: Sarvam lock keeps speaker',
 });
 
 test('locked_voice_language_unsupported: Rumik lock cannot speak Hindi', () => {
-  const started = router.createSessionVoiceLock({
-    persona: 'vaani', language: 'en-IN', mode: 'astra_auto',
-  });
-  assert.equal(started.voice_lock.provider, 'rumik');
-  const mid = router.resolveLockedVoice(started.voice_lock, 'hi-IN', {
+  // Explicit Rumik lock (English-only employee / forced provider). Multilingual
+  // Vaani Auto no longer creates Rumik locks at EN start.
+  const rumikLock = {
+    provider: 'rumik',
+    speaker: 'speaker_2',
+    model: 'mulberry',
+    persona: 'vaani',
+  };
+  const mid = router.resolveLockedVoice(rumikLock, 'hi-IN', {
     voice_switch_policy: 'locked',
   });
   assert.equal(mid.ok, false);
@@ -178,17 +216,77 @@ test('call session applyCallLanguage keeps speaker under locked policy', () => {
   callVoice.endCallVoiceSession(s.call_session_id);
 });
 
-test('Maya default policy is locked; fallback_allowed required to change speaker', () => {
+test('Maya UI voice is locked (not production_protected→priya); Tanya and Priya both work', () => {
   assert.equal(router.normalizeVoiceSwitchPolicy(undefined, { personaId: 'maya' }), 'locked');
-  const started = router.createSessionVoiceLock({
-    persona: 'maya', language: 'en-IN', mode: 'astra_auto',
+
+  const tanya = router.createSessionVoiceLock({
+    persona: 'maya',
+    language: 'te-IN',
+    mode: 'astra_auto',
+    employee: {
+      id: 'emp_maya_tanya',
+      voice: {
+        language: 'te-IN',
+        languageVoiceConfig: {
+          'en-IN': { voice_id: 'tanya', speed: 1 },
+          'te-IN': { voice_id: 'tanya', speed: 1.1 },
+          'hi-IN': { voice_id: 'tanya', speed: 1 },
+        },
+      },
+    },
   });
-  assert.equal(started.voice_switch_policy, 'locked');
-  assert.equal(started.voice_lock.provider, 'deepgram');
-  assert.equal(started.voice_lock.speaker, 'aura-2-helena-en');
-  // Locked English Deepgram cannot speak Telugu.
-  const mid = router.resolveLockedVoice(started.voice_lock, 'te-IN', { policy: 'locked' });
-  assert.equal(mid.code, 'locked_voice_language_unsupported');
+  assert.equal(tanya.voice_switch_policy, 'locked');
+  assert.equal(tanya.source, 'language_voice_config');
+  assert.equal(tanya.voice_lock.provider, 'sarvam');
+  assert.equal(tanya.voice_lock.speaker, 'tanya');
+  const midTe = router.resolveLockedVoice(tanya.voice_lock, 'hi-IN', { policy: 'locked' });
+  assert.equal(midTe.ok, true);
+  assert.equal(midTe.language, 'hi-IN');
+  assert.equal(midTe.speaker_unchanged, true);
+  assert.equal(midTe.route.voice_id, 'tanya');
+
+  const priya = router.createSessionVoiceLock({
+    persona: 'maya',
+    language: 'te-IN',
+    mode: 'astra_auto',
+    employee: {
+      id: 'emp_maya_priya',
+      voice: {
+        language: 'te-IN',
+        languageVoiceConfig: {
+          'en-IN': { voice_id: 'priya', speed: 1 },
+          'te-IN': { voice_id: 'priya', speed: 1 },
+        },
+      },
+    },
+  });
+  assert.equal(priya.voice_lock.speaker, 'priya');
+  const midEn = router.resolveLockedVoice(priya.voice_lock, 'en-IN', { policy: 'locked' });
+  assert.equal(midEn.ok, true);
+  assert.equal(midEn.route.voice_id, 'priya');
+
+  // New call after UI voice change picks the new speaker.
+  assert.notEqual(tanya.voice_lock.speaker, priya.voice_lock.speaker);
+});
+
+test('Maya and Vaani identical: same UI Tanya selection → same lock behavior', () => {
+  const cfg = {
+    language: 'en-IN',
+    languageVoiceConfig: {
+      'en-IN': { voice_id: 'tanya', speed: 1 },
+      'te-IN': { voice_id: 'tanya', speed: 1 },
+    },
+  };
+  const maya = router.createSessionVoiceLock({
+    persona: 'maya', language: 'en-IN', employee: { id: 'emp_m', voice: cfg },
+  });
+  const vaani = router.createSessionVoiceLock({
+    persona: 'vaani', language: 'en-IN', employee: { id: 'emp_v', voice: cfg },
+  });
+  assert.equal(maya.voice_lock.speaker, 'tanya');
+  assert.equal(vaani.voice_lock.speaker, 'tanya');
+  assert.equal(maya.voice_lock.provider, vaani.voice_lock.provider);
+  assert.equal(maya.source, vaani.source);
 });
 
 test('languageVoiceConfig overrides persona starting route; preview text never saved', () => {

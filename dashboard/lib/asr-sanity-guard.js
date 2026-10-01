@@ -47,10 +47,21 @@ const GARBAGE_MARKERS = Object.freeze([
   'jc', 'xyz', 'asdf', 'qwerty', 'lorem', 'ipsum',
 ]);
 
-/** Telugu Unicode block (approx) + common TE loan markers. */
+/** Telugu + Devanagari + full curated Indic script blocks (platform languages). */
 const TELUGU_RE = /[\u0C00-\u0C7F]/;
 const DEVANAGARI_RE = /[\u0900-\u097F]/;
+const TAMIL_RE = /[\u0B80-\u0BFF]/;
+const KANNADA_RE = /[\u0C80-\u0CFF]/;
+const MALAYALAM_RE = /[\u0D00-\u0D7F]/;
+const BENGALI_RE = /[\u0980-\u09FF]/;
+const GUJARATI_RE = /[\u0A80-\u0AFF]/;
+const GURMUKHI_RE = /[\u0A00-\u0A7F]/;
 const LATIN_WORD_RE = /[A-Za-z']+/g;
+
+/** Short valid particles (EN + Hinglish) that must not trigger too_short_noise. */
+const SHORT_OK = Object.freeze([
+  'ok', 'hi', 'no', 'ha', 'ji', 'haan', 'han', 'yes', 'na', 'oh', 'mm', 'hmm',
+]);
 
 function tokenizeLatin(text) {
   const m = String(text || '').match(LATIN_WORD_RE);
@@ -59,7 +70,14 @@ function tokenizeLatin(text) {
 
 function hasIndicScript(text) {
   const s = String(text || '');
-  return TELUGU_RE.test(s) || DEVANAGARI_RE.test(s);
+  return TELUGU_RE.test(s)
+    || DEVANAGARI_RE.test(s)
+    || TAMIL_RE.test(s)
+    || KANNADA_RE.test(s)
+    || MALAYALAM_RE.test(s)
+    || BENGALI_RE.test(s)
+    || GUJARATI_RE.test(s)
+    || GURMUKHI_RE.test(s);
 }
 
 function businessHitRate(tokens) {
@@ -159,8 +177,8 @@ function evaluateTranscript(text, opts = {}) {
   if (looksLikeWordSalad(raw)) {
     reasons.push('semantic_garbage');
   }
-  // Extremely short Latin-only noise.
-  if (!indic && tokens.length === 1 && tokens[0].length <= 2 && !['ok', 'hi', 'no', 'ha'].includes(tokens[0])) {
+  // Extremely short Latin-only noise (allow common EN/Hinglish particles).
+  if (!indic && tokens.length === 1 && tokens[0].length <= 2 && !SHORT_OK.includes(tokens[0])) {
     reasons.push('too_short_noise');
   }
 
@@ -198,13 +216,20 @@ function isBookingOrScheduleIntent(text) {
 
 /**
  * Clarification line when ASR is rejected. Never invents the caller's content.
+ * Prefer localized recovery via multilingual-runtime when language is known.
  */
-function clarificationPrompt(evalResult) {
+function clarificationPrompt(evalResult, opts = {}) {
   if (!evalResult || evalResult.action === 'accept') return null;
-  if (evalResult.action === 'reject') {
-    return 'I did not catch that clearly. Could you say that again in one short sentence?';
+  try {
+    const multilingualRuntime = require('./multilingual-runtime');
+    const lang = opts.language || opts.current_language || opts.last_known || 'en-IN';
+    return multilingualRuntime.recoveryPrompt(lang, { action: evalResult.action });
+  } catch (_) {
+    if (evalResult.action === 'reject') {
+      return 'I did not catch that clearly. Could you say that again in one short sentence?';
+    }
+    return "Sorry, I didn't catch that. Could you say it again?";
   }
-  return 'Sorry, one quick check. Could you repeat that?';
 }
 
 /**

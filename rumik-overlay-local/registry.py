@@ -1589,10 +1589,12 @@ class GoogleSTTConfiguration(BaseSTTConfiguration):
 # Dograh STT Service
 DOGRAH_STT_MODELS = ["default"]
 DOGRAH_STT_LANGUAGES = DEEPGRAM_LANGUAGES
-# Languages auto-detected when the Dograh STT language is "multi". Dograh STT runs
-# Deepgram Flux multilingual under the hood, which only auto-detects this subset —
-# not the full DOGRAH_STT_LANGUAGES list offered for explicit single-language selection.
+# language=multi must NOT route to Flux. Flux autodect lacks Telugu and most
+# Indic languages (see dograh_stt_uses_flux_language). Prefer Deepgram
+# nova-3-general + multi (or Dograh non-Flux STT) for EN+Indic multilingual.
+# Flux multilingual subset kept here for documentation of the banned path only.
 DOGRAH_MULTILINGUAL_AUTODETECT_LANGUAGES = DEEPGRAM_FLUX_MULTILINGUAL_LANGUAGES
+DOGRAH_FLUX_BANNED_FOR_INDIC_MULTI = True
 
 
 @register_stt

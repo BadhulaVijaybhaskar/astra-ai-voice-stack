@@ -21,7 +21,8 @@
  *
  * Do NOT send Indic text to Rumik and claim multilingual support.
  * Do NOT expose provider credentials.
- * Do NOT mutate Maya production TTS / Dograh WF8.
+ * Do NOT hardcode employee-name speaker freezes (no Maya→priya,
+ * no production_protected→priya). UI-selected voice is source of truth.
  *
  * No em dashes anywhere. Commas and periods only.
  */
@@ -851,8 +852,51 @@ function seedLanguageVoiceConfigFromPersona(personaOrId, existingConfig) {
 }
 
 /**
- * Call-start routing: resolve persona starting route for initial language and
- * create a session voice_lock. Persona language_routes apply ONLY here.
+ * Infer TTS provider/model for a UI-selected voice_id when the row omits them.
+ * Never invents a different speaker. Never hardcodes employee names.
+ */
+function inferProviderModelForVoiceId(voiceId, hints = {}) {
+  const vid = String(voiceId || '').trim();
+  let provider = String(hints.provider || '').trim().toLowerCase();
+  let model = String(hints.model || '').trim();
+  if (!provider && vid) {
+    const known = voiceCatalog.findVoice('sarvam', vid)
+      || voiceCatalog.findVoice('rumik', vid)
+      || voiceCatalog.findVoice('deepgram', vid);
+    if (known) {
+      provider = known.provider;
+      model = model || known.model || '';
+    } else if (/^speaker_\d+$/i.test(vid)) {
+      provider = 'rumik';
+      model = model || 'mulberry';
+    } else if (/^aura-/i.test(vid)) {
+      provider = 'deepgram';
+      model = model || 'aura-2';
+    }
+  }
+  if (!provider) {
+    const lang = normalizeLanguageCode(hints.language) || 'en-IN';
+    provider = isEnglishLanguage(lang) ? 'rumik' : 'sarvam';
+  }
+  if (!model) {
+    model = provider === 'sarvam' ? 'bulbul:v3'
+      : (provider === 'deepgram' ? 'aura-2' : 'mulberry');
+  }
+  return { provider, model };
+}
+
+/**
+ * Call-start routing: lock the UI-selected speaker for this call/session.
+ *
+ * Source of truth (first match wins):
+ *   1. languageVoiceConfig[initial_language] voice_id/speaker
+ *   2. employee.voice.selected_voice_id / speaker / voice_id (+ provider/model)
+ *   3. persona language_routes for initial language (catalog default only)
+ *   4. pipeline TTS snapshot
+ *
+ * Platform-wide: no employee-name hardcodes, no production_protected→priya
+ * freeze, no silent speaker remounts. Mid-call only updates language_code when
+ * the locked speaker supports the target language.
  *
  * @returns {{ ok: true, employee_id, initial_language, voice_lock, voice_switch_policy, route, source }
  *   | { ok: false, code, error, ... }}
@@ -880,12 +924,12 @@ function createSessionVoiceLock(input = {}) {
       || input.initial_language
       || input.preferred_language
       || input.preferredLanguage
-      || (employee && employee.voice && employee.voice.language)
+      || (employee && employee.voice && (employee.voice.primary_language || employee.voice.language))
       || (employee && employee.language)
       || '',
   ) || 'en-IN';
 
-  // Per-employee languageVoiceConfig overrides persona starting route when set.
+  // Per-employee languageVoiceConfig is the UI starting-voice map.
   const langVoiceCfg = (employee && employee.voice && employee.voice.languageVoiceConfig)
     || input.languageVoiceConfig
     || input.language_voice_config
@@ -894,44 +938,82 @@ function createSessionVoiceLock(input = {}) {
     ? (langVoiceCfg[initialLanguage] || null)
     : null;
 
+  const voiceBlob = (employee && employee.voice) || {};
+  // Explicit UI selection only. Default Rumik speaker_* / aura blobs on
+  // normalizeVoice must NOT override persona language_routes when the
+  // languageVoiceConfig row is empty. Sarvam catalog ids (priya, tanya, …)
+  // are treated as intentional UI selections.
+  const selectedVoiceId = (() => {
+    const explicit = String(
+      input.selected_voice_id
+        || input.selectedVoiceId
+        || voiceBlob.selected_voice_id
+        || voiceBlob.selectedVoiceId
+        || voiceBlob.voice_id
+        || '',
+    ).trim();
+    if (explicit) return explicit;
+    const speaker = String(
+      (input.force_selected_voice || input.speaker != null)
+        ? (input.speaker || '')
+        : (voiceBlob.speaker || ''),
+    ).trim();
+    if (!speaker) return '';
+    if (/^speaker_\d+$/i.test(speaker) || /^aura-/i.test(speaker)) {
+      // Honor English-only ids only when the caller explicitly requested them.
+      if (input.speaker != null || input.force_selected_voice || input.selected_voice_id) {
+        return speaker;
+      }
+      return '';
+    }
+    return speaker;
+  })();
+  const selectedProvider = String(
+    input.provider
+      || voiceBlob.provider
+      || '',
+  ).trim().toLowerCase();
+  const selectedModel = String(
+    input.model
+      || voiceBlob.model
+      || '',
+  ).trim();
+
   let resolved;
   let lockedSpeed = 1;
+
   if (cfgRow && (cfgRow.voice_id || cfgRow.speaker)) {
+    // 1) UI languageVoiceConfig row for this call's starting language.
     const voiceId = String(cfgRow.voice_id || cfgRow.speaker).trim();
+    lockedSpeed = Number.isFinite(Number(cfgRow.speed)) ? Number(cfgRow.speed) : 1;
     let provider = String(cfgRow.provider || '').trim().toLowerCase();
     let model = String(cfgRow.model || '').trim();
-    lockedSpeed = Number.isFinite(Number(cfgRow.speed)) ? Number(cfgRow.speed) : 1;
-    if (!provider) {
-      const known = voiceCatalog.findVoice('sarvam', voiceId)
-        || voiceCatalog.findVoice('rumik', voiceId)
-        || voiceCatalog.findVoice('deepgram', voiceId);
-      if (known) {
-        provider = known.provider;
-        model = model || known.model || '';
-      } else if (persona) {
-        const personaRoute = persona.language_routes && persona.language_routes[initialLanguage];
-        if (personaRoute) {
-          provider = personaRoute.provider;
-          model = model || personaRoute.model || '';
-        }
-      }
+    if (!provider || !model) {
+      const inferred = inferProviderModelForVoiceId(voiceId, {
+        provider: provider || selectedProvider,
+        model: model || selectedModel,
+        language: initialLanguage,
+      });
+      provider = provider || inferred.provider;
+      model = model || inferred.model;
     }
-    if (!provider && persona) {
+    // Persona route may fill missing provider/model only — never replace voiceId.
+    if ((!provider || !model) && persona) {
       const pr = resolvePersonaRoute(persona, initialLanguage, mode, { provider: input.provider });
       if (pr.ok) {
-        provider = pr.route.provider;
+        provider = provider || pr.route.provider;
         model = model || pr.route.model || '';
       }
     }
-    if (!provider) {
-      provider = isEnglishLanguage(initialLanguage) ? 'rumik' : 'sarvam';
-    }
+    const inferred = inferProviderModelForVoiceId(voiceId, {
+      provider, model, language: initialLanguage,
+    });
     resolved = {
       ok: true,
       route: {
-        provider,
+        provider: inferred.provider,
         voice_id: voiceId,
-        model: model || (provider === 'sarvam' ? 'bulbul:v3' : (provider === 'deepgram' ? 'aura-2' : 'mulberry')),
+        model: inferred.model,
         language: initialLanguage,
         speed: lockedSpeed,
       },
@@ -940,13 +1022,36 @@ function createSessionVoiceLock(input = {}) {
       mode,
       source: 'language_voice_config',
     };
+  } else if (selectedVoiceId) {
+    // 2) Top-level UI-selected speaker (selected_voice_id / speaker / voice_id).
+    lockedSpeed = Number.isFinite(Number(voiceBlob.speed)) ? Number(voiceBlob.speed) : 1;
+    const inferred = inferProviderModelForVoiceId(selectedVoiceId, {
+      provider: selectedProvider,
+      model: selectedModel,
+      language: initialLanguage,
+    });
+    resolved = {
+      ok: true,
+      route: {
+        provider: inferred.provider,
+        voice_id: selectedVoiceId,
+        model: inferred.model,
+        language: initialLanguage,
+        speed: lockedSpeed,
+      },
+      persona: persona ? publicPersona(persona) : null,
+      language: initialLanguage,
+      mode,
+      source: 'employee_selected_voice',
+    };
   } else if (persona) {
+    // 3) Persona catalog starting route (defaults only when UI has no selection).
     resolved = resolvePersonaRoute(persona, initialLanguage, mode, {
       provider: input.provider,
     });
     lockedSpeed = 1;
   } else if (input.pipelineTts && input.pipelineTts.provider && input.pipelineTts.voice_id) {
-    // No persona map: lock the employee pipeline TTS snapshot as-is.
+    // 4) Pipeline TTS snapshot.
     const pipeLang = normalizeLanguageCode(input.pipelineTts.language) || initialLanguage;
     lockedSpeed = Number.isFinite(Number(input.pipelineTts.speed))
       ? Number(input.pipelineTts.speed)
@@ -968,7 +1073,7 @@ function createSessionVoiceLock(input = {}) {
   } else {
     return {
       ok: false,
-      error: 'Cannot establish call voice lock without persona or pipeline TTS',
+      error: 'Cannot establish call voice lock without UI voice, persona, or pipeline TTS',
       code: 'voice_lock_unavailable',
       employee_id: employeeId,
       language: initialLanguage,
@@ -996,6 +1101,23 @@ function createSessionVoiceLock(input = {}) {
     persona: personaId,
   });
 
+  // Compatibility assessment only — never remount/swap the locked speaker.
+  let multilingual_compat = null;
+  try {
+    const multilingualRuntime = require('./multilingual-runtime');
+    multilingual_compat = multilingualRuntime.assessMultilingualVoiceCompatibility(
+      voice_lock,
+      employee,
+      {
+        languageVoiceConfig: langVoiceCfg,
+        persona_language_routes: persona && persona.language_routes,
+        initial_language: initialLanguage,
+      },
+    );
+  } catch (_) {
+    multilingual_compat = null;
+  }
+
   return {
     ok: true,
     employee_id: employeeId,
@@ -1013,6 +1135,7 @@ function createSessionVoiceLock(input = {}) {
     source: resolved.source || 'persona_route',
     // Persona routes / languageVoiceConfig are starting voices only.
     route_semantics: 'call_start_only',
+    multilingual_compat: multilingual_compat || undefined,
   };
 }
 
