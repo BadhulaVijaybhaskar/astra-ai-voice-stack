@@ -180,7 +180,7 @@ function mapUpstreamPreviewError(err, providerId) {
   );
 }
 
-function buildSynthesizeOpts(providerId, voiceId, language, text) {
+function buildSynthesizeOpts(providerId, voiceId, language, text, speed) {
   const known = voiceCatalog.findVoice(providerId, voiceId);
   const opts = {
     text,
@@ -188,6 +188,8 @@ function buildSynthesizeOpts(providerId, voiceId, language, text) {
     voice_id: voiceId || undefined,
     speaker: voiceId || undefined,
   };
+  const spd = Number(speed);
+  if (Number.isFinite(spd) && spd > 0) opts.speed = spd;
   if (providerId === 'deepgram') {
     const model = (known && known.voice_id) || voiceId || (known && known.model) || 'aura-2-helena-en';
     opts.model = model;
@@ -212,9 +214,9 @@ function buildSynthesizeOpts(providerId, voiceId, language, text) {
  * Optional asJsonUrl: when true and a public URL is available, callers may
  * prefer { audio_url, mime_type }. This path always returns bytes today.
  */
-async function synthesizeWithProvider(provider, voiceId, language, text) {
+async function synthesizeWithProvider(provider, voiceId, language, text, speed) {
   gateProvider(provider);
-  const opts = buildSynthesizeOpts(provider, voiceId, language, text);
+  const opts = buildSynthesizeOpts(provider, voiceId, language, text, speed);
   let adapter;
   try {
     adapter = providers.get('tts', provider);
@@ -293,7 +295,10 @@ async function synthesizePreview(input = {}) {
 
   // Astra Auto / auto: resolve persona language_routes when available.
   // Explicit provider (e.g. Rumik) wins over Auto and must not be rewritten.
+  // Explicit voice_id from the language-voice table wins over persona starting
+  // route (preview / languageVoiceConfig editor).
   const usePersonaAuto = persona && (!provider || provider === 'auto');
+  const callerVoiceId = voiceId;
 
   if (usePersonaAuto) {
     const resolved = personaRouter.resolvePersonaRoute(
@@ -314,26 +319,49 @@ async function synthesizePreview(input = {}) {
       );
     }
     routeMeta = resolved;
-    provider = resolved.route.provider;
-    // Prefer persona-mapped speaker. Only keep caller voice_id when it belongs
-    // to the resolved provider (avoids Rumik speaker_2 leaking into Sarvam Indic).
-    if (!voiceId) {
-      voiceId = resolved.route.voice_id;
+    if (callerVoiceId) {
+      // Table editor / languageVoiceConfig: keep selected speaker. Infer provider
+      // from catalog when the persona starting route engine does not own it.
+      const onRouteProvider = voiceCatalog.findVoice(resolved.route.provider, callerVoiceId);
+      if (onRouteProvider) {
+        provider = resolved.route.provider;
+        voiceId = callerVoiceId;
+      } else {
+        let inferred = null;
+        for (const pid of ['sarvam', 'rumik', 'deepgram']) {
+          const hit = voiceCatalog.findVoice(pid, callerVoiceId);
+          if (hit) { inferred = pid; break; }
+        }
+        if (inferred) {
+          provider = inferred;
+          voiceId = callerVoiceId;
+        } else {
+          provider = resolved.route.provider;
+          voiceId = resolved.route.voice_id;
+        }
+      }
     } else {
-      const known = voiceCatalog.findVoice(provider, voiceId);
-      if (!known) voiceId = resolved.route.voice_id;
+      provider = resolved.route.provider;
+      voiceId = resolved.route.voice_id;
     }
   }
 
   const displayName = (persona && persona.display_name)
     || (employee && employee.name)
     || 'Astra';
+  // Preview text is request-scoped only. Never written to employee instructions
+  // or knowledge (preview_only / languageVoiceConfig save path).
   const text = String(
     input.text != null
       ? input.text
       : personaRouter.getPreviewText(effectiveLanguage || 'en-IN', displayName),
   ).slice(0, PREVIEW_MAX_TEXT);
   if (!text.trim()) throw new PreviewError('text is required', 422, 'no_text');
+
+  const previewSpeed = Number(input.speed);
+  const speed = Number.isFinite(previewSpeed) && previewSpeed > 0
+    ? Math.max(0.7, Math.min(1.2, previewSpeed))
+    : undefined;
 
   if (!provider) {
     throw new PreviewError('provider is required', 422, 'provider_required');
@@ -382,7 +410,7 @@ async function synthesizePreview(input = {}) {
   let usedFallback = false;
   let fallbackRoute = null;
   try {
-    out = await synthesizeWithProvider(provider, voiceId, effectiveLanguage, text);
+    out = await synthesizeWithProvider(provider, voiceId, effectiveLanguage, text, speed);
   } catch (e) {
     // Attempt compatible fallback. Never English-only engine for Indic.
     if (persona && effectiveLanguage) {
@@ -398,6 +426,7 @@ async function synthesizePreview(input = {}) {
             fb.route.voice_id,
             effectiveLanguage,
             text,
+            speed,
           );
           usedFallback = true;
           fallbackRoute = fb.route;

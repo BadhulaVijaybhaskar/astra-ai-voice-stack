@@ -63,6 +63,8 @@ const endOfCallPipeline = require('./lib/end-of-call-pipeline');
 const voiceCatalog = require('./lib/tts-voice-catalog');
 const unifiedVoiceCatalog = require('./lib/voice-catalog');
 const voicePreview = require('./lib/voice-preview');
+const callVoiceSession = require('./lib/call-voice-session');
+const personaRouter = require('./lib/voice-persona-router');
 const aiEmployeeJourney = require('./lib/ai-employee-journey');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
@@ -988,12 +990,15 @@ async function mintDograhVoiceSession(req, context) {
 
   // Attach employee runtime model selection (never secrets) so Browser Talk
   // sessions are attributable to the selected employee config.
+  let pipelineTts = null;
+  let runtimeSource = null;
   if (employee) {
     const resolved = employeeRuntimeConfig.resolveEmployeePipeline(
       db, tenantId, employee.id, context.preferDraft ? 'draft' : 'auto',
     );
     if (resolved.ok && resolved.pipeline) {
       const p = resolved.pipeline;
+      runtimeSource = resolved.source;
       contextVariables.astra_runtime_source = resolved.source;
       if (p.llm) {
         contextVariables.astra_llm_provider = p.llm.provider;
@@ -1005,11 +1010,45 @@ async function mintDograhVoiceSession(req, context) {
         contextVariables.astra_stt_language = p.stt.language;
       }
       if (p.tts) {
+        pipelineTts = p.tts;
         contextVariables.astra_tts_provider = p.tts.provider;
         contextVariables.astra_tts_voice = p.tts.voice_id;
         contextVariables.astra_tts_language = p.tts.language;
         contextVariables.astra_tts_speed = String(p.tts.speed);
       }
+    }
+  }
+
+  // Call-level voice lock. Persona / languageVoiceConfig pick STARTING voice only.
+  // Mid-call language switches keep provider + speaker. Never persist lock across calls.
+  // Does not mutate Maya production TTS / Dograh WF8.
+  let voiceSession = null;
+  if (employee) {
+    const preferredLanguage = context.preferredLanguage || context.preferred_language || null;
+    const initialLanguage = context.language || context.initialLanguage || preferredLanguage || null;
+    const personaId = personaRouter.resolvePersonaId(employee);
+    const policy = context.voiceSwitchPolicy || context.voice_switch_policy
+      || personaRouter.DEFAULT_VOICE_SWITCH_POLICY;
+    voiceSession = callVoiceSession.startCallVoiceSession({
+      employee,
+      persona: personaId,
+      language: initialLanguage,
+      preferred_language: preferredLanguage,
+      mode: context.voiceMode || context.mode || 'astra_auto',
+      pipelineTts,
+      voice_switch_policy: policy,
+      channel: context.channel || callVoiceSession.CHANNELS.BROWSER,
+      forceLocked: personaId === 'maya' || policy === personaRouter.VOICE_SWITCH_POLICIES.LOCKED,
+    });
+    if (voiceSession && voiceSession.ok) {
+      Object.assign(contextVariables, callVoiceSession.voiceLockContextVariables(voiceSession));
+      if (pipelineTts && pipelineTts.speed != null && contextVariables.astra_tts_speed == null) {
+        contextVariables.astra_tts_speed = String(pipelineTts.speed);
+      }
+      const lockSpeed = voiceSession.route && voiceSession.route.speed;
+      if (lockSpeed != null) contextVariables.astra_tts_speed = String(lockSpeed);
+    } else {
+      voiceSession = null;
     }
   }
 
@@ -1021,6 +1060,9 @@ async function mintDograhVoiceSession(req, context) {
   const text = await upstream.text(); let data = {};
   try { data = JSON.parse(text); } catch (_) {}
   if (!upstream.ok) {
+    if (voiceSession && voiceSession.call_session_id) {
+      callVoiceSession.endCallVoiceSession(voiceSession.call_session_id);
+    }
     const error = new Error(String(data.detail || 'Could not start the realtime voice session'));
     error.status = upstream.status; error.code = 'voice_session_failed'; throw error;
   }
@@ -1049,6 +1091,11 @@ async function mintDograhVoiceSession(req, context) {
   const sessionWorkflowId = providerWorkflowId
     || (data.config && data.config.workflow_id)
     || null;
+  if (voiceSession && voiceSession.call_session_id && data.workflow_run_id) {
+    callVoiceSession.bindCallVoiceSession(voiceSession.call_session_id, {
+      workflow_run_id: data.workflow_run_id,
+    });
+  }
   return {
     sessionToken: data.session_token,
     workflowRunId: data.workflow_run_id,
@@ -1059,9 +1106,16 @@ async function mintDograhVoiceSession(req, context) {
     signalingUrl: base.replace(/^http/, 'ws') + '/api/v1/ws/public/signaling/' + encodeURIComponent(data.session_token),
     turnCredentials,
     runtime: 'Astra Voice Runtime',
-    runtimeConfigSource: employee
-      ? (employeeRuntimeConfig.resolveEmployeePipeline(db, tenantId, employee.id, 'auto').source || null)
-      : null,
+    runtimeConfigSource: runtimeSource
+      || (employee
+        ? (employeeRuntimeConfig.resolveEmployeePipeline(db, tenantId, employee.id, 'auto').source || null)
+        : null),
+    callSessionId: voiceSession ? voiceSession.call_session_id : null,
+    voiceLock: voiceSession ? voiceSession.voice_lock : null,
+    voiceSwitchPolicy: voiceSession ? voiceSession.voice_switch_policy : null,
+    initialLanguage: voiceSession ? voiceSession.initial_language : null,
+    currentLanguage: voiceSession ? voiceSession.current_language : null,
+    sessionVoiceLocked: !!(voiceSession && voiceSession.voice_lock),
   };
 }
 
@@ -1073,11 +1127,63 @@ async function apiVoiceSession(req, res, ctx) {
       tenantId: ctx.tenant.id,
       agentId: body.agentId,
       employeeId: body.employeeId,
+      language: body.language || body.initialLanguage || body.initial_language,
+      preferredLanguage: body.preferred_language || body.preferredLanguage,
+      voiceSwitchPolicy: body.voice_switch_policy || body.voiceSwitchPolicy,
+      voiceMode: body.voice_mode || body.voiceMode || body.mode,
+      channel: body.channel || callVoiceSession.CHANNELS.BROWSER,
+      preferDraft: body.preferDraft === true,
     });
     core.sendJson(res, 200, session);
   } catch (error) {
     core.sendJson(res, error.status || 502, { error: error.message || 'Realtime voice session failed', code: error.code || 'voice_session_failed' });
   }
+}
+
+async function apiVoiceSessionLanguage(req, res, ctx) {
+  const body = ctx.body || {};
+  const callSessionId = body.callSessionId || body.call_session_id || ctx.params && ctx.params.id;
+  const language = body.language || body.target_language || body.targetLanguage;
+  if (!callSessionId) {
+    return core.sendJson(res, 422, { error: 'callSessionId required', code: 'missing_call_session_id' });
+  }
+  const result = callVoiceSession.applyCallLanguage(callSessionId, language, {
+    voice_switch_policy: body.voice_switch_policy || body.voiceSwitchPolicy,
+  });
+  if (!result.ok) {
+    return core.sendJson(res, result.code === 'call_voice_session_missing' ? 404 : 422, {
+      error: result.error,
+      code: result.code,
+      voice_lock: result.voice_lock || null,
+      language: result.language || language || null,
+      voice_switch_policy: result.voice_switch_policy || null,
+    });
+  }
+  core.sendJson(res, 200, result);
+}
+
+async function apiEmployeesLanguageVoiceConfigPut(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  let result;
+  await core.mutate((d) => {
+    result = employees.setEmployeeLanguageVoiceConfig(d, ctx.tenant.id, ctx.params.id, ctx.body || {});
+    if (result.ok) {
+      addAudit(d, ctx, 'employee.language_voice_config_updated', 'employee', ctx.params.id, {
+        languages: Object.keys(result.languageVoiceConfig || {}),
+        primary: result.language,
+        preview_text_saved: false,
+      });
+    }
+  });
+  if (!result.ok) {
+    return core.sendJson(res, result.status, { error: result.error, code: result.code });
+  }
+  core.sendJson(res, 200, {
+    employee: employees.publicEmployee(result.employee, core.db()),
+    language: result.language,
+    languageVoiceConfig: result.languageVoiceConfig,
+    preview_text_saved: false,
+  });
 }
 
 function tenantDemoLinks(tenantId) {
@@ -3324,6 +3430,8 @@ function matchEmployeesRoute(route) {
   if (actions) return { action: 'actions', id: decodeURIComponent(actions[1]) };
   const actionExec = route.match(/^\/api\/employees\/([^/]+)\/actions\/execute$/);
   if (actionExec) return { action: 'actions_execute', id: decodeURIComponent(actionExec[1]) };
+  const languageVoiceCfg = route.match(/^\/api\/employees\/([^/]+)\/language-voice-config$/);
+  if (languageVoiceCfg) return { action: 'language_voice_config', id: decodeURIComponent(languageVoiceCfg[1]) };
   const language = route.match(/^\/api\/employees\/([^/]+)\/language$/);
   if (language) return { action: 'language', id: decodeURIComponent(language[1]) };
   const voiceTier = route.match(/^\/api\/employees\/([^/]+)\/voice-tier$/);
@@ -4982,6 +5090,9 @@ const server = http.createServer(async (req, res) => {
           if (empPatch.action === 'language') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguagePut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
           }
+          if (empPatch.action === 'language_voice_config') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguageVoiceConfigPut(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
+          }
           if (empPatch.action === 'runtime_config' || empPatch.action === 'runtime_config_draft') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesRuntimeConfigDraft(rq, rs, { ...ctx, params: { id: empPatch.id } }), body);
           }
@@ -5018,6 +5129,7 @@ const server = http.createServer(async (req, res) => {
         const empPut = matchEmployeesRoute(route);
         if (empPut && (empPut.action === 'instructions' || empPut.action === 'outcomes' || empPut.action === 'workflow'
           || empPut.action === 'actions' || empPut.action === 'language'
+          || empPut.action === 'language_voice_config'
           || empPut.action === 'voice_tier'
           || empPut.action === 'runtime_config' || empPut.action === 'runtime_config_draft'
           || empPut.action === 'phone_config')) {
@@ -5038,6 +5150,9 @@ const server = http.createServer(async (req, res) => {
           }
           if (empPut.action === 'language') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguagePut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
+          }
+          if (empPut.action === 'language_voice_config') {
+            return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguageVoiceConfigPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
           }
           if (empPut.action === 'voice_tier') {
             return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesVoiceTierPut(rq, rs, { ...ctx, params: { id: empPut.id } }), body);
@@ -5152,6 +5267,7 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/chat') return core.requireAuth(req, res, apiChat, body);
       if (route === '/api/stt') return core.requireAuth(req, res, apiStt, body);
       if (route === '/api/voice/session') return core.requireAuth(req, res, apiVoiceSession, body);
+      if (route === '/api/voice/session/language') return core.requireAuth(req, res, apiVoiceSessionLanguage, body);
       if (route === '/api/demo-links') return core.requireRole(req, res, 'owner', apiDemoLinksCreate, body);
       if (route === '/api/demo-links/revoke') return core.requireRole(req, res, 'owner', apiDemoLinksRevoke, body);
       if (route === '/api/telephony/dial') return core.requireAuth(req, res, apiTelephonyDial, body);
@@ -5270,6 +5386,9 @@ const server = http.createServer(async (req, res) => {
         }
         if (empPost.action === 'language') {
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguagePut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
+        }
+        if (empPost.action === 'language_voice_config') {
+          return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesLanguageVoiceConfigPut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);
         }
         if (empPost.action === 'voice_tier') {
           return core.requireAuth(req, res, (rq, rs, ctx) => apiEmployeesVoiceTierPut(rq, rs, { ...ctx, params: { id: empPost.id } }), body);

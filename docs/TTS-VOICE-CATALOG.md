@@ -93,6 +93,27 @@ Default Vaani routes (female Natural):
 
 Fallbacks never send Indic text to an English-only engine. Maya has a persona map for Auto catalog only; **Maya production TTS / Dograh WF8 are not mutated**.
 
+### Call-level voice lock
+
+Persona `language_routes` (and employee `languageVoiceConfig`) mean **starting voice when a NEW call begins** in that language. They do **not** change the speaker on every mid-call language switch.
+
+At call start (Browser Talk, inbound PSTN, outbound PSTN share one path):
+
+1. Resolve initial language (explicit → contact `preferred_language` → employee primary).
+2. Resolve starting provider + speaker → create session `voice_lock`.
+3. Persist lock for the call only: `{ employee_id, initial_language, voice_lock: { provider, speaker, persona } }`.
+
+Mid-call: language may change; provider + speaker stay locked when the locked engine supports the target `language_code`. Otherwise return `locked_voice_language_unsupported` under default `voice_switch_policy = locked` (Astra + Maya). Never persist `voice_lock` onto the contact for the next call.
+
+### Language voice table (Employee Studio)
+
+Compact table: **Language | Voice | Speed | TTS Test Text | Preview | Status**.
+
+- TTS Test Text is editable, seeded with native samples, Use sample / Clear.
+- Preview synthesizes language + voice + speed + current text (max 500 chars).
+- Preview text is **never** saved as instructions or knowledge.
+- Save stores only `languageVoiceConfig` (`voice_id` + `speed`) and optional primary language.
+
 `GET /api/voice/catalog` includes `voice_personas` and `persona_routes_debug` (no credentials).
 
 ## Production safety
