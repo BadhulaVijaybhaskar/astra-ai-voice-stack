@@ -1202,7 +1202,7 @@ async function viewEmployeeCreate(root) {
     class: 'btn btn-ghost',
     style: 'margin-bottom:14px',
     onclick: () => { location.hash = '#/employees'; },
-  }, '← Back to My Employees'));
+  }, '← Back to AI Employees'));
 
   const templates = await ensureEmployeeTemplates(true).catch(() => []);
   let selectedKey = (templates[0] && templates[0].key) || 'custom';
