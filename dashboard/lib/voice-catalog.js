@@ -15,6 +15,7 @@
 
 const staticCatalog = require('./tts-voice-catalog');
 const dograhDiscovery = require('./dograh-voice-discovery');
+const personaRouter = require('./voice-persona-router');
 
 const VOICE_MODES = Object.freeze([
   Object.freeze({
@@ -545,6 +546,12 @@ async function getUnifiedCatalog(opts = {}) {
     astra_supported_languages: astraLanguages,
     // Product language UI uses curated Astra list only.
     languages_product: astraLanguages,
+    // Voice persona maps (Vaani / Maya). Provider credentials never included.
+    voice_personas: personaRouter.listPersonas(),
+    persona_routes_debug: {
+      vaani: personaRouter.debugRouteSummary('vaani'),
+      maya: personaRouter.debugRouteSummary('maya'),
+    },
     voices: flatVoices,
     // Prior endpoint compatibility fields
     languages: sarvamCompat.languages,
@@ -738,4 +745,5 @@ module.exports = {
   getTenantUnifiedDraftPrefs,
   setTenantUnifiedDraftPrefs,
   unifyVoice,
+  personaRouter,
 };
