@@ -1194,25 +1194,29 @@
 .emp-provider-state.is-funding { color: #B54708; }
 .emp-provider-state.is-creds { color: #B42318; }
 .emp-provider-state.is-unavailable { color: var(--ink-faint); }
-.emp-lang-chips { display:flex; flex-wrap:wrap; gap:8px; }
+.emp-lang-chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
 .emp-lang-chip {
-  display:inline-flex; align-items:center; gap:8px;
-  border:1px solid var(--line); border-radius:10px; padding:6px 10px; font-size:0.8rem;
-  background: #FFFFFF; cursor:pointer;
+  display:inline-flex; flex-direction:column; align-items:flex-start; gap:2px;
+  border:1px solid var(--line); border-radius:10px; padding:8px 12px; font:inherit;
+  font-size:0.84rem; background: #FFFFFF; color: var(--ink-soft); cursor:pointer;
 }
-.emp-lang-chip.is-selected {
-  border-color: rgba(22,119,255,0.45);
-  box-shadow: inset 0 0 0 1px rgba(22,119,255,0.20);
+.emp-lang-chip .emp-lang-chip-label { font-weight:580; color: inherit; }
+.emp-lang-chip .emp-lang-status {
+  font-size:0.68rem; letter-spacing:0.02em; font-weight:600; color: var(--ink-dim);
 }
-.emp-lang-chip .emp-lang-status { font-size:0.7rem; letter-spacing:0.02em; font-weight:600; color: var(--ink-dim); }
-.emp-lang-chip.is-tested { border-color: rgba(34,160,107,0.40); background: #F4FBF7; }
+.emp-lang-chip.is-active {
+  background: var(--voice-soft);
+  border-color: rgba(22,119,255,0.40);
+  color: var(--voice); font-weight:600;
+}
+.emp-lang-chip.is-active .emp-lang-chip-label { font-weight:650; }
 .emp-lang-chip.is-tested .emp-lang-status { color: #22A06B; }
-.emp-lang-chip.is-validation { border-color: rgba(22,119,255,0.35); background: #F5F9FF; }
 .emp-lang-chip.is-validation .emp-lang-status { color: #1677FF; }
-.emp-lang-chip.is-unavailable { opacity:0.55; }
+.emp-lang-chip.is-available .emp-lang-status { color: var(--ink-dim); }
+.emp-lang-chip.is-unavailable { opacity:0.55; cursor:not-allowed; }
 .emp-lang-chip.is-unavailable .emp-lang-status { color: var(--ink-faint); }
 .emp-lang-legend {
-  display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; font-size:0.76rem; color: var(--ink-dim);
+  display:flex; flex-wrap:wrap; gap:12px; margin:10px 0 12px; font-size:0.76rem; color: var(--ink-dim);
 }
 .emp-subtabs { margin-bottom:12px; border-bottom: 0; gap: 6px; }
 .emp-subtabs .emp-tab {
