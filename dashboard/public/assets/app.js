@@ -265,10 +265,20 @@ function renderAuth() {
         route = '/api/auth/login';
       }
       const res = await api(route, { method: 'POST', body: body, allow401: true });
-      State.me = { user: res.user, tenant: res.tenant };
+      // Prefer /api/me so feature flags (e.g. aiEmployeeJourney) land in State.me.
+      try {
+        State.me = await api('/api/me');
+      } catch (_) {
+        State.me = {
+          user: res.user,
+          tenant: res.tenant,
+          features: (res && res.features) || {},
+        };
+      }
       resetData();
       toast(mode === 'login' ? 'Signed in.' : 'Account created.', 'ok');
       renderShell();
+      onRoute();
     } catch (ex) {
       btn.disabled = false; btn.textContent = mode === 'login' ? 'Sign in' : 'Create account';
       if (ex.status === 409) showErr('That email is already registered. Try signing in.');
