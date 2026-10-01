@@ -293,6 +293,7 @@ test('END-OF-CALL PIPELINE: summary + extraction + cumulative merge + language p
         title: 'Demo',
         status: 'booked',
         startAt: new Date(Date.now() + 5 * 24 * 3600_000).toISOString(),
+        calBookingUid: 'cal_uid_demo_friday',
       },
     },
   });
@@ -304,6 +305,8 @@ test('END-OF-CALL PIPELINE: summary + extraction + cumulative merge + language p
   // Preferred language preserved across calls
   assert.equal(second.contact.preferred_language, 'te-IN');
   assert.ok((second.appointments || []).length >= 1);
+  assert.equal(second.appointments[0].status, 'booked');
+  assert.equal(second.appointments[0].calBookingUid, 'cal_uid_demo_friday');
 });
 
 test('OUTBOUND → LATER INBOUND CONTEXT: only stored facts injected', () => {
@@ -325,6 +328,7 @@ test('OUTBOUND → LATER INBOUND CONTEXT: only stored facts injected', () => {
         title: 'Growth demo',
         startAt: new Date(Date.now() + 2 * 24 * 3600_000).toISOString(),
         status: 'booked',
+        calBookingUid: 'cal_uid_growth_demo',
       },
     },
   });

@@ -12,6 +12,7 @@
 const customerContext = require('./customer-context');
 const eventTriggers = require('./event-triggers');
 const leads = require('./leads');
+const calcom = require('./calcom');
 
 const SUMMARY_MAX = customerContext.MAX_SUMMARY_CHARS;
 
@@ -50,6 +51,11 @@ function extractStructured(payload) {
     ? b.extractedData
     : ((b.extracted && typeof b.extracted === 'object') ? b.extracted : b);
 
+  const realBookingId = calcom.extractRealBookingId(b);
+  const softBookSignal = data.booked === true
+    || String(b.outcome || '').toLowerCase().includes('book')
+    || !!(data.appointment && (data.appointment.status === 'booked' || data.appointment.startAt || data.appointment.start));
+
   const out = {
     name: clamp(data.name || data.caller_name || b.callerName || '', 120) || null,
     email: clamp(data.email || '', 180).toLowerCase() || null,
@@ -73,9 +79,10 @@ function extractStructured(payload) {
     qualified: data.qualified === true
       || String(data.qualification_status || data.qualificationStatus || '').toLowerCase() === 'qualified'
       || String(b.outcome || '').toLowerCase().includes('qualif'),
-    bookingCompleted: data.booked === true
-      || String(b.outcome || '').toLowerCase().includes('book')
-      || !!(data.appointment && (data.appointment.status === 'booked' || data.appointment.startAt || data.appointment.start)),
+    // Gate: appointment.booked / confirmation only when a real booking id exists.
+    realBookingId,
+    bookingCompleted: !!(realBookingId && softBookSignal),
+    softBookSignal: !!softBookSignal,
     callbackRequested: data.callback_requested === true
       || !!(data.callback && (data.callback.when || data.callback.scheduledAt)),
     callbackWhen: (data.callback && (data.callback.when || data.callback.scheduledAt))
@@ -167,22 +174,41 @@ function runEndOfCallPipeline(db, tenantId, input, opts = {}) {
   const jobs = [];
   const events = [];
 
-  if (extracted.appointment || extracted.bookingCompleted) {
+  if (extracted.appointment || extracted.bookingCompleted || extracted.softBookSignal) {
+    const hasRealBooking = !!extracted.realBookingId;
     const apptInput = extracted.appointment || {
       title: b.appointmentTitle || 'Meeting',
       startAt: b.appointmentStartAt || b.start,
       endAt: b.appointmentEndAt || b.end,
-      status: 'booked',
-      calBookingUid: b.calBookingUid,
+      status: hasRealBooking ? 'booked' : 'requested',
+      calBookingUid: extracted.realBookingId || b.calBookingUid,
       eventTypeId: b.eventTypeId,
       timezone: b.timezone || 'Asia/Kolkata',
     };
+    // Without a real Cal.com booking id, never claim booked or schedule confirmation.
+    if (!hasRealBooking) {
+      apptInput.status = apptInput.status === 'cancelled' || apptInput.status === 'rescheduled'
+        ? apptInput.status
+        : 'requested';
+      delete apptInput.calBookingUid;
+    } else {
+      apptInput.status = 'booked';
+      apptInput.calBookingUid = extracted.realBookingId;
+    }
     if (apptInput.startAt || apptInput.start) {
       const apptRes = customerContext.addAppointment(contact, apptInput);
       if (apptRes.ok) {
         appointments.push(apptRes.appointment);
         if (apptRes.created) {
-          const evt = eventTriggers.handleEvent(db, tenantId, 'appointment.booked', {
+          const eventName = hasRealBooking
+            ? 'appointment.booked'
+            : (apptRes.appointment.status === 'cancelled'
+              ? 'appointment.cancelled'
+              : apptRes.appointment.status === 'rescheduled'
+                ? 'appointment.rescheduled'
+                : 'appointment.requested');
+          // Only appointment.booked creates confirmation follow-ups (autoDial false).
+          const evt = eventTriggers.handleEvent(db, tenantId, eventName, {
             contactId: contact.id,
             employeeId: contact.assignedEmployee,
             appointment: apptRes.appointment,
