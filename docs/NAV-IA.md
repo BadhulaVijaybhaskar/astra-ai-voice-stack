@@ -1,19 +1,51 @@
-# Nav / IA (Phase 16)
+# Nav / IA (Astra Voice platform)
 
-Customer navigation aligns to the north-star journey:
+Customer navigation is a **SaaS platform shell**, not a 7-step onboarding slideshow.
 
-1. **Home**
-2. **My Employees**
-3. **Instant Leads** (nav group **LEADS**)
-4. **Campaigns** (under **LEADS** — Excel/CSV bulk on the same CallJob dial path)
-5. **Conversations**
-6. **Training**
-7. **Phone Numbers**
-8. **Performance**
-9. **Account** (Settings + Billing + Support)
+## Primary navigation (exact labels)
 
-Provider-era labels (Agents, Workflows, Presets, Voice Studio, Talk to it, Knowledge, Integrations, Demo links) are demoted under **DIAGNOSTICS** for Super Admin only. Routes still resolve if bookmarked. Phase 21 renames the Super Admin Admin nav item to **Diagnostics** and gates provider inventory behind Super Admin ([SUPER-ADMIN.md](./SUPER-ADMIN.md)).
+1. **Overview**
+2. **AI Employees**
+3. **Calls**
+4. **Conversations**
+5. **Leads**
+6. **Automations**
+7. **Integrations**
+8. **Analytics**
+9. **Settings**
 
-North star UX: Create AI Employee → Teach → Test → Assign Number → Connect Leads / Campaigns → Go Live → Conversations → Outcomes.
+## AI Employee detail (Maya and others)
 
-See [EMPLOYEES.md](./EMPLOYEES.md), [PHONE-NUMBERS.md](./PHONE-NUMBERS.md), [CAMPAIGNS-ANALYTICS.md](./CAMPAIGNS-ANALYTICS.md), [CONVERSATIONS.md](./CONVERSATIONS.md), [E2E-ACCEPTANCE.md](./E2E-ACCEPTANCE.md), [CELEBRITY-VOICES.md](./CELEBRITY-VOICES.md), [DEMO-READINESS.md](./DEMO-READINESS.md).
+When opening an employee, tabs are:
+
+1. Overview
+2. Instructions
+3. Knowledge
+4. Voice & Language
+5. Routing
+6. Actions
+7. Testing
+8. Outcomes
+
+Do **not** use permanent IA labels Employee / Knowledge / Language / Routing / Call / Outcome / Next outside Guided Setup.
+
+## Guided Setup / Demo Journey (optional)
+
+The 7-step investor storyboard lives under **Guided Setup** (`#/ai-employee-setup`, feature-flagged). It is reachable from Maya Overview CTAs (Configure / Run Live Demo / Guided Setup) and appears under **TOOLS**, never as primary nav.
+
+Steps inside Guided Setup only: Employee → Knowledge → Voice → Routing → Conversation → Outcome → Action.
+
+## Tools / Account / Diagnostics
+
+- **TOOLS**: Guided Setup (flagged), Campaigns, Training hub, Phone Numbers
+- **ACCOUNT**: Billing, Support, Admin/Diagnostics
+- **DIAGNOSTICS** (Super Admin): Agents, Workflows, Presets, Voice Studio, Talk, Knowledge library, Demo links
+
+## Product rules
+
+- Customer product name: **Astra Voice** (parent AstraConnect). Never "Astra AI" in customer UI.
+- Live vs Demo Preview hard split. Never fake analytics.
+- PSTN dials require explicit authorization UI.
+- Prefer abstracting provider brands in primary investor UI.
+
+See [AI-EMPLOYEE-JOURNEY.md](./AI-EMPLOYEE-JOURNEY.md), [EMPLOYEES.md](./EMPLOYEES.md), [CALLS.md](./CALLS.md), [CONVERSATIONS.md](./CONVERSATIONS.md).
