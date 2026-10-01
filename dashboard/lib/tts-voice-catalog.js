@@ -19,7 +19,69 @@ const PROVIDERS = Object.freeze([
   Object.freeze({ id: 'rumik', label: 'Rumik', layer: 'tts' }),
 ]);
 
-/** Official Bulbul languages (docs.sarvam.ai). */
+/**
+ * Curated Astra product language list (customer-facing).
+ * Belongs to Astra Voice, not any single TTS vendor. Provider-specific extras
+ * (Dograh 81, Odia, Deepgram global, etc.) stay Advanced/Developer only.
+ *
+ * Status honesty: TESTED only when explicitly validated in VALIDATED_LANGUAGE_IDS.
+ * Unvalidated curated entries use READY_FOR_VALIDATION or AVAILABLE.
+ */
+const VALIDATED_LANGUAGE_IDS = Object.freeze([]);
+
+const ASTRA_SUPPORTED_LANGUAGES = Object.freeze([
+  Object.freeze({ id: 'en-IN', label: 'English (India)', nativeLabel: 'English', status: 'READY_FOR_VALIDATION' }),
+  Object.freeze({ id: 'hi-IN', label: 'Hindi', nativeLabel: 'हिन्दी', status: 'READY_FOR_VALIDATION' }),
+  Object.freeze({ id: 'te-IN', label: 'Telugu', nativeLabel: 'తెలుగు', status: 'READY_FOR_VALIDATION' }),
+  Object.freeze({ id: 'ta-IN', label: 'Tamil', nativeLabel: 'தமிழ்', status: 'READY_FOR_VALIDATION' }),
+  Object.freeze({ id: 'kn-IN', label: 'Kannada', nativeLabel: 'ಕನ್ನಡ', status: 'AVAILABLE' }),
+  Object.freeze({ id: 'ml-IN', label: 'Malayalam', nativeLabel: 'മലയാളം', status: 'AVAILABLE' }),
+  Object.freeze({ id: 'mr-IN', label: 'Marathi', nativeLabel: 'मराठी', status: 'AVAILABLE' }),
+  Object.freeze({ id: 'bn-IN', label: 'Bengali', nativeLabel: 'বাংলা', status: 'AVAILABLE' }),
+  Object.freeze({ id: 'gu-IN', label: 'Gujarati', nativeLabel: 'ગુજરાતી', status: 'AVAILABLE' }),
+  Object.freeze({ id: 'pa-IN', label: 'Punjabi', nativeLabel: 'ਪੰਜਾਬੀ', status: 'AVAILABLE' }),
+]);
+
+const ASTRA_LANGUAGE_BY_ID = new Map(ASTRA_SUPPORTED_LANGUAGES.map((l) => [l.id, l]));
+
+function languageStatusLabel(status) {
+  const s = String(status || '').toUpperCase().replace(/\s+/g, '_');
+  if (s === 'TESTED') return 'Tested';
+  if (s === 'READY_FOR_VALIDATION') return 'Ready for validation';
+  if (s === 'AVAILABLE') return 'Available';
+  return 'Available';
+}
+
+function resolveAstraLanguageStatus(id, configuredStatus) {
+  const code = String(id || '').trim();
+  if (VALIDATED_LANGUAGE_IDS.includes(code)) return 'TESTED';
+  const s = String(configuredStatus || '').toUpperCase().replace(/\s+/g, '_');
+  if (s === 'TESTED') {
+    // Refuse unvalidated TESTED claims from config rows.
+    return 'READY_FOR_VALIDATION';
+  }
+  if (s === 'READY_FOR_VALIDATION' || s === 'AVAILABLE') return s;
+  return 'AVAILABLE';
+}
+
+function listAstraSupportedLanguages() {
+  return ASTRA_SUPPORTED_LANGUAGES.map((l) => {
+    const status = resolveAstraLanguageStatus(l.id, l.status);
+    return {
+      id: l.id,
+      label: l.label,
+      nativeLabel: l.nativeLabel || l.label,
+      status,
+      statusLabel: languageStatusLabel(status),
+    };
+  });
+}
+
+function isAstraSupportedLanguage(id) {
+  return ASTRA_LANGUAGE_BY_ID.has(String(id || '').trim());
+}
+
+/** Official Bulbul languages (docs.sarvam.ai). Includes Odia (Advanced only). */
 const SARVAM_LANGUAGES = Object.freeze([
   Object.freeze({ id: 'en-IN', label: 'English (India)' }),
   Object.freeze({ id: 'hi-IN', label: 'Hindi' }),
@@ -368,6 +430,12 @@ module.exports = {
   PROVIDERS,
   SARVAM_LANGUAGES,
   SARVAM_LANGUAGE_RECOMMENDATIONS,
+  ASTRA_SUPPORTED_LANGUAGES,
+  VALIDATED_LANGUAGE_IDS,
+  listAstraSupportedLanguages,
+  isAstraSupportedLanguage,
+  languageStatusLabel,
+  resolveAstraLanguageStatus,
   getCatalog,
   listAllVoices,
   filterVoices,

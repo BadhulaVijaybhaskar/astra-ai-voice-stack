@@ -172,7 +172,7 @@ describe('AI Employee Setup Journey', () => {
     assert.equal(journey.getTenantDraft(tenant).step, 'routing');
   });
 
-  it('language statuses use TESTED / READY FOR VALIDATION / UNAVAILABLE tones', () => {
+  it('language statuses use READY FOR VALIDATION / AVAILABLE (no unvalidated TESTED)', () => {
     const db = {
       tenants: [{ id: 't1' }],
       employees: [{
@@ -198,18 +198,20 @@ describe('AI Employee Setup Journey', () => {
     const mr = payload.language.languages.find((l) => l.id === 'MR');
     const bn = payload.language.languages.find((l) => l.id === 'BN');
     const gu = payload.language.languages.find((l) => l.id === 'GU');
-    assert.equal(en.tone, 'tested');
-    assert.equal(en.status, 'Tested');
-    assert.equal(en.live, true);
-    assert.equal(mr.tone, 'validation');
-    assert.equal(mr.status, 'Ready for validation');
+    assert.equal(en.tone, 'validation');
+    assert.equal(en.status, 'Ready for validation');
+    assert.equal(en.live, false);
+    assert.equal(mr.tone, 'available');
+    assert.equal(mr.status, 'Available');
     assert.equal(mr.live, false);
-    assert.equal(bn.tone, 'validation');
+    assert.equal(bn.tone, 'available');
     assert.equal(bn.live, false);
-    assert.equal(gu.tone, 'unavailable');
-    assert.equal(gu.status, 'Unavailable');
+    assert.equal(gu.tone, 'available');
+    assert.equal(gu.status, 'Available');
     assert.equal(gu.live, false);
+    assert.equal(payload.language.languages.length, 10);
     assert.ok((payload.language.voiceModes || []).some((m) => m.id === 'astra_auto'));
+    assert.ok((payload.language.voiceModes || []).some((m) => m.id === 'dograh_managed' && m.label === 'Managed'));
   });
 
   it('normalizes bare-string employee actions into Next Action', () => {

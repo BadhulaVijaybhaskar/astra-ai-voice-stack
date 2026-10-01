@@ -20,18 +20,25 @@ const VOICE_MODES = Object.freeze([
   Object.freeze({
     id: 'astra_auto',
     label: 'Astra Auto',
-    description: 'Astra Voice picks the best available engine. Dograh remains the runtime underneath.',
+    description: 'Astra Voice picks the best available engine for the selected language.',
   }),
   Object.freeze({
     id: 'dograh_managed',
-    label: 'Dograh Managed',
-    description: 'Use Dograh-managed voice, language, and speed behind one service key (server-side only).',
+    label: 'Managed',
+    description: 'Use the managed voice, language, and speed stack behind one server-side service key.',
   }),
   Object.freeze({
     id: 'byok',
     label: 'BYOK',
     description: 'Bring your own provider keys already configured on the server. Never enter keys in this UI.',
   }),
+]);
+
+/** Product-facing provider chips. Realtime engines stay Advanced only. */
+const PRODUCT_PROVIDER_IDS = Object.freeze(['auto', 'dograh', 'deepgram', 'sarvam', 'rumik']);
+const ADVANCED_REALTIME_PROVIDERS = Object.freeze([
+  'openai_realtime', 'grok_realtime', 'google_realtime', 'azure_realtime', 'ultravox',
+  'openai', 'grok', 'google', 'azure',
 ]);
 
 const PROVIDER_OPTIONS = Object.freeze([
@@ -41,6 +48,135 @@ const PROVIDER_OPTIONS = Object.freeze([
   Object.freeze({ id: 'sarvam', label: 'Sarvam' }),
   Object.freeze({ id: 'rumik', label: 'Rumik' }),
 ]);
+
+const PROVIDER_STATE = Object.freeze({
+  READY: 'ready',
+  NEEDS_FUNDING: 'needs_funding',
+  NEEDS_CREDENTIALS: 'needs_credentials',
+  UNAVAILABLE: 'unavailable',
+});
+
+function hasEnvKey(name) {
+  return !!(process.env[name] && String(process.env[name]).trim());
+}
+
+function envFlag(name) {
+  const raw = String(process.env[name] || '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on' || raw === 'needs_funding';
+}
+
+/**
+ * Explicit readiness for product providers. Funding/credentials gate Preview
+ * and Activate, but never hide the provider or its catalog voices.
+ */
+function resolveProviderState(providerId) {
+  const id = String(providerId || '').trim().toLowerCase();
+  if (id === 'auto') {
+    return {
+      state: PROVIDER_STATE.READY,
+      label: 'Ready',
+      can_preview: true,
+      can_activate: false,
+      reason: null,
+    };
+  }
+  if (id === 'dograh') {
+    if (!dograhDiscovery.hasDograhCreds()) {
+      return {
+        state: PROVIDER_STATE.NEEDS_CREDENTIALS,
+        label: 'Needs credentials',
+        can_preview: false,
+        can_activate: false,
+        reason: 'managed_service_not_configured',
+      };
+    }
+    return {
+      state: PROVIDER_STATE.READY,
+      label: 'Ready',
+      can_preview: true,
+      can_activate: false,
+      reason: null,
+    };
+  }
+  if (id === 'deepgram') {
+    if (!hasEnvKey('DEEPGRAM_API_KEY')) {
+      return {
+        state: PROVIDER_STATE.NEEDS_CREDENTIALS,
+        label: 'Needs credentials',
+        can_preview: false,
+        can_activate: false,
+        reason: 'deepgram_api_key_missing',
+      };
+    }
+    return {
+      state: PROVIDER_STATE.READY,
+      label: 'Ready',
+      can_preview: true,
+      can_activate: false,
+      reason: null,
+    };
+  }
+  if (id === 'sarvam') {
+    if (!hasEnvKey('SARVAM_API_KEY')) {
+      return {
+        state: PROVIDER_STATE.NEEDS_CREDENTIALS,
+        label: 'Needs credentials',
+        can_preview: false,
+        can_activate: false,
+        reason: 'sarvam_api_key_missing',
+      };
+    }
+    if (envFlag('SARVAM_NEEDS_FUNDING')
+      || String(process.env.SARVAM_ACCOUNT_STATUS || '').trim().toLowerCase() === 'needs_funding') {
+      return {
+        state: PROVIDER_STATE.NEEDS_FUNDING,
+        label: 'Needs funding',
+        can_preview: false,
+        can_activate: false,
+        reason: 'sarvam_needs_funding',
+      };
+    }
+    return {
+      state: PROVIDER_STATE.READY,
+      label: 'Ready',
+      can_preview: true,
+      can_activate: false,
+      reason: null,
+    };
+  }
+  if (id === 'rumik') {
+    if (!hasEnvKey('RUMIK_API_KEY')) {
+      return {
+        state: PROVIDER_STATE.NEEDS_CREDENTIALS,
+        label: 'Needs credentials',
+        can_preview: false,
+        can_activate: false,
+        reason: 'rumik_api_key_missing',
+      };
+    }
+    return {
+      state: PROVIDER_STATE.READY,
+      label: 'Ready',
+      can_preview: true,
+      can_activate: false,
+      reason: null,
+    };
+  }
+  return {
+    state: PROVIDER_STATE.UNAVAILABLE,
+    label: 'Unavailable',
+    can_preview: false,
+    can_activate: false,
+    reason: 'unknown_provider',
+  };
+}
+
+function isAdvancedRealtimeProvider(providerId) {
+  const id = String(providerId || '').trim().toLowerCase();
+  if (ADVANCED_REALTIME_PROVIDERS.includes(id)) return true;
+  if (id.endsWith('_realtime')) return true;
+  return false;
+}
 
 function titleCase(id) {
   return String(id || '')
@@ -154,34 +290,97 @@ function voicesFromByokSchema(parsed) {
   return rows;
 }
 
+function mapLanguagesForProduct(providerId, rawLanguages) {
+  const curated = staticCatalog.listAstraSupportedLanguages();
+  const curatedIds = new Set(curated.map((l) => l.id));
+  const raw = Array.isArray(rawLanguages) ? rawLanguages : [];
+  const rawIds = new Set(raw.map((l) => (typeof l === 'string' ? l : (l && l.id)) || '').filter(Boolean));
+
+  // Product list is always the curated Astra set. Provider support flags which
+  // curated entries this provider can serve.
+  const product = curated.map((l) => {
+    let supported = false;
+    if (providerId === 'sarvam') {
+      supported = staticCatalog.SARVAM_LANGUAGES.some((s) => s.id === l.id);
+    } else if (providerId === 'deepgram') {
+      // Deepgram Aura English serves en-IN in the product layer.
+      supported = l.id === 'en-IN' || rawIds.has(l.id) || rawIds.has('en') || rawIds.has('en-US');
+    } else if (providerId === 'rumik') {
+      supported = l.id === 'en-IN' || rawIds.has(l.id);
+    } else if (providerId === 'dograh') {
+      // Managed stack can route curated Indic + English. Do not expose Dograh's full 81.
+      supported = curatedIds.has(l.id)
+        || rawIds.has(l.id)
+        || rawIds.has(l.id.split('-')[0])
+        || rawIds.has('multi');
+    } else {
+      supported = curatedIds.has(l.id);
+    }
+    return { ...l, supported: !!supported };
+  });
+
+  // Advanced extras: provider languages outside the curated Astra list.
+  const advanced = [];
+  for (const entry of raw) {
+    const id = typeof entry === 'string' ? entry : (entry && entry.id);
+    if (!id || curatedIds.has(id)) continue;
+    if (id === 'multi' || id === 'en' || id === 'en-US') continue;
+    advanced.push({
+      id,
+      label: typeof entry === 'object' && entry.label ? entry.label : id,
+      status: 'AVAILABLE',
+      statusLabel: 'Available',
+      advanced: true,
+    });
+  }
+  return { product, advanced };
+}
+
 function buildProviderBlocks(discovery) {
   const blocks = [];
+  const advancedBlocks = [];
   const dograh = discovery.dograh || dograhDiscovery.normalizeDograhManagedBlock(null);
+  const dograhState = resolveProviderState('dograh');
+  const dograhLangs = mapLanguagesForProduct('dograh', dograh.languages || []);
 
   blocks.push({
     provider: 'dograh',
     mode: 'managed',
-    label: 'Dograh Managed',
+    label: 'Dograh',
+    product: true,
+    state: dograhState.state,
+    state_label: dograhState.label,
+    can_preview: dograhState.can_preview,
+    can_activate: dograhState.can_activate,
+    state_reason: dograhState.reason,
     voices: voicesFromDograhManaged(dograh),
-    languages: (dograh.languages || []).map((id) => ({
-      id,
-      label: id === 'multi' ? 'Multilingual (Auto-detect)' : id,
-    })),
+    languages: dograhLangs.product,
+    advanced_languages: dograhLangs.advanced,
     speeds: dograh.speeds || [0.8, 1.0, 1.2],
     speed_range: dograh.speed_range || { min: 0.5, max: 2.0, step: 0.1 },
     defaults: dograh.defaults,
     allow_custom_input: !!dograh.allow_custom_input,
   });
 
-  // Speech to Speech realtime providers (informational / discovery). Not selected
-  // as production TTS by this PR.
+  // Speech to Speech realtime providers stay Advanced / Developer only.
   for (const rt of discovery.realtime_providers || []) {
-    blocks.push({
+    if (!isAdvancedRealtimeProvider(rt.provider) && PRODUCT_PROVIDER_IDS.includes(rt.provider)) {
+      // Unexpected: treat known product ids as BYOK below, not here.
+      continue;
+    }
+    advancedBlocks.push({
       provider: rt.provider,
       mode: 'speech_to_speech',
       label: (rt.label || rt.provider) + ' (Speech to Speech)',
+      product: false,
+      advanced: true,
+      state: PROVIDER_STATE.UNAVAILABLE,
+      state_label: 'Unavailable',
+      can_preview: false,
+      can_activate: false,
       voices: voicesFromByokSchema(rt),
-      languages: (rt.languages || []).map((id) => ({ id, label: id })),
+      languages: (rt.languages || []).map((id) => ({ id, label: id, advanced: true })),
+      advanced_languages: [],
       speeds: [],
       speed_range: null,
       defaults: rt.defaults || {},
@@ -197,22 +396,33 @@ function buildProviderBlocks(discovery) {
       ? voicesFromByokSchema(parsed)
       : voicesFromStaticProvider(id);
     // Ensure curated static voices are present even when Dograh schema is sparse.
+    // Sarvam MUST remain visible with its official catalog even at zero balance.
     if (parsed) {
       const have = new Set(voices.map((v) => v.id));
       for (const v of voicesFromStaticProvider(id)) {
         if (!have.has(v.id)) voices.push(v);
       }
     }
+    const state = resolveProviderState(id);
+    const rawLangs = id === 'sarvam'
+      ? staticCatalog.SARVAM_LANGUAGES.map((l) => ({ ...l }))
+      : id === 'deepgram'
+        ? [{ id: 'en', label: 'English' }, { id: 'en-IN', label: 'English (India)' }]
+        : [{ id: 'en-IN', label: 'English (India)' }];
+    const mapped = mapLanguagesForProduct(id, rawLangs);
     blocks.push({
       provider: id,
       mode: 'byok',
-      label: id === 'deepgram' ? 'Deepgram Aura' : titleCase(id),
+      label: id === 'deepgram' ? 'Deepgram' : titleCase(id),
+      product: true,
+      state: state.state,
+      state_label: state.label,
+      can_preview: state.can_preview,
+      can_activate: state.can_activate,
+      state_reason: state.reason,
       voices,
-      languages: id === 'sarvam'
-        ? staticCatalog.SARVAM_LANGUAGES.map((l) => ({ ...l }))
-        : id === 'deepgram'
-          ? [{ id: 'en', label: 'English' }]
-          : [{ id: 'en-IN', label: 'English (India)' }],
+      languages: mapped.product,
+      advanced_languages: mapped.advanced,
       speeds: id === 'sarvam' ? [0.8, 1.0, 1.2] : [],
       speed_range: id === 'sarvam' ? { min: 0.5, max: 2.0, step: 0.1 } : null,
       defaults: parsed && parsed.defaults ? parsed.defaults : {},
@@ -220,7 +430,7 @@ function buildProviderBlocks(discovery) {
     });
   }
 
-  return blocks;
+  return { product: blocks, advanced: advancedBlocks };
 }
 
 /**
@@ -229,40 +439,109 @@ function buildProviderBlocks(discovery) {
  */
 async function getUnifiedCatalog(opts = {}) {
   const discovery = await dograhDiscovery.discoverDograhVoiceCatalog();
-  const providers = buildProviderBlocks(discovery);
+  const built = buildProviderBlocks(discovery);
+  const includeAdvanced = opts.advanced === true || opts.include_advanced === true
+    || String(opts.mode || '').toLowerCase() === 'speech_to_speech';
+  let filtered = built.product.slice();
   const providerFilter = opts.provider ? String(opts.provider).trim().toLowerCase() : '';
   const modeFilter = opts.mode ? String(opts.mode).trim().toLowerCase() : '';
-  let filtered = providers;
+
   if (providerFilter && providerFilter !== 'auto') {
-    filtered = filtered.filter((p) => p.provider === providerFilter);
+    if (isAdvancedRealtimeProvider(providerFilter)) {
+      filtered = built.advanced.filter((p) => p.provider === providerFilter);
+    } else {
+      filtered = filtered.filter((p) => p.provider === providerFilter);
+    }
   }
-  if (modeFilter) {
+  if (modeFilter === 'speech_to_speech') {
+    filtered = built.advanced.filter((p) => p.mode === 'speech_to_speech');
+  } else if (modeFilter) {
     filtered = filtered.filter((p) => p.mode === modeFilter);
   }
 
-  const flatVoices = [];
-  for (const block of filtered) {
-    for (const v of block.voices) flatVoices.push(v);
+  // Product flat voices exclude realtime Alloy/Ash/etc. Advanced only when requested.
+  const productVoices = [];
+  for (const block of (providerFilter && isAdvancedRealtimeProvider(providerFilter)
+    ? filtered
+    : built.product)) {
+    if (providerFilter && providerFilter !== 'auto' && block.provider !== providerFilter) continue;
+    for (const v of block.voices) productVoices.push(v);
   }
 
-  // Also keep prior flat Sarvam-normalized list under voices for compatibility.
+  const advancedVoices = [];
+  if (includeAdvanced || (providerFilter && isAdvancedRealtimeProvider(providerFilter))) {
+    for (const block of built.advanced) {
+      for (const v of block.voices) advancedVoices.push(v);
+    }
+  }
+
+  const flatVoices = includeAdvanced || (providerFilter && isAdvancedRealtimeProvider(providerFilter))
+    ? productVoices.concat(advancedVoices)
+    : productVoices;
+
+  // Prior flat Sarvam-normalized list under languages for compatibility.
   const sarvamCompat = staticCatalog.getCatalog({
     provider: opts.provider === 'sarvam' ? 'sarvam' : '',
     language: opts.language || '',
     model: opts.model || '',
   });
 
+  const astraLanguages = staticCatalog.listAstraSupportedLanguages();
+  const providerOptions = PROVIDER_OPTIONS.map((p) => {
+    const state = resolveProviderState(p.id);
+    return {
+      ...p,
+      state: state.state,
+      state_label: state.label,
+      can_preview: state.can_preview,
+      can_activate: state.can_activate,
+      state_reason: state.reason,
+    };
+  });
+
+  // Guarantee Sarvam is always in product providers even if somehow dropped.
+  if (!filtered.some((p) => p.provider === 'sarvam')
+    && (!providerFilter || providerFilter === 'auto' || providerFilter === 'sarvam')
+    && modeFilter !== 'speech_to_speech'
+    && modeFilter !== 'managed') {
+    const sarvamBlock = built.product.find((p) => p.provider === 'sarvam');
+    if (sarvamBlock && (!providerFilter || providerFilter === 'sarvam' || providerFilter === 'auto')) {
+      if (providerFilter === 'sarvam') filtered = [sarvamBlock];
+      else if (!providerFilter || providerFilter === 'auto') filtered.push(sarvamBlock);
+    }
+  }
+
   return {
     providers: filtered,
+    product_providers: built.product.map((p) => ({
+      provider: p.provider,
+      mode: p.mode,
+      label: p.label,
+      state: p.state,
+      state_label: p.state_label,
+      can_preview: p.can_preview,
+      can_activate: p.can_activate,
+      voice_count: (p.voices || []).length,
+    })),
+    advanced_providers: includeAdvanced ? built.advanced : built.advanced.map((p) => ({
+      provider: p.provider,
+      mode: p.mode,
+      label: p.label,
+      advanced: true,
+      voice_count: (p.voices || []).length,
+    })),
     voice_modes: VOICE_MODES.map((m) => ({ ...m })),
-    provider_options: PROVIDER_OPTIONS.map((p) => ({ ...p })),
+    provider_options: providerOptions,
+    astra_supported_languages: astraLanguages,
+    // Product language UI uses curated Astra list only.
+    languages_product: astraLanguages,
     voices: flatVoices,
     // Prior endpoint compatibility fields
     languages: sarvamCompat.languages,
     language_map: sarvamCompat.language_map,
     models: sarvamCompat.models,
     speed: (() => {
-      const managed = providers.find((p) => p.provider === 'dograh' && p.mode === 'managed');
+      const managed = built.product.find((p) => p.provider === 'dograh' && p.mode === 'managed');
       return {
         options: (managed && managed.speeds) || [0.8, 1.0, 1.2],
         range: (managed && managed.speed_range) || { min: 0.5, max: 2.0, step: 0.1 },
@@ -279,6 +558,7 @@ async function getUnifiedCatalog(opts = {}) {
           ? 'dograh:GET /api/v1/organizations/model-configurations/v2/defaults'
           : 'fallback:local Dograh defaults mirror',
         'config:dashboard/lib/tts-voice-catalog.js (Deepgram Aura, Sarvam, Rumik)',
+        'config:ASTRA_SUPPORTED_LANGUAGES (curated product languages)',
       ],
     },
     live_apply_enabled: false,
@@ -437,7 +717,11 @@ function setTenantUnifiedDraftPrefs(tenant, body) {
 module.exports = {
   VOICE_MODES,
   PROVIDER_OPTIONS,
+  PRODUCT_PROVIDER_IDS,
+  PROVIDER_STATE,
   getUnifiedCatalog,
+  resolveProviderState,
+  isAdvancedRealtimeProvider,
   defaultUnifiedDraftPrefs,
   normalizeUnifiedDraftPrefs,
   publicUnifiedDraftPrefs,

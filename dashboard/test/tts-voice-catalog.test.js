@@ -10,6 +10,18 @@ const crypto = require('crypto');
 
 const catalog = require('../lib/tts-voice-catalog');
 
+test('ASTRA_SUPPORTED_LANGUAGES is curated 10 and refuses unvalidated TESTED', () => {
+  const langs = catalog.listAstraSupportedLanguages();
+  assert.equal(langs.length, 10);
+  assert.deepEqual(langs.map((l) => l.id), [
+    'en-IN', 'hi-IN', 'te-IN', 'ta-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'bn-IN', 'gu-IN', 'pa-IN',
+  ]);
+  assert.ok(langs.every((l) => l.status !== 'TESTED'));
+  assert.equal(catalog.isAstraSupportedLanguage('od-IN'), false);
+  assert.equal(catalog.isAstraSupportedLanguage('hi-IN'), true);
+  assert.equal(catalog.resolveAstraLanguageStatus('en-IN', 'TESTED'), 'READY_FOR_VALIDATION');
+});
+
 test('Sarvam catalog normalizes exact voice fields from backend config', () => {
   const payload = catalog.getCatalog({ provider: 'sarvam' });
   assert.ok(Array.isArray(payload.voices));

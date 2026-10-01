@@ -826,16 +826,77 @@ async function mintDograhVoiceSession(req, context) {
     const error = new Error('realtime voice session is not configured');
     error.status = 503; error.code = 'voice_session_unavailable'; throw error;
   }
+
+  const db = core.db();
+  const tenantId = String(context.tenantId || '');
+  const agentId = String(context.agentId || '');
+  const employeeId = String(context.employeeId || '');
+  let agent = null;
+  let employee = null;
+  let providerWorkflowId = null;
+  let astraWorkflowId = null;
+  let personaSnippet = '';
+  let greetingSnippet = '';
+  let employeeName = '';
+
+  if (employeeId && tenantId) {
+    employee = employees.findEmployee(db, tenantId, employeeId);
+  }
+  if (agentId && tenantId) {
+    agent = (db.agents || []).find((a) => a.id === agentId && a.tenantId === tenantId) || null;
+  }
+  // Prefer the employee linked to this agent when employeeId omitted.
+  if (!employee && agent && tenantId) {
+    employee = (db.employees || []).find((e) =>
+      e.tenantId === tenantId && e.agentId === agent.id
+      && String(e.status || '').toUpperCase() !== 'ARCHIVED') || null;
+  }
+  if (employee) {
+    employeeName = employee.name || '';
+    astraWorkflowId = employee.workflowId || null;
+    if (astraWorkflowId) {
+      providerWorkflowId = workflows.resolveProviderWorkflowId(db, tenantId, astraWorkflowId);
+    }
+  }
+  if (agent) {
+    personaSnippet = String(agent.persona || '').slice(0, 500);
+    greetingSnippet = String(agent.greeting || '').slice(0, 300);
+    if (!providerWorkflowId && agent.dograhWorkflowId != null && agent.dograhWorkflowId !== '') {
+      providerWorkflowId = String(agent.dograhWorkflowId);
+    }
+  }
+
+  // Isolation: never silently substitute Maya WF8 when this agent/employee has
+  // no provider workflow binding. Pass null so the embed uses context vars only.
+  const isMayaAgent = !!(agent && (
+    Number(agent.dograhWorkflowId) === 8
+    || /^maya$/i.test(String(agent.name || '').trim())
+  ));
+  const isMayaEmployee = !!(employee && /^maya$/i.test(String(employee.name || '').trim()));
+  if (!providerWorkflowId && !isMayaAgent && !isMayaEmployee) {
+    providerWorkflowId = null;
+  }
+
   const requestOrigin = String(req.headers.origin || `https://${req.headers.host || ''}`);
+  const contextVariables = {
+    source: String(context.source || 'rumik_studio'),
+    tenant_id: tenantId,
+    agent_id: agentId,
+    employee_id: employee ? String(employee.id) : employeeId,
+    employee_name: employeeName,
+    demo_link_id: String(context.demoLinkId || ''),
+    max_session_seconds: String(context.maxSessionSeconds || ''),
+    astra_workflow_id: astraWorkflowId ? String(astraWorkflowId) : '',
+    greeting: greetingSnippet,
+    persona: personaSnippet,
+  };
+  if (providerWorkflowId) {
+    contextVariables.workflow_id = String(providerWorkflowId);
+  }
+
   const upstream = await fetch(base + '/api/v1/public/embed/init', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Origin: requestOrigin },
-    body: JSON.stringify({ token, context_variables: {
-      source: String(context.source || 'rumik_studio'),
-      tenant_id: String(context.tenantId || ''),
-      agent_id: String(context.agentId || ''),
-      demo_link_id: String(context.demoLinkId || ''),
-      max_session_seconds: String(context.maxSessionSeconds || ''),
-    } }),
+    body: JSON.stringify({ token, context_variables: contextVariables }),
     signal: AbortSignal.timeout(12000),
   });
   const text = await upstream.text(); let data = {};
@@ -864,9 +925,18 @@ async function mintDograhVoiceSession(req, context) {
       }
     } catch (_) {}
   }
+  // Prefer the employee-bound provider workflow over the embed token default
+  // (which may be Maya WF8) so Talk / browser demo stay isolated.
+  const sessionWorkflowId = providerWorkflowId
+    || (data.config && data.config.workflow_id)
+    || null;
   return {
-    sessionToken: data.session_token, workflowRunId: data.workflow_run_id,
-    workflowId: data.config && data.config.workflow_id,
+    sessionToken: data.session_token,
+    workflowRunId: data.workflow_run_id,
+    workflowId: sessionWorkflowId,
+    astraWorkflowId: astraWorkflowId || null,
+    employeeId: employee ? employee.id : (employeeId || null),
+    agentId: agentId || null,
     signalingUrl: base.replace(/^http/, 'ws') + '/api/v1/ws/public/signaling/' + encodeURIComponent(data.session_token),
     turnCredentials,
     runtime: 'Astra Voice Runtime',
@@ -875,8 +945,12 @@ async function mintDograhVoiceSession(req, context) {
 
 async function apiVoiceSession(req, res, ctx) {
   try {
+    const body = ctx.body || {};
     const session = await mintDograhVoiceSession(req, {
-      source: 'astra_studio', tenantId: ctx.tenant.id, agentId: (ctx.body || {}).agentId,
+      source: 'astra_studio',
+      tenantId: ctx.tenant.id,
+      agentId: body.agentId,
+      employeeId: body.employeeId,
     });
     core.sendJson(res, 200, session);
   } catch (error) {
