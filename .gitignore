@@ -11,3 +11,4 @@ node_modules/
 # overlay source in rumik-overlay-local/ remains intentionally trackable.
 dograh-official/
 local-dograh/
+.playwright-mcp/
