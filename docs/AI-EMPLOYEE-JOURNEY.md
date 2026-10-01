@@ -16,22 +16,31 @@ Route (authenticated console): `#/ai-employee-setup`
 
 When the flag is off, the nav item is hidden and `/api/ai-employee-journey` returns `404 feature_disabled`.
 
+## Investor paths (primary CTAs)
+
+| CTA | Behavior |
+| --- | --- |
+| **Configure Maya** | Live mode. Starts at Step 1 and walks the 7-step setup with real workspace data. |
+| **Run Live Demo** | Live mode. Skips config forms and jumps to Live conversation (realtime Talk) → structured result → next action. Never writes DEMO PREVIEW fixtures into live records. |
+
+Chrome label is always **AstraConnect Workspace**. Live shows a **LIVE** badge; Demo Preview shows **DEMO PREVIEW**.
+
 ## Modes
 
 | Mode | Behavior |
 | --- | --- |
-| **Live** | Reads/writes existing Employee, Knowledge, Voice draft prefs, Phone, Cal.com, Talk, Outcome, Actions. |
-| **Demo preview** | Illustrative sample data only. Every block is labeled **Demo preview**. Never writes live call records. |
+| **Live** | Reads/writes existing Employee, Knowledge, Voice draft prefs, Phone, Cal.com, Talk, Outcome, Actions. Never invents Connected/transcript/metrics. |
+| **DEMO PREVIEW** | Labeled illustrative sample only. Never writes live call records. No fake investor KPIs (128 / 46% / 38). No production hardcodes of fictional people or fake DIDs. |
 
 ## Steps
 
-1. **Employee** — real name, role, team, status, job, readiness bits
-2. **Knowledge** — editable system prompt (employee instructions), real knowledge entries, qualification rules
-3. **Voice & Language** — `GET /api/voice/catalog`, providers Dograh Managed / Deepgram Aura / Sarvam / Rumik, Preview + Save draft only (no production TTS flip)
-4. **Routing** — `+918065353938`, working hours Asia/Kolkata, Cal.com Connected when `CALCOM_API_KEY` set (event 7294717 / Astra Voice Demo)
-5. **Call** — realtime Talk when configured; no fake transcript in Live
-6. **Outcome** — real extracted fields / provenance only when present
-7. **Next** — real actions / metrics / Groq summary when available
+1. **Employee** — Configure Maya / Run Live Demo CTAs + real readiness
+2. **Knowledge** — editable system prompt, real knowledge, qualification rules
+3. **Voice & Language** — `GET /api/voice/catalog`, Astra Auto draft (provider brands not primary investor UI)
+4. **Routing** — real DID when assigned (`+918065353938` preferred), Asia/Kolkata hours, Cal.com Connected when keyed
+5. **Call** — realtime Talk; Live starts Ready (not fake Connected); tool chips
+6. **Outcome** — real extracted fields / provenance / Groq summary when present
+7. **Next** — real actions / metrics / summary when available
 
 ## APIs
 
@@ -49,4 +58,4 @@ When the flag is off, the nav item is hidden and `/api/ai-employee-journey` retu
 
 - Existing Astra Voice UI, routes, Talk, Settings, providers, n8n, Cal.com, Dograh, and `db.json` collections are preserved.
 - Additive tenant field only: `tenant.aiEmployeeJourney`.
-- Product name in UI: **Astra Voice** (never "Astra AI" in customer journey copy).
+- Product chrome: **AstraConnect Workspace** / **Astra Voice** (never "Astra AI" in customer journey copy).

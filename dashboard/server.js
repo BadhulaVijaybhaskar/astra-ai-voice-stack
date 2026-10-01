@@ -647,11 +647,31 @@ async function apiAiEmployeeJourneyGet(req, res, ctx) {
   let voiceCatalogSummary = null;
   try {
     const catalog = await unifiedVoiceCatalog.getUnifiedCatalog({});
+    // catalog.languages is a provider-keyed object ({ sarvam: [...], ... }), not an array.
+    const langBag = catalog.languages;
+    let languages = [];
+    if (Array.isArray(langBag)) {
+      languages = langBag.slice(0, 40);
+    } else if (langBag && typeof langBag === 'object') {
+      const seen = new Set();
+      for (const rows of Object.values(langBag)) {
+        if (!Array.isArray(rows)) continue;
+        for (const row of rows) {
+          const id = String((row && (row.id || row.code || row.label)) || '').trim();
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          languages.push(row);
+          if (languages.length >= 40) break;
+        }
+        if (languages.length >= 40) break;
+      }
+    }
     voiceCatalogSummary = {
       modes: catalog.voice_modes || catalog.modes || [],
       providers: catalog.providers || [],
-      languages: (catalog.languages || []).slice(0, 40),
+      languages,
       speeds: (catalog.speed && catalog.speed.options) || catalog.speeds || [],
+      speedRange: (catalog.speed && catalog.speed.range) || null,
       source: catalog.discovery || null,
     };
   } catch (_) {
