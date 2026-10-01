@@ -367,7 +367,8 @@ function normalizeActionDef(raw) {
   if (typeof raw === 'string') {
     const s = String(raw || '').trim();
     if (!s) return null;
-    raw = { key: s, label: s, type: '' };
+    const human = s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 80);
+    raw = { key: s, label: human, type: '' };
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   let type = String(raw.type || raw.actionType || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_');
