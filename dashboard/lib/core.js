@@ -26,6 +26,19 @@ const crypto = require('crypto');
 // Project root is one level up from lib/.
 const ROOT = path.join(__dirname, '..');
 
+/**
+ * Shared keep-alive HTTPS agent for upstream TTS/LLM (LATENCY P0.2).
+ * Reuses TLS sockets so first-phrase TTS / Groq do not pay a fresh handshake
+ * on every turn. maxFreeSockets keeps a small warm pool without unbounded growth.
+ */
+const upstreamHttpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30_000,
+  maxSockets: 32,
+  maxFreeSockets: 8,
+  scheduling: 'lifo',
+});
+
 /* ==========================================================================
    1. .env loader (no dotenv dependency)
    Reads ROOT/.env once. Existing process.env wins, so real shell vars override.
@@ -96,9 +109,15 @@ function readBody(req, cap = 64 * 1024) {
 }
 
 // Generic HTTPS POST. Resolves { status, headers, buffer }. Times out at 60s.
-function httpsPost(host, pathname, headers, bodyBuf) {
+function httpsPost(host, pathname, headers, bodyBuf, options = {}) {
   return new Promise((resolve, reject) => {
-    const r = https.request({ host, path: pathname, method: 'POST', headers }, (resp) => {
+    const r = https.request({
+      host,
+      path: pathname,
+      method: 'POST',
+      headers,
+      agent: options.agent === null ? undefined : (options.agent || upstreamHttpsAgent),
+    }, (resp) => {
       const parts = [];
       resp.on('data', (d) => parts.push(d));
       resp.on('end', () => resolve({
@@ -108,7 +127,7 @@ function httpsPost(host, pathname, headers, bodyBuf) {
       }));
     });
     r.on('error', reject);
-    r.setTimeout(60000, () => r.destroy(new Error('upstream timeout')));
+    r.setTimeout(Number(options.timeoutMs) || 60000, () => r.destroy(new Error('upstream timeout')));
     if (bodyBuf) r.write(bodyBuf);
     r.end();
   });
@@ -132,7 +151,13 @@ function httpsRequest(host, pathname, options = {}) {
     headers['Content-Length'] = bodyBuf.length;
   }
   return new Promise((resolve, reject) => {
-    const r = https.request({ host, path: pathname, method, headers }, (resp) => {
+    const r = https.request({
+      host,
+      path: pathname,
+      method,
+      headers,
+      agent: options.agent === null ? undefined : (options.agent || upstreamHttpsAgent),
+    }, (resp) => {
       const parts = [];
       resp.on('data', (d) => parts.push(d));
       resp.on('end', () => resolve({
@@ -163,7 +188,13 @@ function httpsPatch(host, pathname, headers, bodyBuf) {
 function httpsPostStream(host, pathname, headers, bodyBuf, onChunk, options = {}) {
   const timeoutMs = Number(options.timeoutMs) || 60000;
   return new Promise((resolve, reject) => {
-    const r = https.request({ host, path: pathname, method: 'POST', headers }, (resp) => {
+    const r = https.request({
+      host,
+      path: pathname,
+      method: 'POST',
+      headers,
+      agent: options.agent === null ? undefined : (options.agent || upstreamHttpsAgent),
+    }, (resp) => {
       resp.on('data', (d) => {
         try { if (typeof onChunk === 'function') onChunk(d, resp); } catch (e) { /* ignore consumer errors */ }
       });
@@ -719,6 +750,7 @@ module.exports = {
   ROOT, DATA_DIR, DB_FILE, PUBLIC_DIR,
   loadEnv,
   send, sendJson, readBody, httpsPost, httpsGet, httpsRequest, httpsPut, httpsPatch, httpsPostStream,
+  upstreamHttpsAgent,
   htmlEscape,
   db, mutate, loadDb, defaultDb, migrateDb,
   hashPassword, verifyPassword,

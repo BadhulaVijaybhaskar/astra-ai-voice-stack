@@ -102,8 +102,15 @@ function buildWf8NodeTrace(graph) {
       'Speak booking ack before any Cal.com tool node.',
       'Do not run End Call eligibility LLM hop before first audio on booking language (use local policy).',
       'Keep Global prompt compacted for TTFT; full qualification bank can ride after first phrase.',
+      'P0.2: at most one conversational LLM before first audible. Defer edge-router / language / summarizer LLMs until after first speech.',
+      'NL edge conditions are LOCAL_POLICY_PREFERRED for booking. Avoid Dograh edge-router LLM before first syllable.',
       'WF8 id stays 8. Manual Hostinger import only.',
     ],
+    pre_speech_llm_budget: {
+      max_llm_before_first_speech: 1,
+      booking_ack_llm_before_first_speech: 0,
+      deferred: ['edge_router_classifier', 'language_detect_llm', 'qualification_bank_preload', 'call_summarizer'],
+    },
   };
 }
 

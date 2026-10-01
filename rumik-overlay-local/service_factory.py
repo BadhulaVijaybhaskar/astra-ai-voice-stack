@@ -1281,3 +1281,62 @@ def create_llm_service(
         usage_context=usage_context,
         **kwargs,
     )
+
+
+def create_llm_service_with_model_override(
+    user_config,
+    model_override: str,
+    correlation_id: str | None = None,
+    usage_context: str | None = None,
+):
+    """Dograh entrypoint for per-node / rate-limit model overrides.
+
+    Overlay patches MUST preserve this symbol (P0.1 lesson). It wraps
+    create_llm_service_from_provider with an explicit model while keeping the
+    same provider credentials and kwargs as create_llm_service.
+    Used for Groq fallback (e.g. llama-3.1-8b-instant) without leaving Groq.
+    """
+    provider = user_config.llm.provider
+    api_key = user_config.llm.api_key
+    model = model_override or user_config.llm.model
+
+    kwargs = {}
+    if provider in (
+        ServiceProviders.OPENAI.value,
+        ServiceProviders.ATLASCLOUD.value,
+    ):
+        kwargs["base_url"] = user_config.llm.base_url
+    elif provider == ServiceProviders.OPENROUTER.value:
+        kwargs["base_url"] = user_config.llm.base_url
+    elif provider == ServiceProviders.AZURE.value:
+        kwargs["endpoint"] = user_config.llm.endpoint
+    elif provider == ServiceProviders.SPEACHES.value:
+        kwargs["base_url"] = user_config.llm.base_url
+    elif provider == ServiceProviders.HUGGINGFACE.value:
+        kwargs["base_url"] = user_config.llm.base_url
+        kwargs["bill_to"] = user_config.llm.bill_to
+    elif provider == ServiceProviders.AWS_BEDROCK.value:
+        kwargs["aws_access_key"] = user_config.llm.aws_access_key
+        kwargs["aws_secret_key"] = user_config.llm.aws_secret_key
+        kwargs["aws_region"] = user_config.llm.aws_region
+    elif provider == ServiceProviders.GOOGLE_VERTEX.value:
+        kwargs["project_id"] = user_config.llm.project_id
+        kwargs["location"] = user_config.llm.location
+        kwargs["credentials"] = user_config.llm.credentials
+    elif provider == ServiceProviders.MINIMAX.value:
+        kwargs["base_url"] = user_config.llm.base_url
+        kwargs["temperature"] = user_config.llm.temperature
+    elif provider == ServiceProviders.SARVAM.value:
+        kwargs["temperature"] = user_config.llm.temperature
+
+    logger.info(
+        f"Creating LLM service with model override: provider={provider}, model={model}"
+    )
+    return create_llm_service_from_provider(
+        provider,
+        model,
+        api_key,
+        correlation_id=correlation_id,
+        usage_context=usage_context,
+        **kwargs,
+    )

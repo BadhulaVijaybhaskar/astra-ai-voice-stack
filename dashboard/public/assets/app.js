@@ -5093,10 +5093,13 @@ async function viewTalkLegacy(root) {
   let activeSpeechSources = [];
   let liveBubble = null;
   let turnId = 0;
-  const turnTiming = { stt: null, llm: null, tts: null };
-  /** P0-3 stage marks (ms since epoch) for /api/talk/latency evidence. */
+  const turnTiming = { stt: null, llm: null, tts: null, ttft: null, tts_ttfb: null, total: null };
+  /** P0.2: one monotonic clock per turn (performance.now). stage_trace holds offsets from speech_end. */
   let activeLatency = null;
   let lastAsrGuard = null;
+  /** Warm Rumik WS mint reused across first-phrase TTS (avoid TLS+mint per phrase). */
+  let warmTtsMint = null;
+  let warmTtsMintAt = 0;
 
   function newLatencyTurn() {
     activeLatency = {
@@ -5105,25 +5108,100 @@ async function viewTalkLegacy(root) {
       agent_id: (getActiveAgent() && getActiveAgent().id) || null,
       source: 'browser_talk',
       stages: {},
+      stage_trace: {},
+      mono_origin_ms: null,
+      speech_end_wall_ms: null,
       partials: [],
+      llm: {},
+      tts: {},
     };
     lastAsrGuard = null;
+    turnTiming.stt = null;
+    turnTiming.llm = null;
+    turnTiming.tts = null;
+    turnTiming.ttft = null;
+    turnTiming.tts_ttfb = null;
+    turnTiming.total = null;
     return activeLatency;
   }
 
   async function flushLatency(extra) {
     if (!activeLatency) return;
     const body = Object.assign({}, activeLatency, extra || {});
+    // Prefer stage_trace (monotonic offsets). Server rebuilds absolute stages from speech_end_wall_ms.
+    if (activeLatency.stage_trace && Object.keys(activeLatency.stage_trace).length) {
+      body.stage_trace = activeLatency.stage_trace;
+      body.speech_end_wall_ms = activeLatency.speech_end_wall_ms || Date.now();
+    }
     // Fire-and-forget: never block first audio or turn unlock on evidence POST.
     api('/api/talk/latency', { method: 'POST', timeoutMs: 8000, body }).catch(() => {});
   }
 
   function markLatency(stage, extra) {
     if (!activeLatency) newLatencyTurn();
-    activeLatency.stages[stage] = Date.now();
+    const nowMono = (typeof performance !== 'undefined' && performance.now)
+      ? performance.now()
+      : Date.now();
+    if (stage === 'speech_end' || activeLatency.mono_origin_ms == null) {
+      activeLatency.mono_origin_ms = nowMono;
+      activeLatency.speech_end_wall_ms = Date.now();
+      activeLatency.stage_trace.speech_end = 0;
+      activeLatency.stage_trace.t0 = 0;
+      activeLatency.stages.speech_end = activeLatency.speech_end_wall_ms;
+    }
+    const offset = Math.max(0, Math.round(nowMono - activeLatency.mono_origin_ms));
+    // Keep earliest mark for first-audio stages.
+    const prev = activeLatency.stage_trace[stage];
+    if (prev != null && (stage === 'tts_first_audio' || stage === 'playback_start'
+      || stage === 'llm_first_token' || stage === 'first_safe_phrase')) {
+      if (offset >= prev) {
+        if (extra && typeof extra === 'object') {
+          Object.keys(extra).forEach((k) => { activeLatency[k] = extra[k]; });
+        }
+        return offset;
+      }
+    }
+    activeLatency.stage_trace[stage] = offset;
+    // t0–t7 aliases for report readers.
+    const tMap = {
+      speech_end: 't0', stt_final: 't1', llm_request: 't2', llm_first_token: 't3',
+      first_safe_phrase: 't4', tts_request: 't5', tts_first_audio: 't6', playback_start: 't7',
+    };
+    if (tMap[stage]) activeLatency.stage_trace[tMap[stage]] = offset;
+    activeLatency.stages[stage] = (activeLatency.speech_end_wall_ms || Date.now()) + offset;
     if (extra && typeof extra === 'object') {
       Object.keys(extra).forEach((k) => { activeLatency[k] = extra[k]; });
     }
+    return offset;
+  }
+
+  async function warmTtsConnection(agent) {
+    const tts = (agent && agent.tts) || {};
+    try {
+      const mint = await api('/api/ws-connect', {
+        method: 'POST', timeoutMs: 8000,
+        body: { text: ' ', model: tts.model || 'mulberry' },
+      });
+      if (mint && mint.ws_url) {
+        warmTtsMint = mint;
+        warmTtsMintAt = Date.now();
+        if (activeLatency) activeLatency.tts = Object.assign({}, activeLatency.tts, { warm_mint: true, keep_alive: true });
+      }
+    } catch (_) {
+      warmTtsMint = null;
+    }
+  }
+
+  function consumeWarmTtsMint() {
+    if (!warmTtsMint) return null;
+    // Mint tokens expire quickly; only reuse within 25s.
+    if (Date.now() - warmTtsMintAt > 25000) {
+      warmTtsMint = null;
+      return null;
+    }
+    const mint = warmTtsMint;
+    warmTtsMint = null;
+    return mint;
   }
 
   function looksLikeBookingIntent(text) {
@@ -5185,13 +5263,17 @@ async function viewTalkLegacy(root) {
 
   function updateTiming() {
     const parts = [];
-    if (turnTiming.stt != null) parts.push('STT ' + (turnTiming.stt / 1000).toFixed(2) + 's');
-    if (turnTiming.llm != null) parts.push('Brain ' + (turnTiming.llm / 1000).toFixed(2) + 's');
-    if (turnTiming.tts != null) parts.push('Voice ' + (turnTiming.tts / 1000).toFixed(2) + 's');
-    if (activeLatency && activeLatency.stages.speech_end && activeLatency.stages.playback_start) {
-      const total = activeLatency.stages.playback_start - activeLatency.stages.speech_end;
-      parts.push('E2E ' + (total / 1000).toFixed(2) + 's');
-      if (total >= 9000) parts.push('SLOW');
+    if (turnTiming.stt != null) parts.push('STT ' + Math.round(turnTiming.stt) + 'ms');
+    if (turnTiming.ttft != null) parts.push('TTFT ' + Math.round(turnTiming.ttft) + 'ms');
+    else if (turnTiming.llm != null) parts.push('Brain ' + Math.round(turnTiming.llm) + 'ms');
+    if (turnTiming.tts_ttfb != null) parts.push('TTS ' + Math.round(turnTiming.tts_ttfb) + 'ms');
+    else if (turnTiming.tts != null) parts.push('Voice ' + Math.round(turnTiming.tts) + 'ms');
+    const st = activeLatency && activeLatency.stage_trace;
+    if (st && st.playback_start != null && st.speech_end != null) {
+      turnTiming.total = st.playback_start - (st.speech_end || 0);
+      parts.push('TOTAL ' + Math.round(turnTiming.total) + 'ms');
+      if (turnTiming.total >= 2500) parts.push('HARD_FAIL');
+      else if (turnTiming.total >= 1200) parts.push('SLOW');
     }
     timingText.textContent = parts.length ? parts.join('  ·  ') : 'Latency appears after the first turn';
   }
@@ -5241,7 +5323,16 @@ async function viewTalkLegacy(root) {
       if (settled) return;
       settled = true;
       if (finalizeTimer) clearTimeout(finalizeTimer);
-      if (finalizeStarted) turnTiming.stt = Date.now() - finalizeStarted;
+      if (finalizeStarted) {
+        // Prefer monotonic offset from speech_end when available.
+        if (activeLatency && activeLatency.mono_origin_ms != null
+          && typeof performance !== 'undefined' && performance.now) {
+          turnTiming.stt = Math.round(performance.now() - activeLatency.mono_origin_ms
+            - (activeLatency.stage_trace.speech_end || 0));
+        } else {
+          turnTiming.stt = Date.now() - finalizeStarted;
+        }
+      }
       updateTiming();
       resolveFinal(String(text || '').trim());
     };
@@ -5364,6 +5455,11 @@ async function viewTalkLegacy(root) {
       typing.remove();
       addBubble('bot', phrase);
       setPhase('speaking');
+      markLatency('first_safe_phrase', {
+        streamed_first_phrase: !(meta && meta.booking_ack),
+        booking_ack: !!(meta && meta.booking_ack),
+        first_phrase: phrase,
+      });
       if (meta && meta.booking_ack) markLatency('tool_start', { booking_ack: true });
       // Start TTS on first safe phrase. Do not wait for llm_complete.
       await speakReply(phrase, agent, { partial: true });
@@ -5385,6 +5481,7 @@ async function viewTalkLegacy(root) {
       };
 
       // Booking: speak local ack immediately (target <=1200ms) while stream starts.
+      // Architecture: 0 LLM before first audio. Ordinary turns use 1 stream + first_safe_phrase.
       let ackPromise = null;
       if (bookingIntent) {
         const ack = bookingAckLocal(userText);
@@ -5393,6 +5490,9 @@ async function viewTalkLegacy(root) {
           method: 'POST', timeoutMs: 5000,
           body: { lastUserText: userText, phase: 'booking', endedByAgent: false },
         }).catch(() => {});
+      } else {
+        // Warm TTS mint while Groq TTFT runs so first phrase skips mint RTT.
+        warmTtsConnection(agent).catch(() => {});
       }
 
       let donePayload = null;
@@ -5406,8 +5506,23 @@ async function viewTalkLegacy(root) {
         if (!res.ok) throw new Error('Brain stream failed (' + res.status + ')');
         await readNdjsonStream(res, (ev) => {
           if (!ev || !ev.type) return;
-          if (ev.type === 'first_token' && activeLatency && !activeLatency.stages.llm_first_token) {
-            activeLatency.stages.llm_first_token = ev.at_ms || Date.now();
+          if (ev.type === 'first_token') {
+            // Client monotonic mark only. Never assign server wall clocks into stages.
+            markLatency('llm_first_token');
+            if (ev.ttft_ms != null) {
+              turnTiming.ttft = Number(ev.ttft_ms);
+              if (activeLatency) {
+                activeLatency.llm = Object.assign({}, activeLatency.llm, {
+                  ttft_ms: ev.ttft_ms,
+                  model: ev.model,
+                });
+              }
+            }
+            updateTiming();
+          }
+          if (ev.type === 'rate_limit' && activeLatency) {
+            activeLatency.rate_limited = true;
+            activeLatency.fallback_used = true;
           }
           if (ev.type === 'first_phrase' && ev.phrase) {
             // If booking ack already speaking, treat this as continue material later.
@@ -5428,7 +5543,12 @@ async function viewTalkLegacy(root) {
 
       if (ackPromise) await ackPromise;
       markLatency('llm_complete');
-      turnTiming.llm = (donePayload && donePayload.latency_ms) || (Date.now() - activeLatency.stages.llm_request);
+      turnTiming.llm = (donePayload && donePayload.latency_ms) || null;
+      if (activeLatency && donePayload) {
+        activeLatency.llm_calls_before_first_speech = donePayload.llm_calls_before_first_speech;
+        if (donePayload.rate_limited) activeLatency.rate_limited = true;
+        if (donePayload.fallback_used) activeLatency.fallback_used = true;
+      }
       updateTiming();
       if (myTurn !== turnId) { typing.remove(); return; }
 
@@ -5448,6 +5568,7 @@ async function viewTalkLegacy(root) {
         typing.remove();
         addBubble('bot', fullReply);
         setPhase('speaking');
+        markLatency('first_safe_phrase');
         await speakReply(fullReply, agent);
       } else if (remainder && remainder !== spokenPrefix) {
         addBubble('bot', remainder);
@@ -5469,6 +5590,9 @@ async function viewTalkLegacy(root) {
         booking_ack: bookingIntent,
         tool_assisted: bookingIntent,
         streamed_first_phrase: true,
+        llm_calls_before_first_speech: bookingIntent ? 0 : 1,
+        rate_limited: !!(activeLatency && activeLatency.rate_limited),
+        fallback_used: !!(activeLatency && activeLatency.fallback_used),
         quality: {
           ANSWER_COMPLETENESS: fullReply.length >= 20 ? 'PASS' : 'FAIL',
           NATURAL_PACING: 'PASS',
@@ -5491,13 +5615,20 @@ async function viewTalkLegacy(root) {
   async function speakReply(text, agent, opts) {
     opts = opts || {};
     const tts = agent.tts || {};
-    const ttsStarted = performance.now();
+    const ttsStartedMono = (typeof performance !== 'undefined' && performance.now)
+      ? performance.now()
+      : Date.now();
     if (!opts.continuation) markLatency('tts_request');
     try {
-      const mint = await api('/api/ws-connect', {
-        method: 'POST', timeoutMs: 12000,
-        body: { text: text.slice(0, 2000), model: tts.model || 'mulberry' }
-      });
+      let mint = opts.continuation ? null : consumeWarmTtsMint();
+      if (!mint) {
+        mint = await api('/api/ws-connect', {
+          method: 'POST', timeoutMs: 12000,
+          body: { text: text.slice(0, 2000), model: tts.model || 'mulberry' },
+        });
+      } else if (activeLatency) {
+        activeLatency.tts = Object.assign({}, activeLatency.tts, { warm_mint: true, keep_alive: true });
+      }
       if (!mint.ws_url) throw new Error('Voice stream URL was not returned.');
       const url = mint.ws_url + (mint.token && mint.ws_url.indexOf('token=') === -1
         ? (mint.ws_url.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(mint.token)
@@ -5549,7 +5680,12 @@ async function viewTalkLegacy(root) {
             receivedAudio = true;
             markLatency('tts_first_audio');
             markLatency('playback_start');
-            turnTiming.tts = Math.round(performance.now() - ttsStarted);
+            const ttfb = Math.round(
+              ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now())
+              - ttsStartedMono,
+            );
+            turnTiming.tts = ttfb;
+            turnTiming.tts_ttfb = ttfb;
             updateTiming();
             if (opts.partial) finish(null);
           }
@@ -5569,12 +5705,18 @@ async function viewTalkLegacy(root) {
         socket.onerror = () => finish(new Error('Voice stream connection failed.'));
         socket.onclose = () => { if (!finished) finish(receivedAudio ? null : new Error('Voice stream closed early.')); };
       });
+      // Pre-warm next mint while audio plays (reduce next-phrase TTFB).
+      if (!opts.continuation) warmTtsConnection(agent).catch(() => {});
     } catch (streamError) {
       try {
         const res = await api('/api/tts', { method: 'POST', timeoutMs: 60000, body: { text: text.slice(0, 2000), model: tts.model || 'mulberry', speaker: tts.speaker, f0_up_key: tts.f0_up_key, description: tts.description } });
         const buf = await res.arrayBuffer();
         markLatency('tts_first_audio');
-        turnTiming.tts = Math.round(performance.now() - ttsStarted);
+        turnTiming.tts = Math.round(
+          ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now())
+          - ttsStartedMono,
+        );
+        turnTiming.tts_ttfb = turnTiming.tts;
         updateTiming();
         const url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
         const audio = new Audio(url);
@@ -5692,6 +5834,9 @@ async function viewTalkLegacy(root) {
       const maxTurn = now - captureStartedAt > 30000;
       if (endedTurn || maxTurn) {
         markLatency('speech_end');
+        // Warm TTS mint as soon as speech ends so first phrase skips mint RTT.
+        const agent = getActiveAgent();
+        if (agent) warmTtsConnection(agent).catch(() => {});
         try { mediaRec.stop(); } catch (e) {}
       }
     }, 60);

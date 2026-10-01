@@ -401,7 +401,54 @@ const llmGroq = {
     }, payload);
     let data = {}; try { data = JSON.parse(up.buffer.toString('utf8')); } catch {}
     if (up.status !== 200) {
-      throw new ProviderError('groq response failed', up.status, 'upstream',
+      const classified = llmStream.classifyGroqError(
+        up.status,
+        (((data.error || {}).message) || up.buffer.toString('utf8')),
+      );
+      // Non-stream path: one fast fallback to alternate Groq model on rate limit.
+      if (classified.rate_limited || classified.category === 'unavailable') {
+        const fallbackModel = process.env.GROQ_FALLBACK_MODEL || 'llama-3.1-8b-instant';
+        if (fallbackModel && fallbackModel !== model) {
+          const fbPayload = Buffer.from(JSON.stringify({
+            model: fallbackModel,
+            messages,
+            temperature: 0.7,
+            max_completion_tokens: 500,
+            stream: false,
+          }));
+          const fb = await httpsPost(GROQ_HOST, '/openai/v1/chat/completions', {
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            'Content-Length': fbPayload.length,
+          }, fbPayload);
+          let fbData = {}; try { fbData = JSON.parse(fb.buffer.toString('utf8')); } catch {}
+          if (fb.status === 200) {
+            const choice = (fbData.choices || [])[0] || {};
+            return {
+              text: String(((choice.message || {}).content) || '').trim() || 'Sorry, I did not catch that.',
+              finish: choice.finish_reason || null,
+              provider: 'groq',
+              model: fallbackModel,
+              latency_ms: Date.now() - started,
+              rate_limited: true,
+              fallback_used: true,
+            };
+          }
+        }
+        const ack = llmStream.rateLimitAckSpeech(
+          (messages.filter((m) => m.role === 'user').pop() || {}).content || '',
+        );
+        return {
+          text: ack.text + ' Could you repeat that so I can answer fully?',
+          finish: 'rate_limit_ack',
+          provider: 'groq',
+          model,
+          latency_ms: Date.now() - started,
+          rate_limited: true,
+          fallback_used: false,
+        };
+      }
+      throw new ProviderError('groq response failed', up.status, classified.category,
         (((data.error || {}).message) || up.buffer.toString('utf8')).slice(0, 300));
     }
     const choice = (data.choices || [])[0] || {};
