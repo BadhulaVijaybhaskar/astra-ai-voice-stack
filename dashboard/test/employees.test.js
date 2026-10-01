@@ -366,3 +366,35 @@ test('HTTP employee APIs enforce tenant isolation and hide provider terms', asyn
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
   delete process.env.RAPIDX_DB_FILE;
 });
+
+test('assignedNumber resolves via reverse assignedEmployeeId when phoneNumberId missing', () => {
+  const db = emptyDb();
+  const phoneNumbers = require('../lib/phone-numbers');
+  phoneNumbers.seedPlatformInventory(db);
+  db.employees.push({
+    id: 'emp_maya',
+    tenantId: 't_a',
+    name: 'Maya',
+    role: 'Lead Qualification',
+    status: 'READY',
+    agentId: 'ag_1',
+    phoneNumberId: null,
+    voice: { language: 'en-IN', tier: 'standard' },
+    knowledgeIds: [],
+    outcomes: [],
+    actions: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  const n = db.phoneNumbers[0];
+  n.tenantId = 't_a';
+  n.status = 'assigned';
+  n.assignedEmployeeId = 'emp_maya';
+  n.assignedAgentId = 'ag_1';
+  n.e164 = '+918065353938';
+
+  const pub = employees.publicEmployee(db.employees[0], db);
+  assert.ok(pub.assignedNumber, 'assignedNumber should resolve from reverse link');
+  assert.equal(pub.assignedNumber.e164, '+918065353938');
+  assert.equal(db.employees[0].phoneNumberId, n.id, 'heal forward phoneNumberId');
+});

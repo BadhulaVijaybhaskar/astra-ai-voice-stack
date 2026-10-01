@@ -28,10 +28,10 @@ const CHANNEL_SET = new Set(CHANNELS);
  * "Language", never STT/TTS vendor names.
  */
 const SUPPORTED_LANGUAGES = Object.freeze([
-  Object.freeze({ id: 'en-IN', label: 'English (India)', nativeLabel: 'English' }),
-  Object.freeze({ id: 'hi-IN', label: 'Hindi', nativeLabel: 'हिन्दी' }),
-  Object.freeze({ id: 'te-IN', label: 'Telugu', nativeLabel: 'తెలుగు' }),
-  Object.freeze({ id: 'ta-IN', label: 'Tamil', nativeLabel: 'தமிழ்' }),
+  Object.freeze({ id: 'en-IN', label: 'English (India)', nativeLabel: 'English', status: 'Tested' }),
+  Object.freeze({ id: 'hi-IN', label: 'Hindi', nativeLabel: 'हिन्दी', status: 'Tested' }),
+  Object.freeze({ id: 'te-IN', label: 'Telugu', nativeLabel: 'తెలుగు', status: 'Tested' }),
+  Object.freeze({ id: 'ta-IN', label: 'Tamil', nativeLabel: 'தமிழ்', status: 'Ready for validation' }),
 ]);
 const LANGUAGE_BY_ID = new Map(SUPPORTED_LANGUAGES.map((l) => [l.id, l]));
 const DEFAULT_LANGUAGE = 'en-IN';
@@ -486,17 +486,58 @@ function computeMetrics(db, employee) {
   };
 }
 
-function resolveAssignedNumber(db, employee) {
-  if (!employee.phoneNumberId) return null;
-  const n = (db.phoneNumbers || []).find(
-    (row) => row.id === employee.phoneNumberId && row.tenantId === employee.tenantId,
-  );
+function publicAssignedNumber(n) {
   if (!n) return null;
   return {
     id: n.id,
     e164: n.e164 || n.address || '',
     label: n.label || '',
   };
+}
+
+/**
+ * Resolve the Phone Number bound to an Employee.
+ * Prefer employee.phoneNumberId, then reverse links (assignedEmployeeId /
+ * assignedAgentId). Heal one-way link drift so the UI never shows
+ * "unassigned" when inventory already points at this employee.
+ */
+function resolveAssignedNumber(db, employee) {
+  if (!employee) return null;
+  const numbers = db.phoneNumbers || [];
+  let n = null;
+
+  if (employee.phoneNumberId) {
+    n = numbers.find((row) => row.id === employee.phoneNumberId) || null;
+    // Accept match even when tenantId drifted, as long as the id is exact.
+    if (n && n.tenantId && employee.tenantId && n.tenantId !== employee.tenantId) {
+      n = null;
+    }
+  }
+
+  if (!n) {
+    n = numbers.find((row) =>
+      row.assignedEmployeeId
+      && row.assignedEmployeeId === employee.id
+      && (!row.tenantId || row.tenantId === employee.tenantId)
+    ) || null;
+  }
+
+  if (!n && employee.agentId) {
+    n = numbers.find((row) =>
+      row.status === 'assigned'
+      && row.assignedAgentId === employee.agentId
+      && (!row.tenantId || row.tenantId === employee.tenantId)
+    ) || null;
+  }
+
+  // Heal reverse / forward link drift for future reads (in-memory only;
+  // persist happens on next mutate that touches numbers).
+  if (n) {
+    if (!employee.phoneNumberId) employee.phoneNumberId = n.id;
+    if (!n.assignedEmployeeId) n.assignedEmployeeId = employee.id;
+  }
+
+  return publicAssignedNumber(n);
 }
 
 function resolveNames(db, employee) {
