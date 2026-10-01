@@ -3326,32 +3326,154 @@ async function viewEmployeeStudio(root, id) {
       const previewBtn = el('button', {
         class: 'btn btn-ghost btn-sm',
         disabled: canPreview ? null : 'disabled',
-        title: canPreview ? 'Play draft preview' : ('Preview disabled · ' + (meta.state_label || meta.state)),
-      }, 'Play draft preview');
+        title: canPreview
+          ? 'Play draft preview for the selected provider, language, and voice'
+          : ('Preview disabled · ' + (meta.state_label || meta.state)),
+      }, canPreview ? 'Preview' : (meta.state === 'needs_funding'
+        ? 'Preview disabled — funding required'
+        : 'Preview disabled'));
+
+      let previewAudio = null;
+      let previewBlobUrl = null;
+      function stopPreviewPlayback() {
+        if (previewAudio) {
+          try { previewAudio.pause(); } catch (_) {}
+          previewAudio = null;
+        }
+        if (previewBlobUrl) {
+          try { URL.revokeObjectURL(previewBlobUrl); } catch (_) {}
+          previewBlobUrl = null;
+        }
+      }
+      function setPreviewLabel(label) {
+        if (!canPreview) return;
+        previewBtn.textContent = label;
+      }
+      function previewErrorMessage(err) {
+        const code = (err && err.data && (err.data.code || err.data.category))
+          || (err && err.code)
+          || '';
+        const map = {
+          needs_funding: 'Preview disabled — funding required',
+          needs_credentials: 'Needs credentials',
+          auth_failed: 'Auth failed',
+          voice_unavailable: 'Voice unavailable',
+          audio_generation_failed: 'Audio generation failed',
+          playback_blocked: 'Browser playback blocked',
+          network_error: 'Network error',
+          employee_not_found: 'Voice unavailable',
+        };
+        if (map[code]) return map[code];
+        if (err && err.status === 0) return 'Network error';
+        if (err && /NotAllowedError|play\(\)|autoplay/i.test(String(err.message || err.name || ''))) {
+          return 'Browser playback blocked';
+        }
+        return (err && err.message) || 'Audio generation failed';
+      }
+
       previewBtn.onclick = async () => {
         if (!canPreview) {
-          toast('Preview disabled until provider is funded and credentials are ready.', 'info');
+          toast(
+            meta.state === 'needs_funding'
+              ? 'Preview disabled — funding required'
+              : ('Preview disabled · ' + (meta.state_label || 'Unavailable')),
+            'info',
+          );
           return;
         }
+        // Stop / Replay when already playing from a prior successful play().
+        if (previewAudio && !previewAudio.paused) {
+          stopPreviewPlayback();
+          setPreviewLabel('Replay');
+          return;
+        }
+        if (previewBtn.dataset.busy === '1') return;
+
+        const provider = selectedProvider === 'auto' ? 'auto' : selectedProvider;
+        const voice_id = String(selectedVoiceId || '').trim();
+        const language = String(selectedLanguage || '').trim();
+        if (!voice_id) {
+          toast('Voice unavailable', 'err');
+          return;
+        }
+        // Never silent Maya fallback. Preview uses the currently selected chips.
+        if (provider === 'dograh') {
+          toast('Voice unavailable', 'err');
+          return;
+        }
+
+        previewBtn.dataset.busy = '1';
         previewBtn.disabled = true;
+        setPreviewLabel('Loading…');
+        stopPreviewPlayback();
+
         try {
-          toast('Playing draft preview · Draft voice · Not active', 'info');
-          const who = emp.name || 'Astra Voice';
-          const out = await api('/api/tts', {
+          const res = await api('/api/voice/preview', {
             method: 'POST',
+            timeoutMs: 45000,
             body: {
-              text: 'Hi, I am ' + who + ' from Astra Voice. How can I help you today?',
-              preview: true,
-              provider: selectedProvider === 'auto' || selectedProvider === 'dograh' ? undefined : selectedProvider,
-              speaker: selectedVoiceId || undefined,
-              model: undefined,
+              provider,
+              voice_id,
+              language,
+              text: 'Hello, this is a preview from Astra Voice.',
+              employeeId: emp.id,
             },
-            raw: true,
-          }).catch(() => null);
-          if (out && out.ok === false) toast('Preview unavailable in this environment.', 'info');
-          else toast('Draft preview ready.', 'ok');
-        } catch (e) { toast(e.message || 'Preview failed.', 'err'); }
-        finally { previewBtn.disabled = !canPreview; }
+          });
+          if (!res || typeof res.blob !== 'function') {
+            throw Object.assign(new Error('Audio generation failed'), {
+              data: { code: 'audio_generation_failed' },
+            });
+          }
+          if (!res.ok) {
+            throw Object.assign(new Error('Audio generation failed'), {
+              status: res.status,
+              data: { code: 'audio_generation_failed' },
+            });
+          }
+          const ct = String(res.headers.get('content-type') || '').split(';')[0].trim();
+          if (!ct || ct.indexOf('audio/') !== 0) {
+            throw Object.assign(new Error('Audio generation failed'), {
+              data: { code: 'audio_generation_failed' },
+            });
+          }
+          const blob = await res.blob();
+          if (!blob || !blob.size) {
+            throw Object.assign(new Error('Audio generation failed'), {
+              data: { code: 'audio_generation_failed' },
+            });
+          }
+          previewBlobUrl = URL.createObjectURL(blob);
+          const audio = new Audio(previewBlobUrl);
+          previewAudio = audio;
+          audio.onended = () => {
+            stopPreviewPlayback();
+            setPreviewLabel('Replay');
+            previewBtn.disabled = !canPreview;
+            previewBtn.dataset.busy = '';
+          };
+          // play() must stay inside the click gesture chain. Only show Playing after it starts.
+          await audio.play();
+          setPreviewLabel('Playing… · Stop');
+          toast('Playing draft preview · Draft voice · Not active', 'ok');
+        } catch (e) {
+          stopPreviewPlayback();
+          const msg = previewErrorMessage(e);
+          toast(msg, 'err');
+          setPreviewLabel(canPreview ? 'Preview' : previewBtn.textContent);
+          if (msg.indexOf('funding') !== -1) {
+            setPreviewLabel('Preview disabled — funding required');
+            previewBtn.disabled = true;
+            previewBtn.title = msg;
+          }
+        } finally {
+          previewBtn.dataset.busy = '';
+          if (previewBtn.textContent.indexOf('Playing') === -1
+            && previewBtn.textContent.indexOf('funding') === -1) {
+            previewBtn.disabled = !canPreview;
+          } else if (previewBtn.textContent.indexOf('Playing') !== -1) {
+            previewBtn.disabled = false;
+          }
+        }
       };
 
       const activateBtn = el('button', {

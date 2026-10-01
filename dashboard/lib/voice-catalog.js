@@ -154,6 +154,16 @@ function resolveProviderState(providerId) {
         reason: 'rumik_api_key_missing',
       };
     }
+    if (envFlag('RUMIK_NEEDS_FUNDING')
+      || String(process.env.RUMIK_ACCOUNT_STATUS || '').trim().toLowerCase() === 'needs_funding') {
+      return {
+        state: PROVIDER_STATE.NEEDS_FUNDING,
+        label: 'Needs funding',
+        can_preview: false,
+        can_activate: false,
+        reason: 'rumik_needs_funding',
+      };
+    }
     return {
       state: PROVIDER_STATE.READY,
       label: 'Ready',

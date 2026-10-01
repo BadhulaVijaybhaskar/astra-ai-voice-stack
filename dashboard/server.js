@@ -56,6 +56,7 @@ const employees = require('./lib/employees');
 const timeline = require('./lib/timeline');
 const voiceCatalog = require('./lib/tts-voice-catalog');
 const unifiedVoiceCatalog = require('./lib/voice-catalog');
+const voicePreview = require('./lib/voice-preview');
 const aiEmployeeJourney = require('./lib/ai-employee-journey');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
@@ -561,6 +562,62 @@ async function apiTts(req, res, ctx) {
       'X-Chars': String(out.chars),
     });
   } catch (e) {
+    handleProviderError(res, e);
+  }
+}
+
+/**
+ * POST /api/voice/preview
+ * Body: { provider, voice_id, language, text?, employeeId? }
+ * Returns binary audio/mpeg|audio/wav (normalized), or JSON error with category.
+ * Never flips Maya / production TTS. Never silently falls back to another employee.
+ */
+async function apiVoicePreview(req, res, ctx) {
+  const b = ctx.body || {};
+  try {
+    const out = await voicePreview.synthesizePreview({
+      provider: b.provider,
+      voice_id: b.voice_id || b.voiceId || b.speaker,
+      language: b.language || b.language_code,
+      text: b.text,
+      employeeId: b.employeeId || b.employee_id,
+      findEmployee: (id) => employees.findEmployee(core.db(), ctx.tenant.id, id),
+    });
+    bumpUsage(ctx.tenant.id, 'chars', out.chars).catch(() => {});
+    // Prefer binary so the browser can Audio(blobUrl) without provider parsing.
+    if (b.response === 'json' || b.format === 'json') {
+      return core.sendJson(res, 200, {
+        ok: true,
+        mime_type: out.mime_type,
+        content_type: out.contentType,
+        provider: out.provider,
+        voice_id: out.voice_id,
+        language: out.language,
+        employeeId: out.employeeId,
+        chars: out.chars,
+        // Data URL keeps the contract playable without a secondary fetch.
+        audio_url: 'data:' + out.mime_type + ';base64,' + out.buffer.toString('base64'),
+      });
+    }
+    core.send(res, 200, out.buffer, {
+      'Content-Type': out.contentType,
+      'Content-Length': out.buffer.length,
+      'X-Chars': String(out.chars),
+      'X-Preview-Provider': out.provider,
+      'X-Preview-Voice': out.voice_id,
+      'X-Preview-Language': out.language || '',
+      'X-Credits-Used': out.credits || '',
+    });
+  } catch (e) {
+    if (e instanceof voicePreview.PreviewError) {
+      const pub = voicePreview.publicPreviewError(e);
+      return core.sendJson(res, pub.status, pub.body);
+    }
+    if (e instanceof providers.ProviderError) {
+      const mapped = voicePreview.mapUpstreamPreviewError(e, b.provider);
+      const pub = voicePreview.publicPreviewError(mapped);
+      return core.sendJson(res, pub.status, pub.body);
+    }
     handleProviderError(res, e);
   }
 }
@@ -3941,6 +3998,7 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/agents/update') return core.requireAuth(req, res, apiAgentsUpdate, body);
       if (route === '/api/agents/delete') return core.requireAuth(req, res, apiAgentsDelete, body);
       if (route === '/api/tts') return core.requireAuth(req, res, apiTts, body);
+      if (route === '/api/voice/preview') return core.requireAuth(req, res, apiVoicePreview, body);
       if (route === '/api/ws-connect') return core.requireAuth(req, res, apiWsConnect, body);
       if (route === '/api/chat') return core.requireAuth(req, res, apiChat, body);
       if (route === '/api/stt') return core.requireAuth(req, res, apiStt, body);
