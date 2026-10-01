@@ -254,9 +254,19 @@ function migrateDb(parsed) {
   for (const emp of out.employees) {
     if (!emp.phoneNumberId) continue;
     const n = (out.phoneNumbers || []).find(
-      (row) => row.id === emp.phoneNumberId && row.tenantId === emp.tenantId,
+      (row) => row.id === emp.phoneNumberId
+        && (!row.tenantId || row.tenantId === emp.tenantId),
     );
     if (n && !n.assignedEmployeeId) n.assignedEmployeeId = emp.id;
+  }
+  // Reverse heal: number already points at employee but employee.phoneNumberId missing.
+  for (const n of out.phoneNumbers) {
+    if (!n.assignedEmployeeId) continue;
+    const emp = (out.employees || []).find(
+      (e) => e.id === n.assignedEmployeeId
+        && (!n.tenantId || e.tenantId === n.tenantId),
+    );
+    if (emp && !emp.phoneNumberId) emp.phoneNumberId = n.id;
   }
   for (const n of out.phoneNumbers) {
     if (n.assignedEmployeeId || !n.assignedAgentId || !n.tenantId) continue;
