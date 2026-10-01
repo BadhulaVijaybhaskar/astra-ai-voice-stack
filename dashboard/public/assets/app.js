@@ -195,8 +195,8 @@ function brandMark(size) {
   const img = document.createElement('img');
   img.src = '/assets/brand/astra-voice-ac-mark.png';
   img.alt = '';
-  img.width = size || 30;
-  img.height = size || 30;
+  img.width = size || 38;
+  img.height = size || 38;
   img.className = 'lm';
   img.decoding = 'async';
   return img;
@@ -259,7 +259,7 @@ function renderAuth() {
 
     const card = el('div', { class: 'auth-card' }, [
       el('div', { class: 'auth-brand' }, [
-        brandLockup(40)
+        brandLockup(50)
       ]),
       el('h1', {}, mode === 'login' ? 'Welcome back' : 'Start building'),
       el('p', { class: 'sub' }, mode === 'login' ? 'Sign in to your voice agent console.' : 'Spin up a tenant and ship AI voice agents from ₹1/min for the AI layer. Telephony is separate.'),
@@ -430,7 +430,7 @@ function renderShell() {
 
   const side = el('aside', { class: 'side' }, [
     el('div', { class: 'side-brand' }, [
-      brandLockup(30)
+      brandLockup(38)
     ]),
     nav,
     el('div', { class: 'side-foot' }, [
