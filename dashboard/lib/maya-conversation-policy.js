@@ -72,7 +72,24 @@ const GLOBAL_PROMPT = `# WHO YOU ARE
 
 You are Maya, the AI voice employee for Astra Voice on a live phone call.
 You speak naturally in the caller's language when they use Hindi, Hinglish,
-Telugu, or TE-EN mix. Keep replies to one or two short sentences.
+Telugu, or TE-EN mix.
+
+# RESPONSE LENGTH (ADAPTIVE — NOT A SHORTNESS QUOTA)
+
+Match answer length to the question. Latency is about starting speech quickly,
+not cutting useful answers short.
+- Simple confirm / yes-no → concise
+- How / why / product explanation → detailed and complete
+- Qualification → consultative, one clear question at a time after a brief ack
+- Booking → concise and action-oriented, then collect details
+Once you start answering, continue until the answer is complete. Never rush the
+caller. Never truncate a useful explanation to hit a latency number.
+
+# FIRST AUDIO / STREAMING
+
+Lead with a safe natural opening phrase so speech can start immediately, then
+continue the rest of the answer. Example: "Yes. Astra Voice can qualify inbound
+leads..." then finish the explanation. Do not wait for tools before speaking.
 
 # CONVERSATION POLICY (MANDATORY)
 
@@ -88,7 +105,10 @@ Telugu, or TE-EN mix. Keep replies to one or two short sentences.
 # BOOKING FLOW (NEVER SKIP, NEVER HANG UP)
 
 When booking intent is clear (including "Okay, demo schedule kar sakte ho?"):
-  ask email → availability → offer slot → confirmation → Cal.com
+  Speak a short acknowledgement IMMEDIATELY (for example "Haan, bilkul. Demo
+  book karte hain."), THEN ask email → availability → offer slot → confirmation
+  → Cal.com. Tools may continue in the background. Never stay silent while
+  tools run.
 
 Never invent calendar availability. Never claim an appointment is booked
 without a real Cal.com booking id. Never hang up because booking started.
@@ -121,9 +141,11 @@ offer a demo. If they already want to book, move to booking without more selling
 
 const BOOKING_PROMPT = `# THIS STAGE
 
-You are in booking. Stop selling. Run: ask email → availability → offer slot →
-confirmation → Cal.com. Stay here until booking is confirmed, declined, or they
-clearly want to stop. Never jump to End Call from this stage on booking language.
+You are in booking. Stop selling. First speak a short acknowledgement, then run:
+ask email → availability → offer slot → confirmation → Cal.com. Tools stay in
+the background after the ack. Stay here until booking is confirmed, declined, or
+they clearly want to stop. Never jump to End Call from this stage on booking
+language. Never stay silent waiting on Cal.com.
 `;
 
 const END_PROMPT = `# THIS STAGE
@@ -423,7 +445,13 @@ function nextDialogueAction(phase, userText) {
   }
   if (detectBookingIntent(text) || current === 'booking') {
     if (current !== 'booking') {
-      return { phase: 'booking', action: 'enter_booking', stage: 'ask_email', reason: 'booking_intent' };
+      return {
+        phase: 'booking',
+        action: 'enter_booking',
+        stage: 'ack_then_ask_email',
+        reason: 'booking_intent',
+        speak_ack_first: true,
+      };
     }
     return { phase: 'booking', action: 'continue_booking', reason: 'in_booking_flow' };
   }
@@ -434,6 +462,21 @@ function nextDialogueAction(phase, userText) {
     return { phase: 'offer_demo', action: 'suggest_booking', reason: 'after_summary' };
   }
   return { phase: current || 'qualify', action: 'continue', reason: 'default' };
+}
+
+/**
+ * Immediate spoken acknowledgement for booking intent (tool path).
+ * Speech starts before Cal.com / availability tools.
+ */
+function bookingAckSpeech(userText) {
+  const s = String(userText || '');
+  if (/[\u0C00-\u0C7F]/.test(s)) {
+    return { language: 'te', text: 'సరే. డెమో బుక్ చేసుకుందాం.' };
+  }
+  if (/[\u0900-\u097F]/.test(s) || /kar\s*sakte|bilkul|haan|demo\s*schedule|book\s*kar/i.test(s)) {
+    return { language: 'hi', text: 'Haan, bilkul. Demo book karte hain.' };
+  }
+  return { language: 'en', text: 'Yes. Let us book a short demo.' };
 }
 
 module.exports = {
@@ -455,4 +498,5 @@ module.exports = {
   applyMayaPolicyToInstructions,
   isMayaEmployee,
   nextDialogueAction,
+  bookingAckSpeech,
 };

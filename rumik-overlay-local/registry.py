@@ -919,7 +919,7 @@ class RumikTTSConfiguration(BaseTTSConfiguration):
     temperature: float = Field(default=0.6, ge=0.0, le=2.0)
     top_p: float = Field(default=0.95, ge=0.0, le=1.0)
     top_k: int = Field(default=50, ge=1, le=200)
-    full_response_aggregation: bool = Field(default=True)
+    full_response_aggregation: bool = Field(default=False)
 
 
 @register_tts

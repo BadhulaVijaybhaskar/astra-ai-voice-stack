@@ -27,6 +27,7 @@
 
 const { httpsPost, httpsGet, httpsPut, httpsPatch, httpsRequest } = require('./core');
 const voiceCatalog = require('./tts-voice-catalog');
+const llmStream = require('./llm-stream');
 
 // Rumik sits behind Cloudflare, which 403s non-browser user-agents. NEVER remove.
 const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
@@ -232,13 +233,21 @@ const ttsSarvam = {
     };
   },
 
-  async wsConnect() {
-    throw new ProviderError(
-      'Sarvam streaming mint is not enabled for dashboard preview',
-      501,
-      'not_configured',
-      { needs: this.needs },
-    );
+  async wsConnect(opts) {
+    // Prefer short first-phrase synthesis for first-audio. Sarvam REST still
+    // returns a full clip per request; callers should pass only the first safe
+    // phrase for the initial mint, then synthesize continuation chunks.
+    // Dograh WF8 uses pipecat SarvamTTSService with aggregation off for true
+    // streaming first-audio on bulbul:v3 priya.
+    const key = process.env.SARVAM_API_KEY;
+    if (!key) throw notConfigured(this.label, this.needs);
+    return {
+      mode: 'chunked_rest',
+      provider: 'sarvam',
+      model: selectedModel(this, opts && opts.model),
+      note: 'Dashboard uses chunked REST phrases for first-audio. Dograh overlay streams with full_response_aggregation=false.',
+      voice_id: String((opts && (opts.speaker || opts.voice_id)) || 'priya'),
+    };
   },
 };
 
@@ -307,7 +316,7 @@ const sttDeepgram = {
   needs: ['DEEPGRAM_API_KEY'],
   implemented: true,
   get live() { return hasEnv(this.needs); },
-  get model() { return process.env.DEEPGRAM_MODEL || 'nova-3'; },
+  get model() { return process.env.DEEPGRAM_MODEL || 'nova-3-general'; },
 
   async mintToken() {
     const key = process.env.DEEPGRAM_API_KEY;
@@ -367,19 +376,21 @@ const llmGroq = {
   async chat(opts) {
     const key = process.env.GROQ_API_KEY;
     if (!key) throw notConfigured(this.label, this.needs);
-    const history = Array.isArray(opts.messages) ? opts.messages.slice(-16) : [];
-    const messages = [{ role: 'system', content: String(opts.system || DEFAULT_SYSTEM).slice(0, 3000) }]
+    const history = Array.isArray(opts.messages) ? opts.messages.slice(-12) : [];
+    const messages = [{ role: 'system', content: String(opts.system || DEFAULT_SYSTEM).slice(0, 3500) }]
       .concat(history.filter((m) => m && m.text).map((m) => ({
         role: (m.role === 'assistant' || m.role === 'model') ? 'assistant' : 'user',
-        content: String(m.text).slice(0, 4000),
+        content: String(m.text).slice(0, 1500),
       })));
     if (messages.length < 2) throw new ProviderError('no messages', 422, 'no_messages');
     const model = selectedModel(this, opts.model);
+    // Keep headroom for detailed explanations. Latency is fixed by streaming
+    // first-phrase TTS elsewhere, not by cutting max tokens.
     const payload = Buffer.from(JSON.stringify({
       model,
       messages,
       temperature: 0.7,
-      max_completion_tokens: 400,
+      max_completion_tokens: 500,
       stream: false,
     }));
     const started = Date.now();
@@ -401,6 +412,15 @@ const llmGroq = {
       model,
       latency_ms: Date.now() - started,
     };
+  },
+
+  /**
+   * Streaming chat. Prefer this for Browser Talk so TTS can start on the first
+   * safe phrase without waiting for llm_complete.
+   */
+  async chatStream(opts) {
+    const model = selectedModel(this, opts.model);
+    return llmStream.streamGroqChat({ ...opts, model });
   },
 };
 

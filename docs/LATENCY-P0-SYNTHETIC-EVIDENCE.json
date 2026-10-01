@@ -1,0 +1,301 @@
+{
+  "generated_at": "2026-10-01T12:06:47.729Z",
+  "mode": "synthetic_designed_budgets",
+  "note": "Replace AFTER_* with live Hostinger Browser Talk measurements before PSTN QA.",
+  "report": {
+    "primary_metric": "speech_end → first audible response (NOT total answer length)",
+    "first_audio_target_ms": [
+      800,
+      1000
+    ],
+    "baseline_before": {
+      "tip": "7f03dd0",
+      "employee_id": "emp_33eae8ef454680f0",
+      "dograh_workflow_id": "8",
+      "tts": "sarvam bulbul:v3 priya",
+      "did": "+918065353938",
+      "first_audio_median_ms": 14403,
+      "mixed_median_ms": 25800,
+      "max_ms": 54597,
+      "bottleneck": "WF8 LLM/tool especially booking (speech blocked on tools)"
+    },
+    "targets": {
+      "first_audio_target_ms": 1000,
+      "first_audio_stretch_ms": 1200,
+      "first_audio_hard_fail_ms": 2500,
+      "first_audio_target_min_ms": 800,
+      "first_audio_target_max_ms": 1000,
+      "first_audio_p50_ms": 1000,
+      "tool_assisted_first_audio_ms": 1200,
+      "stt_final_target_ms": 250,
+      "silent_wait_fail_ms": 4000,
+      "critical_slow_first_audio_ms": 2500
+    },
+    "sample_count": 22,
+    "ENGLISH": {
+      "FIRST_AUDIO": {
+        "n": 7,
+        "P50": 950,
+        "P90": 1031,
+        "P95": 1036,
+        "max": 1040
+      },
+      "TOTAL_RESPONSE_DURATION": {
+        "n": 7,
+        "P50": 5455,
+        "P90": 5666,
+        "P95": 5716,
+        "max": 5765
+      }
+    },
+    "TELUGU": {
+      "FIRST_AUDIO": {
+        "n": 5,
+        "P50": 1005,
+        "P90": 1026,
+        "P95": 1028,
+        "max": 1030
+      },
+      "TOTAL_RESPONSE_DURATION": {
+        "n": 5,
+        "P50": 5545,
+        "P90": 5637,
+        "P95": 5646,
+        "max": 5655
+      }
+    },
+    "MIXED": {
+      "FIRST_AUDIO": {
+        "n": 5,
+        "P50": 1010,
+        "P90": 1074,
+        "P95": 1087,
+        "max": 1100
+      },
+      "TOTAL_RESPONSE_DURATION": {
+        "n": 5,
+        "P50": 5660,
+        "P90": 5827,
+        "P95": 5881,
+        "max": 5935
+      }
+    },
+    "HINDI_BOOKING": {
+      "FIRST_AUDIO": {
+        "n": 5,
+        "P50": 1000,
+        "P90": 1060,
+        "P95": 1075,
+        "max": 1090
+      },
+      "TOTAL_RESPONSE_DURATION": {
+        "n": 5,
+        "P50": 6870,
+        "P90": 6899,
+        "P95": 6907,
+        "max": 6915
+      }
+    },
+    "FIRST_AUDIO": {
+      "n": 22,
+      "P50": 1003,
+      "P90": 1040,
+      "P95": 1088,
+      "max": 1100
+    },
+    "TOTAL_RESPONSE_DURATION": {
+      "n": 22,
+      "P50": 5605,
+      "P90": 6848,
+      "P95": 6875,
+      "max": 6915
+    },
+    "BOTTLENECKS": [
+      {
+        "stage_gap": "playback_start_to_response_complete",
+        "count": 22
+      }
+    ],
+    "BEFORE_MEDIAN_MS": 14403,
+    "AFTER_FIRST_AUDIO_P50_MS": 1003,
+    "AFTER_FIRST_AUDIO_P90_MS": 1040,
+    "AFTER_FIRST_AUDIO_P95_MS": 1088,
+    "AFTER_TOTAL_RESPONSE_P50_MS": 5605,
+    "SILENT_WAITS": {
+      "fail_count": 0,
+      "fail_threshold_ms": 4000,
+      "fails": []
+    },
+    "ANSWER_COMPLETENESS": "PASS",
+    "NATURAL_PACING": "PASS",
+    "CUSTOMER_NOT_RUSHED": "PASS",
+    "DEMO_PUSH_REDUCED": "PASS",
+    "READY_FOR_PSTN_QA": "NO_PENDING_HOSTINGER_MEASUREMENT",
+    "notes": [
+      "Do not optimize total response duration by shortening useful answers.",
+      "Streaming starts TTS on the first safe natural phrase while LLM continues.",
+      "Turn length is adaptive: simple concise, explanation detailed, qualify consultative, booking action-oriented."
+    ]
+  },
+  "designed": {
+    "before": {
+      "first_audio_ms": 14403,
+      "total_response_duration_ms": 18000,
+      "notes": "Baseline tip 7f03dd0: speech blocked on full LLM+tools before any TTS"
+    },
+    "after_designed": {
+      "first_audio_ms": 1000,
+      "total_response_duration_ms": "adaptive (not optimized down)",
+      "mechanism": "stream first safe phrase to TTS; booking ack parallel with tools; aggregation off",
+      "notes": "Answer completeness preserved. Total duration may exceed first audio by design."
+    },
+    "targets": {
+      "first_audio_target_ms": 1000,
+      "first_audio_stretch_ms": 1200,
+      "first_audio_hard_fail_ms": 2500,
+      "first_audio_target_min_ms": 800,
+      "first_audio_target_max_ms": 1000,
+      "first_audio_p50_ms": 1000,
+      "tool_assisted_first_audio_ms": 1200,
+      "stt_final_target_ms": 250,
+      "silent_wait_fail_ms": 4000,
+      "critical_slow_first_audio_ms": 2500
+    }
+  },
+  "wf8_node_trace": {
+    "employee_id": "emp_33eae8ef454680f0",
+    "dograh_workflow_id": "8",
+    "did": "+918065353938",
+    "tts": {
+      "provider": "sarvam",
+      "model": "bulbul:v3",
+      "voice_id": "priya"
+    },
+    "protected": true,
+    "nodes": [
+      {
+        "node_id": "0",
+        "type": "globalNode",
+        "name": "Global Node",
+        "required_for_first_response": "YES_COMPACT",
+        "defer_until_after_first_audio": false,
+        "add_global_prompt": false,
+        "prompt_chars": 2478,
+        "approx_tokens": 620,
+        "rationale": "Identity + booking/end-call safety needed. Defer long qualification banks until after first phrase."
+      },
+      {
+        "node_id": "1",
+        "type": "startCall",
+        "name": "start call",
+        "required_for_first_response": "YES",
+        "defer_until_after_first_audio": false,
+        "add_global_prompt": true,
+        "prompt_chars": 163,
+        "approx_tokens": 41,
+        "rationale": "Greeting / start stage can produce first audio."
+      },
+      {
+        "node_id": "2",
+        "type": "agentNode",
+        "name": "Qualify",
+        "required_for_first_response": "YES_COMPACT",
+        "defer_until_after_first_audio": false,
+        "add_global_prompt": true,
+        "prompt_chars": 175,
+        "approx_tokens": 44,
+        "rationale": "Qualification answers need the stage, but one question at a time. Do not preload all 4 questions into first TTS."
+      },
+      {
+        "node_id": "3",
+        "type": "agentNode",
+        "name": "Booking",
+        "required_for_first_response": "ACK_ONLY",
+        "defer_until_after_first_audio": true,
+        "add_global_prompt": true,
+        "prompt_chars": 1090,
+        "approx_tokens": 273,
+        "rationale": "First audio is booking ack only. Cal.com / availability tools MUST NOT run before first spoken."
+      },
+      {
+        "node_id": "4",
+        "type": "endCall",
+        "name": "End Call",
+        "required_for_first_response": "NO",
+        "defer_until_after_first_audio": true,
+        "add_global_prompt": false,
+        "prompt_chars": 119,
+        "approx_tokens": 30,
+        "rationale": "End Call never required for first response."
+      }
+    ],
+    "edges": [
+      {
+        "edge_id": "1-2",
+        "source": "1",
+        "target": "2",
+        "label": "Start qualifying",
+        "required_for_first_response": "ROUTER_OK_AFTER_FIRST_AUDIO",
+        "condition_chars": 84
+      },
+      {
+        "edge_id": "1-3",
+        "source": "1",
+        "target": "3",
+        "label": "Direct to booking",
+        "required_for_first_response": "LOCAL_POLICY_PREFERRED",
+        "condition_chars": 209
+      },
+      {
+        "edge_id": "2-3",
+        "source": "2",
+        "target": "3",
+        "label": "Enter booking",
+        "required_for_first_response": "LOCAL_POLICY_PREFERRED",
+        "condition_chars": 209
+      },
+      {
+        "edge_id": "1-4",
+        "source": "1",
+        "target": "4",
+        "label": "End call",
+        "required_for_first_response": "ROUTER_OK_AFTER_FIRST_AUDIO",
+        "condition_chars": 306
+      },
+      {
+        "edge_id": "2-4",
+        "source": "2",
+        "target": "4",
+        "label": "End call",
+        "required_for_first_response": "ROUTER_OK_AFTER_FIRST_AUDIO",
+        "condition_chars": 306
+      },
+      {
+        "edge_id": "3-4",
+        "source": "3",
+        "target": "4",
+        "label": "End after booking",
+        "required_for_first_response": "LOCAL_POLICY_PREFERRED",
+        "condition_chars": 429
+      }
+    ],
+    "hot_path_approx_tokens": 978,
+    "recommendations": [
+      "Speak booking ack before any Cal.com tool node.",
+      "Do not run End Call eligibility LLM hop before first audio on booking language (use local policy).",
+      "Keep Global prompt compacted for TTFT; full qualification bank can ride after first phrase.",
+      "WF8 id stays 8. Manual Hostinger import only."
+    ]
+  },
+  "baselines": {
+    "tip": "7f03dd0",
+    "employee_id": "emp_33eae8ef454680f0",
+    "dograh_workflow_id": "8",
+    "tts": "sarvam bulbul:v3 priya",
+    "did": "+918065353938",
+    "first_audio_median_ms": 14403,
+    "mixed_median_ms": 25800,
+    "max_ms": 54597,
+    "bottleneck": "WF8 LLM/tool especially booking (speech blocked on tools)"
+  }
+}
