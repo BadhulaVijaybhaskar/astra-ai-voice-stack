@@ -24,67 +24,57 @@
   font-family: var(--font-sans);
   color: var(--journey-ink);
   letter-spacing: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.journey-outer {
-  display: grid;
-  grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.28fr);
-  gap: 32px;
-  align-items: start;
-}
-
-/* ---- Left numbered timeline ---- */
-.journey-timeline {
-  position: relative;
-  padding-left: 28px;
-}
-.journey-timeline-track {
-  position: absolute;
-  left: 7px;
-  top: 12px;
-  bottom: 12px;
-  width: 1px;
-  background: var(--journey-border);
-}
-.journey-timeline-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  background: var(--voice);
-  transform-origin: top;
-  transform: scaleY(0.14);
-  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: transform;
-}
-.journey-timeline-item {
+/* ---- Top horizontal 01-07 progress rail (not left vertical) ---- */
+.journey-progress {
   position: relative;
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 12px;
-  width: 100%;
-  margin-bottom: 8px;
+  gap: 6px;
+  padding: 2px 0 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.journey-progress-track {
+  display: none; /* hairline lives inside each segment via gap; avoid colliding with pills */
+}
+.journey-progress-fill {
+  display: none;
+}
+.journey-progress-item {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin: 0;
   padding: 10px 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   color: var(--journey-muted);
   cursor: pointer;
   font: inherit;
   font-family: var(--font-sans);
   text-align: left;
+  white-space: nowrap;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.journey-timeline-item:hover { background: var(--journey-surface); }
-.journey-timeline-item.is-active {
+.journey-progress-item:hover { background: var(--journey-surface); }
+.journey-progress-item.is-active {
   background: var(--voice-soft);
   color: var(--journey-ink);
   font-weight: 600;
 }
-.journey-timeline-dot {
-  position: absolute;
-  left: -27px;
+.journey-progress-dot {
   width: 16px;
   height: 16px;
   border-radius: 50%;
@@ -94,14 +84,15 @@
   place-items: center;
   box-sizing: border-box;
   color: var(--voice-foreground);
+  flex-shrink: 0;
 }
-.journey-timeline-item.is-active .journey-timeline-dot,
-.journey-timeline-item.is-done .journey-timeline-dot {
+.journey-progress-item.is-active .journey-progress-dot,
+.journey-progress-item.is-done .journey-progress-dot {
   border-color: var(--voice);
   background: var(--voice);
   color: var(--voice-foreground);
 }
-.journey-timeline-dot svg {
+.journey-progress-dot svg {
   width: 10px;
   height: 10px;
   stroke: currentColor;
@@ -110,15 +101,19 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.journey-timeline-num {
+.journey-progress-num {
   font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  min-width: 1.6em;
+  line-height: 1;
 }
-.journey-timeline-label {
+.journey-progress-label {
   font-size: 0.875rem;
-  line-height: 1.3;
+  line-height: 1.25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-progress-fill { transition: none !important; }
 }
 
 /* ---- Product Frame (rounded-lg border bg-card shadow-panel) ---- */
@@ -287,7 +282,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .journey-panel.is-animating { animation: none; }
-  .journey-timeline-fill { transition: none !important; }
 }
 
 .journey-body {
@@ -1152,9 +1146,7 @@
 }
 
 @media (max-width: 980px) {
-  .journey-outer { grid-template-columns: 1fr; gap: 16px; }
-  .journey-timeline { order: 2; }
-  .journey-chrome { order: 1; }
+  .journey-progress { flex-wrap: wrap; }
 }
 @media (max-width: 720px) {
   .journey-shell { grid-template-columns: 1fr; }

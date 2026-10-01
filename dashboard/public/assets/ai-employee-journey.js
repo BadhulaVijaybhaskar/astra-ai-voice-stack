@@ -932,14 +932,12 @@
     stopTalk();
     const idx = stepIndex(JourneyState.step);
     const step = STEPS[idx];
-    const fillScale = ((idx + 1) / STEPS.length).toFixed(4);
-
-    const timeline = el('div', { class: 'journey-timeline' }, [
-      el('div', { class: 'journey-timeline-track' }, [
-        el('div', { class: 'journey-timeline-fill', style: 'transform:scaleY(' + fillScale + ')' }),
-      ]),
-    ].concat(STEPS.map((s, i) => el('button', {
-      class: 'journey-timeline-item'
+    // Horizontal 01-07 progress rail above the Frame (not a left column).
+    const progress = el('nav', {
+      class: 'journey-progress',
+      'aria-label': 'AI Employee setup steps',
+    }, STEPS.map((s, i) => el('button', {
+      class: 'journey-progress-item'
         + (s.id === step.id ? ' is-active' : '')
         + (i < idx ? ' is-done' : ''),
       type: 'button',
@@ -947,13 +945,14 @@
       onclick: () => goStep(s.id),
     }, [
       el('span', {
-        class: 'journey-timeline-dot',
+        class: 'journey-progress-dot',
         html: i < idx ? icon('check') : '',
       }),
-      el('span', { class: 'journey-timeline-num' }, '0' + (i + 1)),
-      el('span', { class: 'journey-timeline-label' }, s.timeline),
-    ]))));
+      el('span', { class: 'journey-progress-num' }, '0' + (i + 1)),
+      el('span', { class: 'journey-progress-label' }, s.timeline),
+    ])));
 
+    // Frame INNER icon rail stays (Employee → Next), synced to step.
     const rail = el('aside', { class: 'journey-rail' }, STEPS.map((s) => el('button', {
       class: 'journey-rail-item' + (s.id === step.id ? ' is-active' : ''),
       type: 'button',
@@ -1031,7 +1030,8 @@
 
     root.innerHTML = '';
     root.appendChild(el('div', { class: 'journey-wrap' }, [
-      el('div', { class: 'journey-outer' }, [timeline, frame]),
+      progress,
+      frame,
     ]));
   }
 
