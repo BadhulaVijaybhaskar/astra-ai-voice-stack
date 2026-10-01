@@ -1,7 +1,6 @@
 /**
  * Astra Voice. Guided AI Employee Setup / Demo Journey (add-on UI).
- * Layout mirrors astra-connect-hub VoiceWorkspace:
- * left numbered timeline 01-07 + right product Frame (icon rail + panel).
+ * Layout: top horizontal 01-07 progress rail + Frame (84px icon rail + panel).
  * Feature flag: ENABLE_AI_EMPLOYEE_JOURNEY. Route: #/ai-employee-setup
  * Live data wiring preserved. Demo preview labeled. No em dashes.
  */
