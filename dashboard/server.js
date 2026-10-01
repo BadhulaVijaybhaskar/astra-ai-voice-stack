@@ -54,6 +54,9 @@ const leads = require('./lib/leads');
 const callJobs = require('./lib/call-jobs');
 const employees = require('./lib/employees');
 const timeline = require('./lib/timeline');
+const voiceCatalog = require('./lib/tts-voice-catalog');
+const unifiedVoiceCatalog = require('./lib/voice-catalog');
+const aiEmployeeJourney = require('./lib/ai-employee-journey');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
@@ -368,6 +371,9 @@ function apiMe(req, res, ctx) {
   core.sendJson(res, 200, {
     user: publicUser(ctx.user),
     tenant: publicTenant(ctx.tenant),
+    features: {
+      aiEmployeeJourney: aiEmployeeJourney.featureEnabled(),
+    },
     impersonation: ctx.impersonator ? {
       actor: publicUser(ctx.impersonator),
       reason: ctx.session.impersonationReason,
@@ -556,6 +562,199 @@ async function apiTts(req, res, ctx) {
     });
   } catch (e) {
     handleProviderError(res, e);
+  }
+}
+
+
+function apiTtsVoices(req, res) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const catalog = voiceCatalog.getCatalog({
+    provider: url.searchParams.get('provider') || '',
+    language: url.searchParams.get('language') || '',
+    model: url.searchParams.get('model') || '',
+  });
+  const check = org.assertNoSecretValues(catalog);
+  if (!check.ok) {
+    return core.sendJson(res, 500, { error: 'voice catalog refused to leak secrets', code: 'secret_guard' });
+  }
+  core.sendJson(res, 200, catalog);
+}
+
+// GET /api/voice/catalog -> unified Dograh + Deepgram + Sarvam + Rumik catalog.
+async function apiVoiceCatalog(req, res) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  try {
+    const catalog = await unifiedVoiceCatalog.getUnifiedCatalog({
+      provider: url.searchParams.get('provider') || '',
+      mode: url.searchParams.get('mode') || '',
+      language: url.searchParams.get('language') || '',
+      model: url.searchParams.get('model') || '',
+    });
+    const check = org.assertNoSecretValues(catalog);
+    if (!check.ok) {
+      return core.sendJson(res, 500, { error: 'voice catalog refused to leak secrets', code: 'secret_guard' });
+    }
+    core.sendJson(res, 200, catalog);
+  } catch (e) {
+    core.sendJson(res, 502, { error: String((e && e.message) || e), code: 'voice_catalog_failed' });
+  }
+}
+
+// GET /api/tts/draft-prefs -> tenant draft voice prefs (never live apply).
+function apiTtsDraftPrefsGet(req, res, ctx) {
+  core.sendJson(res, 200, {
+    prefs: unifiedVoiceCatalog.getTenantUnifiedDraftPrefs(ctx.tenant),
+    live_apply_enabled: false,
+    set_active_enabled: false,
+  });
+}
+
+// PUT /api/tts/draft-prefs -> save draft prefs only. Never flips production TTS.
+async function apiTtsDraftPrefsPut(req, res, ctx) {
+  if (rejectImpersonated(res, ctx)) return;
+  const role = ctx.user && ctx.user.role;
+  if (!['super_admin', 'admin', 'owner'].includes(role)) {
+    return core.sendJson(res, 403, { error: 'owner role required', code: 'forbidden' });
+  }
+  let prefs;
+  await core.mutate((d) => {
+    const tenant = d.tenants.find((t) => t.id === ctx.tenant.id);
+    if (!tenant) throw Object.assign(new Error('tenant not found'), { status: 404, code: 'not_found' });
+    prefs = unifiedVoiceCatalog.setTenantUnifiedDraftPrefs(tenant, ctx.body || {});
+    addAudit(d, ctx, 'tts.draft_prefs_updated', 'tenant', tenant.id, {
+      voice_mode: prefs.voice_mode,
+      provider: prefs.provider,
+      voice_id: prefs.voice_id,
+      apply_live: false,
+      set_active_requested: !!(prefs.active_requested && prefs.active_requested.requestedAt),
+    });
+  });
+  core.sendJson(res, 200, { prefs, live_apply_enabled: false, set_active_enabled: false });
+}
+
+function apiVoiceDraftPrefsGet(req, res, ctx) { return apiTtsDraftPrefsGet(req, res, ctx); }
+async function apiVoiceDraftPrefsPut(req, res, ctx) { return apiTtsDraftPrefsPut(req, res, ctx); }
+
+function rejectJourneyDisabled(res) {
+  if (aiEmployeeJourney.featureEnabled()) return false;
+  core.sendJson(res, 404, { error: 'AI Employee journey is not enabled', code: 'feature_disabled' });
+  return true;
+}
+
+async function apiAiEmployeeJourneyGet(req, res, ctx) {
+  if (rejectJourneyDisabled(res)) return;
+  const url = new URL(req.url || '/', 'http://localhost');
+  let voiceCatalogSummary = null;
+  try {
+    const catalog = await unifiedVoiceCatalog.getUnifiedCatalog({});
+    voiceCatalogSummary = {
+      modes: catalog.voice_modes || catalog.modes || [],
+      providers: catalog.providers || [],
+      languages: (catalog.languages || []).slice(0, 40),
+      speeds: (catalog.speed && catalog.speed.options) || catalog.speeds || [],
+      source: catalog.discovery || null,
+    };
+  } catch (_) {
+    voiceCatalogSummary = null;
+  }
+  const payload = aiEmployeeJourney.buildJourneyPayload(core.db(), ctx.tenant, {
+    step: url.searchParams.get('step') || undefined,
+    mode: url.searchParams.get('mode') || undefined,
+    voiceCatalogSummary,
+  });
+  const check = org.assertNoSecretValues(payload);
+  if (!check.ok) {
+    return core.sendJson(res, 500, { error: 'journey payload refused to leak secrets', code: 'secret_guard' });
+  }
+  core.sendJson(res, 200, payload);
+}
+
+async function apiAiEmployeeJourneyPut(req, res, ctx) {
+  if (rejectJourneyDisabled(res)) return;
+  if (rejectImpersonated(res, ctx)) return;
+  const body = ctx.body || {};
+  // Demo preview never mutates live call records. Draft prefs / journey step only.
+  if (aiEmployeeJourney.normalizeMode(body.mode) === 'demo' && body.writeLiveCalls) {
+    return core.sendJson(res, 422, {
+      error: 'Demo preview cannot write live call records',
+      code: 'demo_contamination_blocked',
+    });
+  }
+  let draft;
+  let employeeId = null;
+  try {
+    await core.mutate((d) => {
+      const tenant = d.tenants.find((t) => t.id === ctx.tenant.id);
+      if (!tenant) throw Object.assign(new Error('tenant not found'), { status: 404, code: 'not_found' });
+      draft = aiEmployeeJourney.setTenantDraft(tenant, body);
+      const emp = aiEmployeeJourney.resolveEmployee(d, tenant.id, draft);
+      employeeId = emp ? emp.id : null;
+      // Optional LIVE-only writes onto real employee entities (never in demo mode).
+      if (draft.mode === 'live' && emp && body.instructions != null) {
+        const upd = employees.updateInstructions(d, tenant.id, emp.id, {
+          instructions: body.instructions,
+          greeting: body.greeting,
+          brief: body.brief,
+        });
+        if (!upd.ok) throw Object.assign(new Error(upd.error || 'instructions update failed'), { status: upd.status || 422, code: upd.code });
+      }
+      if (draft.mode === 'live' && emp && body.language != null) {
+        const lang = employees.setEmployeeLanguage(d, tenant.id, emp.id, body.language);
+        if (!lang.ok) throw Object.assign(new Error(lang.error || 'language update failed'), { status: lang.status || 422, code: lang.code });
+      }
+      if (draft.mode === 'live' && emp && body.workingHours && emp.phoneNumberId) {
+        phoneNumbers.setInboundConfig(d, tenant.id, emp.phoneNumberId, {
+          hours: body.workingHours,
+        });
+      }
+      if (draft.mode === 'live' && body.voiceDraft) {
+        unifiedVoiceCatalog.setTenantUnifiedDraftPrefs(tenant, Object.assign({}, body.voiceDraft, { apply_live: false }));
+      }
+      addAudit(d, ctx, 'ai_employee_journey.draft_updated', 'tenant', tenant.id, {
+        step: draft.step,
+        mode: draft.mode,
+        employeeId,
+      });
+    });
+  } catch (e) {
+    return core.sendJson(res, e.status || 500, {
+      error: String((e && e.message) || e),
+      code: e.code || 'journey_update_failed',
+    });
+  }
+  const payload = aiEmployeeJourney.buildJourneyPayload(core.db(), Object.assign({}, ctx.tenant, { aiEmployeeJourney: draft }), {
+    step: draft.step,
+    mode: draft.mode,
+  });
+  core.sendJson(res, 200, { ok: true, draft, journey: payload });
+}
+
+async function apiAiEmployeeJourneyCalendarTest(req, res, ctx) {
+  if (rejectJourneyDisabled(res)) return;
+  const status = aiEmployeeJourney.buildCalendarStatus();
+  if (!status.configured) {
+    return core.sendJson(res, 200, { ok: false, connected: false, ...status });
+  }
+  try {
+    const eventId = status.primary.eventTypeId;
+    const body = await calRequest('GET', '/v2/event-types/' + encodeURIComponent(eventId), '2024-06-14');
+    const title = (body && body.data && (body.data.title || body.data.slug)) || status.primary.label;
+    core.sendJson(res, 200, {
+      ok: true,
+      connected: true,
+      eventTypeId: eventId,
+      label: title || status.primary.label,
+      demoPreview: false,
+    });
+  } catch (e) {
+    core.sendJson(res, 200, {
+      ok: false,
+      connected: false,
+      error: String((e && e.message) || e).slice(0, 200),
+      eventTypeId: status.primary.eventTypeId,
+      label: status.primary.label,
+      demoPreview: false,
+    });
   }
 }
 
@@ -3334,6 +3533,12 @@ const server = http.createServer(async (req, res) => {
           }
           return core.sendJson(res, 404, { error: 'no such endpoint', code: 'not_found' });
         }
+        if (route === '/api/tts/voices') return core.requireAuth(req, res, apiTtsVoices);
+        if (route === '/api/voice/catalog') return core.requireAuth(req, res, apiVoiceCatalog);
+        if (route === '/api/tts/draft-prefs') return core.requireAuth(req, res, apiTtsDraftPrefsGet);
+        if (route === '/api/voice/draft-prefs') return core.requireAuth(req, res, apiVoiceDraftPrefsGet);
+        if (route === '/api/ai-employee-journey') return core.requireAuth(req, res, apiAiEmployeeJourneyGet);
+        if (route === '/api/ai-employee-journey/calendar/test') return core.requireAuth(req, res, apiAiEmployeeJourneyCalendarTest);
         if (route === '/api/me') return core.requireAuth(req, res, apiMe);
         if (route === '/api/version') return core.requireAuth(req, res, apiVersion);
         if (route === '/api/providers') return core.requireAuth(req, res, apiProviders);
@@ -3514,6 +3719,18 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (req.method === 'PUT') {
+        if (route === '/api/tts/draft-prefs' || route === '/api/voice/draft-prefs' || route === '/api/ai-employee-journey') {
+          let body;
+          try { body = await core.readBody(req, 256 * 1024); }
+          catch (e) {
+            const tooBig = /too large/.test(String(e.message));
+            return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
+          }
+          if (route === '/api/ai-employee-journey') {
+            return core.requireAuth(req, res, apiAiEmployeeJourneyPut, body);
+          }
+          return core.requireAuth(req, res, route === '/api/voice/draft-prefs' ? apiVoiceDraftPrefsPut : apiTtsDraftPrefsPut, body);
+        }
         const pnPut = matchPhoneNumberRoute(route);
         if (pnPut && pnPut.action === 'inbound') {
           let body;

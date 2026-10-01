@@ -3,7 +3,7 @@
  *
  * Four registries, each a uniform set of implemented adapters:
  *   stt        : deepgram, intentionally fixed
- *   tts        : rumik
+ *   tts        : rumik (default), sarvam + deepgram Aura (preview / draft catalog)
  *   llm        : groq + gemini
  *   telephony  : vobiz via Dograh
  *
@@ -17,23 +17,34 @@
  * browser UA, Groq handles the primary reasoning path, and
  * outbound VoBiz calls always go through Dograh. Never call the raw VoBiz API.
  *
+ * CRITICAL: Shipping default TTS remains Rumik unless TTS_PROVIDER is set.
+ * Sarvam / Deepgram Aura adapters exist for catalog preview and draft prefs.
+ * They do not flip Dograh workflow TTS.
+ *
  * No em dashes anywhere. Commas and periods only.
  */
 'use strict';
 
 const { httpsPost, httpsGet } = require('./core');
+const voiceCatalog = require('./tts-voice-catalog');
 
 // Rumik sits behind Cloudflare, which 403s non-browser user-agents. NEVER remove.
 const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
 
 const RUMIK_HOST = 'silk-api.rumik.ai';
+const SARVAM_HOST = 'api.sarvam.ai';
 const GEMINI_HOST = 'generativelanguage.googleapis.com';
 const DEEPGRAM_HOST = 'api.deepgram.com';
 const GROQ_HOST = 'api.groq.com';
 const MAX_TEXT = 2000; // Rumik hard cap
+const SARVAM_MAX_TEXT = 500; // Keep previews short and cheap
 
 const TTS_MODELS = new Set(['muga', 'mulberry']);
 const TTS_SPEAKERS = new Set(['speaker_1', 'speaker_2', 'speaker_3', 'speaker_4']);
+const SARVAM_TTS_MODELS = new Set(['bulbul:v3', 'bulbul:v2']);
+const DEEPGRAM_TTS_MODELS = new Set(
+  voiceCatalog.filterVoices({ provider: 'deepgram' }).map((v) => v.voice_id),
+);
 const PROVIDER_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const PROVIDER_LAYERS = new Set(['stt', 'tts', 'llm', 'telephony']);
@@ -167,6 +178,119 @@ const ttsRumik = {
     let data;
     try { data = JSON.parse(up.buffer.toString('utf8')); } catch { data = {}; }
     return data; // { ws_url, token }
+  },
+};
+
+/**
+ * Sarvam Bulbul TTS. Preview / draft catalog only.
+ * Does not become process default unless TTS_PROVIDER=sarvam is set explicitly.
+ * API key stays server-side (api-subscription-key). Never returned to clients.
+ */
+const ttsSarvam = {
+  id: 'sarvam',
+  label: 'Sarvam',
+  layer: 'tts',
+  needs: ['SARVAM_API_KEY'],
+  implemented: true,
+  models: SARVAM_TTS_MODELS,
+  get live() { return hasEnv(this.needs); },
+  get model() { return process.env.SARVAM_TTS_MODEL || 'bulbul:v3'; },
+
+  async synthesize(opts) {
+    const key = process.env.SARVAM_API_KEY;
+    if (!key) throw notConfigured(this.label, this.needs);
+
+    const model = selectedModel(this, opts.model);
+    const text = String(opts.text || '').slice(0, SARVAM_MAX_TEXT);
+    if (!text.trim()) throw new ProviderError('text is required', 422, 'no_text');
+
+    const speaker = String(opts.speaker || opts.voice_id || 'shubh').trim().toLowerCase().slice(0, 40) || 'shubh';
+    const language_code = String(opts.language || opts.language_code || 'en-IN').trim().slice(0, 16) || 'en-IN';
+    const payload = { text, model, speaker, language_code };
+    const buf = Buffer.from(JSON.stringify(payload));
+    const up = await httpsPost(SARVAM_HOST, '/text-to-speech', {
+      'api-subscription-key': key,
+      'Content-Type': 'application/json',
+      'Content-Length': buf.length,
+    }, buf);
+
+    let data = {};
+    try { data = JSON.parse(up.buffer.toString('utf8')); } catch { data = {}; }
+    if (up.status !== 200) {
+      throw new ProviderError('sarvam synthesis failed', up.status, 'upstream',
+        String(data.message || data.error || up.buffer.toString('utf8')).slice(0, 300));
+    }
+    const chunks = Array.isArray(data.audios) ? data.audios : [];
+    if (!chunks.length) {
+      throw new ProviderError('sarvam returned no audio', 502, 'upstream');
+    }
+    return {
+      buffer: Buffer.from(chunks.join(''), 'base64'),
+      credits: '',
+      chars: text.length,
+      contentType: 'audio/wav',
+    };
+  },
+
+  async wsConnect() {
+    throw new ProviderError(
+      'Sarvam streaming mint is not enabled for dashboard preview',
+      501,
+      'not_configured',
+      { needs: this.needs },
+    );
+  },
+};
+
+/**
+ * Deepgram Aura TTS. Preview / draft catalog only.
+ * Shares DEEPGRAM_API_KEY with STT. Default process TTS remains Rumik.
+ */
+const ttsDeepgramAura = {
+  id: 'deepgram',
+  label: 'Deepgram Aura',
+  layer: 'tts',
+  needs: ['DEEPGRAM_API_KEY'],
+  implemented: true,
+  models: DEEPGRAM_TTS_MODELS,
+  get live() { return hasEnv(this.needs); },
+  get model() { return process.env.DEEPGRAM_TTS_MODEL || 'aura-2-helena-en'; },
+
+  async synthesize(opts) {
+    const key = process.env.DEEPGRAM_API_KEY;
+    if (!key) throw notConfigured(this.label, this.needs);
+
+    const voice = String(opts.speaker || opts.voice_id || opts.model || this.model).trim();
+    const model = selectedModel(this, DEEPGRAM_TTS_MODELS.has(voice) ? voice : opts.model);
+    const text = String(opts.text || '').slice(0, MAX_TEXT);
+    if (!text.trim()) throw new ProviderError('text is required', 422, 'no_text');
+
+    const body = Buffer.from(JSON.stringify({ text }));
+    const path = `/v1/speak?model=${encodeURIComponent(model)}&encoding=linear16&container=wav`;
+    const up = await httpsPost(DEEPGRAM_HOST, path, {
+      'Authorization': `Token ${key}`,
+      'Content-Type': 'application/json',
+      'Content-Length': body.length,
+    }, body);
+    if (up.status !== 200) {
+      throw new ProviderError('deepgram aura synthesis failed', up.status, 'upstream',
+        up.buffer.toString('utf8').slice(0, 300));
+    }
+    return {
+      buffer: up.buffer,
+      credits: '',
+      chars: text.length,
+      contentType: 'audio/wav',
+    };
+  },
+
+  async wsConnect() {
+    throw new ProviderError(
+      'Deepgram Aura streaming mint is not enabled for dashboard preview',
+      501,
+      'not_configured',
+      { needs: this.needs },
+    );
   },
 };
 
@@ -917,6 +1041,8 @@ function registerProvider(layer, adapter, options = {}) {
 
 registerProvider('stt', sttDeepgram);
 registerProvider('tts', ttsRumik);
+registerProvider('tts', ttsSarvam);
+registerProvider('tts', ttsDeepgramAura);
 registerProvider('llm', llmGroq);
 registerProvider('llm', llmGemini);
 registerProvider('telephony', telVobiz);
@@ -989,8 +1115,9 @@ module.exports = {
   ProviderError,
   registries, registerProvider, get, resolveSelection, describeProviders,
   stt, tts, llm, telephony,
-  MAX_TEXT, TTS_MODELS, TTS_SPEAKERS,
+  MAX_TEXT, TTS_MODELS, TTS_SPEAKERS, SARVAM_TTS_MODELS, DEEPGRAM_TTS_MODELS,
   BROWSER_UA, MODEL_ID_RE,
   extractProviderRunId, extractProviderRunName, matchRecentWorkflowRun,
   phoneMatchKey, positiveIntOption,
+  configuredDefaultId,
 };

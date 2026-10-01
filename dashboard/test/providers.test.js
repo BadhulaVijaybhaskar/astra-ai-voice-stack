@@ -38,11 +38,22 @@ test('registry advertises only implemented providers and keeps Deepgram as sole 
   const providers = loadProviders();
   const described = providers.describeProviders();
   assert.deepEqual(described.stt.map((row) => row.id), ['deepgram']);
-  assert.deepEqual(described.tts.map((row) => row.id), ['rumik']);
+  assert.deepEqual(described.tts.map((row) => row.id).sort(), ['deepgram', 'rumik', 'sarvam']);
   assert.deepEqual(described.llm.map((row) => row.id), ['groq', 'gemini']);
   assert.deepEqual(described.telephony.map((row) => row.id), ['vobiz']);
   assert.equal(JSON.stringify(described).includes('API_KEY_VALUE'), false);
   assert.ok(Object.values(described).flat().every((row) => row.implemented === true));
+  const selectedTts = described.tts.find((row) => row.selected);
+  assert.equal(selectedTts && selectedTts.id, 'rumik');
+});
+
+test('shipping TTS default stays Rumik unless TTS_PROVIDER is explicitly set', () => {
+  resetEnv();
+  delete process.env.TTS_PROVIDER;
+  const providers = loadProviders();
+  assert.equal(providers.tts.id, 'rumik');
+  assert.equal(providers.configuredDefaultId('tts'), 'rumik');
+  assert.equal(providers.resolveSelection('tts', {}).provider, 'rumik');
 });
 
 test('environment selects an implemented LLM and model without tenant secrets', () => {
