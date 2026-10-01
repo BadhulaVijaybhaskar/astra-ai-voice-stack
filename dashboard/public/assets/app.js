@@ -2934,9 +2934,15 @@ async function viewEmployeeStudio(root, id) {
 
     const voiceSel = el('select', { class: 'select' },
       catalogVoices.length
-        ? catalogVoices.slice(0, 40).map((vv) => el('option', {
-          value: vv.id || vv.voiceId || vv.name,
-        }, (vv.label || vv.name || vv.id) + (vv.language ? ' · ' + vv.language : '')))
+        ? catalogVoices.slice(0, 40).map((vv) => {
+          let label = String(vv.label || vv.name || vv.id || 'Voice');
+          if (isInvestorDemo()) {
+            label = label.replace(/\bDograh\b/gi, 'Astra').replace(/\bRumik\b/gi, 'Astra');
+          }
+          return el('option', {
+            value: vv.id || vv.voiceId || vv.name,
+          }, label + (vv.language ? ' · ' + vv.language : ''));
+        })
         : [el('option', { value: 'maya' }, 'Maya - Natural (Indian English)')]
     );
     const speedIn = el('input', { class: 'input', type: 'range', min: '0.7', max: '1.2', step: '0.05', value: String(v.speed || 0.9) });
