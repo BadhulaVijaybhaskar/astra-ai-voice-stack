@@ -49,18 +49,25 @@ test('INITIAL LANGUAGE ROUTING: Vaani Telugu starts on Sarvam neha and locks', (
   assert.equal(started.route_semantics, 'call_start_only');
 });
 
-test('SESSION VOICE LOCK: Hindi start locks priya; English start locks Rumik speaker_2', () => {
+test('SESSION VOICE LOCK: Hindi start locks priya; English multilingual locks Sarvam (not Rumik)', () => {
   const hi = router.createSessionVoiceLock({
     persona: 'vaani', language: 'hi-IN', mode: 'astra_auto',
   });
   assert.equal(hi.voice_lock.speaker, 'priya');
   assert.equal(hi.voice_lock.provider, 'sarvam');
 
+  // Vaani allows Indic languages via persona routes. EN start must lock a
+  // Sarvam speaker so mid-call language_code (EN↔TE/HI) works under locked policy.
+  // Do NOT lock Rumik speaker_2 (English-only → Indic silence).
   const en = router.createSessionVoiceLock({
     persona: 'vaani', language: 'en-IN', mode: 'astra_auto',
   });
-  assert.equal(en.voice_lock.provider, 'rumik');
-  assert.equal(en.voice_lock.speaker, 'speaker_2');
+  assert.equal(en.voice_lock.provider, 'sarvam');
+  assert.ok(en.voice_lock.speaker);
+  const mid = router.resolveLockedVoice(en.voice_lock, 'te-IN', { voice_switch_policy: 'locked' });
+  assert.equal(mid.ok, true);
+  assert.equal(mid.language, 'te-IN');
+  assert.equal(mid.speaker_unchanged, true);
 });
 
 test('MID-CALL LANGUAGE SWITCH + SPEAKER STAYS SAME: Sarvam lock keeps speaker', () => {
@@ -80,11 +87,15 @@ test('MID-CALL LANGUAGE SWITCH + SPEAKER STAYS SAME: Sarvam lock keeps speaker',
 });
 
 test('locked_voice_language_unsupported: Rumik lock cannot speak Hindi', () => {
-  const started = router.createSessionVoiceLock({
-    persona: 'vaani', language: 'en-IN', mode: 'astra_auto',
-  });
-  assert.equal(started.voice_lock.provider, 'rumik');
-  const mid = router.resolveLockedVoice(started.voice_lock, 'hi-IN', {
+  // Explicit Rumik lock (English-only employee / forced provider). Multilingual
+  // Vaani Auto no longer creates Rumik locks at EN start.
+  const rumikLock = {
+    provider: 'rumik',
+    speaker: 'speaker_2',
+    model: 'mulberry',
+    persona: 'vaani',
+  };
+  const mid = router.resolveLockedVoice(rumikLock, 'hi-IN', {
     voice_switch_policy: 'locked',
   });
   assert.equal(mid.ok, false);
@@ -178,17 +189,21 @@ test('call session applyCallLanguage keeps speaker under locked policy', () => {
   callVoice.endCallVoiceSession(s.call_session_id);
 });
 
-test('Maya default policy is locked; fallback_allowed required to change speaker', () => {
+test('Maya default policy is locked; production_protected freezes Sarvam priya', () => {
   assert.equal(router.normalizeVoiceSwitchPolicy(undefined, { personaId: 'maya' }), 'locked');
   const started = router.createSessionVoiceLock({
     persona: 'maya', language: 'en-IN', mode: 'astra_auto',
   });
   assert.equal(started.voice_switch_policy, 'locked');
-  assert.equal(started.voice_lock.provider, 'deepgram');
-  assert.equal(started.voice_lock.speaker, 'aura-2-helena-en');
-  // Locked English Deepgram cannot speak Telugu.
+  // Investor freeze: Maya production TTS is Sarvam bulbul:v3 priya (not Deepgram Helena,
+  // not languageVoiceConfig tanya). Mid-call only updates language_code.
+  assert.equal(started.voice_lock.provider, 'sarvam');
+  assert.equal(started.voice_lock.speaker, 'priya');
   const mid = router.resolveLockedVoice(started.voice_lock, 'te-IN', { policy: 'locked' });
-  assert.equal(mid.code, 'locked_voice_language_unsupported');
+  assert.equal(mid.ok, true);
+  assert.equal(mid.language, 'te-IN');
+  assert.equal(mid.speaker_unchanged, true);
+  assert.equal(mid.route.voice_id, 'priya');
 });
 
 test('languageVoiceConfig overrides persona starting route; preview text never saved', () => {

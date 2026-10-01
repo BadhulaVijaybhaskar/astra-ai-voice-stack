@@ -894,9 +894,80 @@ function createSessionVoiceLock(input = {}) {
     ? (langVoiceCfg[initialLanguage] || null)
     : null;
 
+  // Production-protected personas (e.g. Maya WF8): freeze Sarvam priya. Never
+  // swap to languageVoiceConfig draft speakers. Mid-call only updates language_code.
+  const productionProtected = !!(persona && persona.production_protected);
+
+  // Multilingual employees (EN+Indic allowed): lock a Sarvam speaker so mid-call
+  // language_code updates work under voice_switch_policy=locked. English-only
+  // engines (Rumik / Deepgram Aura) cannot speak Indic → audible silence.
+  let multilingualPrefer = null;
+  try {
+    const multilingualRuntime = require('./multilingual-runtime');
+    multilingualPrefer = multilingualRuntime.preferMultilingualVoiceLock(employee, initialLanguage, {
+      languageVoiceConfig: langVoiceCfg,
+      persona_language_routes: persona && persona.language_routes,
+      allowed_languages: multilingualRuntime.resolveAllowedLanguages(employee, {
+        primary_language: initialLanguage,
+        languageVoiceConfig: langVoiceCfg,
+        persona_language_routes: persona && persona.language_routes,
+      }),
+    });
+  } catch (_) {
+    multilingualPrefer = null;
+  }
+
   let resolved;
   let lockedSpeed = 1;
-  if (cfgRow && (cfgRow.voice_id || cfgRow.speaker)) {
+
+  if (productionProtected) {
+    lockedSpeed = (cfgRow && Number.isFinite(Number(cfgRow.speed))) ? Number(cfgRow.speed) : 1;
+    resolved = {
+      ok: true,
+      route: {
+        provider: 'sarvam',
+        voice_id: 'priya',
+        model: 'bulbul:v3',
+        language: initialLanguage,
+        speed: lockedSpeed,
+      },
+      persona: persona ? publicPersona(persona) : null,
+      language: initialLanguage,
+      mode,
+      source: 'production_protected_sarvam_priya',
+    };
+  } else if (multilingualPrefer && multilingualPrefer.prefer_sarvam
+    && multilingualPrefer.voice_id
+    && cfgRow
+    && (ENGLISH_ONLY_PROVIDERS.has(String(cfgRow.provider || '').toLowerCase())
+      || (() => {
+        const vid = String((cfgRow.voice_id || cfgRow.speaker) || '');
+        if (!vid) return false;
+        if (voiceCatalog.findVoice('sarvam', vid)) return false;
+        if (/^speaker_\d+$/i.test(vid) || /^aura-/i.test(vid)) return true;
+        return false;
+      })())) {
+    // Only override when languageVoiceConfig starting row is English-only while
+    // employee allows Indic. Do NOT skip persona routes when cfgRow is absent.
+    const voiceId = String(multilingualPrefer.voice_id).trim();
+    lockedSpeed = (cfgRow && Number.isFinite(Number(cfgRow.speed)))
+      ? Number(cfgRow.speed)
+      : (Number.isFinite(Number(multilingualPrefer.speed)) ? Number(multilingualPrefer.speed) : 1);
+    resolved = {
+      ok: true,
+      route: {
+        provider: 'sarvam',
+        voice_id: voiceId,
+        model: String(multilingualPrefer.model || 'bulbul:v3'),
+        language: initialLanguage,
+        speed: lockedSpeed,
+      },
+      persona: persona ? publicPersona(persona) : null,
+      language: initialLanguage,
+      mode,
+      source: multilingualPrefer.reason || 'multilingual_override_english_only_lock',
+    };
+  } else if (cfgRow && (cfgRow.voice_id || cfgRow.speaker)) {
     const voiceId = String(cfgRow.voice_id || cfgRow.speaker).trim();
     let provider = String(cfgRow.provider || '').trim().toLowerCase();
     let model = String(cfgRow.model || '').trim();
@@ -926,25 +997,62 @@ function createSessionVoiceLock(input = {}) {
     if (!provider) {
       provider = isEnglishLanguage(initialLanguage) ? 'rumik' : 'sarvam';
     }
-    resolved = {
-      ok: true,
-      route: {
-        provider,
-        voice_id: voiceId,
-        model: model || (provider === 'sarvam' ? 'bulbul:v3' : (provider === 'deepgram' ? 'aura-2' : 'mulberry')),
+    if (multilingualPrefer && multilingualPrefer.prefer_sarvam
+      && ENGLISH_ONLY_PROVIDERS.has(provider)) {
+      resolved = {
+        ok: true,
+        route: {
+          provider: 'sarvam',
+          voice_id: String(multilingualPrefer.voice_id || voiceId),
+          model: 'bulbul:v3',
+          language: initialLanguage,
+          speed: lockedSpeed,
+        },
+        persona: persona ? publicPersona(persona) : null,
         language: initialLanguage,
-        speed: lockedSpeed,
-      },
-      persona: persona ? publicPersona(persona) : null,
-      language: initialLanguage,
-      mode,
-      source: 'language_voice_config',
-    };
+        mode,
+        source: 'multilingual_override_english_only_lock',
+      };
+    } else {
+      resolved = {
+        ok: true,
+        route: {
+          provider,
+          voice_id: voiceId,
+          model: model || (provider === 'sarvam' ? 'bulbul:v3' : (provider === 'deepgram' ? 'aura-2' : 'mulberry')),
+          language: initialLanguage,
+          speed: lockedSpeed,
+        },
+        persona: persona ? publicPersona(persona) : null,
+        language: initialLanguage,
+        mode,
+        source: 'language_voice_config',
+      };
+    }
   } else if (persona) {
     resolved = resolvePersonaRoute(persona, initialLanguage, mode, {
       provider: input.provider,
     });
     lockedSpeed = 1;
+    // If persona / pipeline would lock an English-only engine but employee
+    // allows Indic languages, remount onto Sarvam so mid-call language_code works.
+    if (resolved.ok && multilingualPrefer && multilingualPrefer.prefer_sarvam
+      && ENGLISH_ONLY_PROVIDERS.has(String(resolved.route.provider || '').toLowerCase())) {
+      resolved = {
+        ok: true,
+        route: {
+          provider: 'sarvam',
+          voice_id: String(multilingualPrefer.voice_id || 'priya'),
+          model: 'bulbul:v3',
+          language: initialLanguage,
+          speed: lockedSpeed,
+        },
+        persona: persona ? publicPersona(persona) : null,
+        language: initialLanguage,
+        mode,
+        source: 'multilingual_override_persona_english_only',
+      };
+    }
   } else if (input.pipelineTts && input.pipelineTts.provider && input.pipelineTts.voice_id) {
     // No persona map: lock the employee pipeline TTS snapshot as-is.
     const pipeLang = normalizeLanguageCode(input.pipelineTts.language) || initialLanguage;

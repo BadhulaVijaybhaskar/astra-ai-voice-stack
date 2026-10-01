@@ -74,6 +74,7 @@ const llmStream = require('./lib/llm-stream');
 const voiceFastPath = require('./lib/voice-fast-path');
 const wf8NodeTrace = require('./lib/wf8-node-trace');
 const browserTalkTts = require('./lib/browser-talk-tts');
+const multilingualRuntime = require('./lib/multilingual-runtime');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
@@ -956,11 +957,15 @@ async function apiAiEmployeeJourneyCalendarTest(req, res, ctx) {
 async function apiWsConnect(req, res, ctx) {
   const b = ctx.body || {};
   try {
+    // language_code must track session / detected language (never silently default
+    // away from an explicit caller language). Default en-IN only when omitted.
+    const language = b.language || b.language_code
+      || b.tts_language || b.current_language || undefined;
     const selection = browserTalkTts.resolveMintSelection({
       provider: b.provider,
       model: b.model,
       speaker: b.speaker || b.voice_id,
-      language: b.language || b.language_code,
+      language,
     });
     // Server-side: confirm Sarvam adapter is live before advertising stream path.
     const adapter = providers.get('tts', selection.provider);
@@ -1004,11 +1009,22 @@ async function apiWsConnect(req, res, ctx) {
 async function apiTtsStream(req, res, ctx) {
   const b = ctx.body || {};
   try {
+    // Detect language from synthesis text when client omitted language_code
+    // (prevents en-IN stuck when LLM replied in Indic script).
+    let language = b.language || b.language_code || b.tts_language || b.current_language;
+    if (!language && b.text) {
+      const det = multilingualRuntime.detectLanguageFromTranscript(b.text, {
+        allowed_languages: b.allowed_languages || multilingualRuntime.PLATFORM_LANGUAGE_IDS,
+        primary_language: b.primary_language || 'en-IN',
+        last_known: b.last_known || b.current_language,
+      });
+      language = det.language;
+    }
     const selection = browserTalkTts.resolveMintSelection({
       provider: b.provider || 'sarvam',
       model: b.model,
       speaker: b.speaker || b.voice_id,
-      language: b.language || b.language_code,
+      language,
     });
     const adapter = providers.get('tts', selection.provider);
     if (typeof adapter.synthesizeStream !== 'function') {
@@ -1023,6 +1039,7 @@ async function apiTtsStream(req, res, ctx) {
       'X-Accel-Buffering': 'no',
       'X-Tts-Model': selection.model,
       'X-Tts-Speaker': selection.speaker,
+      'X-Tts-Language': selection.language || '',
       'X-Tts-Mode': 'http_stream',
       'X-Tts-Early-Audio': '1',
       'X-Tts-Full-Wav-Buffer': '0',
@@ -1069,12 +1086,31 @@ async function apiChat(req, res, ctx) {
     const messages = Array.isArray(b.messages) ? b.messages : [];
     const lastUser = [...messages].reverse().find((m) => m && (m.role === 'user' || m.role === 'human'));
     const lastText = lastUser ? String(lastUser.text || lastUser.content || '') : '';
-    const guard = asrSanityGuard.evaluateTranscript(lastText, {
+
+    const employee = (b.employeeId && ctx.tenant)
+      ? employees.findEmployee(core.db(), ctx.tenant.id, b.employeeId)
+      : null;
+    const turn = multilingualRuntime.processUserTurn(lastText, {
+      employee,
       confidence: b.asr_confidence != null ? b.asr_confidence : b.confidence,
-      stt: b.stt || asrSanityGuard.VALIDATED_MULTILINGUAL_STT,
+      current_language: b.current_language || b.tts_language,
+      primary_language: b.primary_language,
+      allowed_languages: b.allowed_languages,
     });
-    if (guard.action === 'reject' || guard.action === 'clarify') {
-      const clarify = asrSanityGuard.clarificationPrompt(guard);
+    const guard = turn.asr_guard;
+    if (guard.action === 'reject' || guard.action === 'clarify' || turn.needs_recovery) {
+      const clarify = turn.recovery_prompt
+        || asrSanityGuard.clarificationPrompt(guard, { language: turn.response_language });
+      if (b.call_session_id || b.callSessionId) {
+        callVoiceSession.recordLanguageTurn(b.call_session_id || b.callSessionId, {
+          detected_language: turn.detected_language,
+          response_language: turn.response_language,
+          raw_transcript: turn.raw_transcript,
+          final_transcript: turn.final_transcript,
+          asr_guard: { ok: false, action: guard.action, reasons: guard.reasons },
+          tts_language: turn.response_language,
+        });
+      }
       return core.sendJson(res, 200, {
         text: clarify,
         finish: 'asr_guard',
@@ -1087,7 +1123,34 @@ async function apiChat(req, res, ctx) {
           confidence: guard.confidence,
         },
         llm_input_allowed: false,
+        detected_language: turn.detected_language,
+        response_language: turn.response_language,
+        tts_language: turn.response_language,
+        primary_language: turn.primary_language,
+        allowed_languages: turn.allowed_languages,
         turn_path: voiceFastPath.classifyTurnPath(lastText),
+        language_turn: {
+          primary_language: turn.primary_language,
+          allowed_languages: turn.allowed_languages,
+          detected_language: turn.detected_language,
+          raw_transcript: turn.raw_transcript,
+          final_transcript: turn.final_transcript,
+          asr_guard: guard.action,
+          tts_language: turn.response_language,
+        },
+      });
+    }
+
+    // Mid-call language: update session language_code only (speaker stays locked).
+    if ((b.call_session_id || b.callSessionId) && turn.response_language) {
+      callVoiceSession.applyCallLanguage(b.call_session_id || b.callSessionId, turn.response_language);
+      callVoiceSession.recordLanguageTurn(b.call_session_id || b.callSessionId, {
+        detected_language: turn.detected_language,
+        response_language: turn.response_language,
+        raw_transcript: turn.raw_transcript,
+        final_transcript: turn.final_transcript,
+        asr_guard: { ok: true, action: 'accept', reasons: [] },
+        tts_language: turn.response_language,
       });
     }
 
@@ -1106,6 +1169,15 @@ async function apiChat(req, res, ctx) {
     const approxTokens = Math.ceil((out.text || '').length / 4);
     bumpUsage(ctx.tenant.id, 'llmTokens', approxTokens).catch(() => {});
     const { provider: _provider, ...safe } = out && typeof out === 'object' ? out : {};
+    // Prefer reply-script language for TTS when LLM answered in Indic.
+    const replyDetect = multilingualRuntime.detectLanguageFromTranscript(safe.text || '', {
+      allowed_languages: turn.allowed_languages,
+      primary_language: turn.primary_language,
+      last_known: turn.response_language,
+    });
+    const ttsLanguage = replyDetect.confidence >= 0.7
+      ? replyDetect.language
+      : turn.response_language;
     if (b.turn_id || b.record_latency) {
       turnLatency.ingestTurnTiming({
         turn_id: b.turn_id,
@@ -1127,6 +1199,20 @@ async function apiChat(req, res, ctx) {
       booking_ack: turnPath.ack,
       turn_path: turnPath,
       prefer_stream: true,
+      detected_language: turn.detected_language,
+      response_language: turn.response_language,
+      tts_language: ttsLanguage,
+      primary_language: turn.primary_language,
+      allowed_languages: turn.allowed_languages,
+      language_turn: {
+        primary_language: turn.primary_language,
+        allowed_languages: turn.allowed_languages,
+        detected_language: turn.detected_language,
+        raw_transcript: turn.raw_transcript,
+        final_transcript: turn.final_transcript,
+        asr_guard: 'accept',
+        tts_language: ttsLanguage,
+      },
     });
   } catch (e) {
     handleProviderError(res, e);
@@ -1145,6 +1231,17 @@ async function apiChatStream(req, res, ctx) {
   const lastText = lastUser ? String(lastUser.text || lastUser.content || '') : '';
   const turnPath = voiceFastPath.classifyTurnPath(lastText);
 
+  const employee = (b.employeeId && ctx.tenant)
+    ? employees.findEmployee(core.db(), ctx.tenant.id, b.employeeId)
+    : null;
+  const langTurn = multilingualRuntime.processUserTurn(lastText, {
+    employee,
+    confidence: b.asr_confidence != null ? b.asr_confidence : b.confidence,
+    current_language: b.current_language || b.tts_language,
+    primary_language: b.primary_language,
+    allowed_languages: b.allowed_languages,
+  });
+
   res.writeHead(200, {
     'Content-Type': 'application/x-ndjson; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -1154,17 +1251,17 @@ async function apiChatStream(req, res, ctx) {
     try { res.write(JSON.stringify(obj) + '\n'); } catch (_) {}
   };
 
-  const guard = asrSanityGuard.evaluateTranscript(lastText, {
-    confidence: b.asr_confidence != null ? b.asr_confidence : b.confidence,
-    stt: b.stt || asrSanityGuard.VALIDATED_MULTILINGUAL_STT,
-  });
-  if (guard.action === 'reject' || guard.action === 'clarify') {
-    const clarify = asrSanityGuard.clarificationPrompt(guard);
+  const guard = langTurn.asr_guard;
+  if (guard.action === 'reject' || guard.action === 'clarify' || langTurn.needs_recovery) {
+    const clarify = langTurn.recovery_prompt
+      || asrSanityGuard.clarificationPrompt(guard, { language: langTurn.response_language });
     write({
       type: 'first_phrase',
       phrase: clarify,
       at_ms: Date.now(),
       asr_guard: true,
+      tts_language: langTurn.response_language,
+      response_language: langTurn.response_language,
     });
     write({
       type: 'done',
@@ -1174,8 +1271,36 @@ async function apiChatStream(req, res, ctx) {
       llm_input_allowed: false,
       booking_intent: false,
       turn_path: turnPath,
+      detected_language: langTurn.detected_language,
+      response_language: langTurn.response_language,
+      tts_language: langTurn.response_language,
+      primary_language: langTurn.primary_language,
+      allowed_languages: langTurn.allowed_languages,
+      language_turn: {
+        primary_language: langTurn.primary_language,
+        allowed_languages: langTurn.allowed_languages,
+        detected_language: langTurn.detected_language,
+        raw_transcript: langTurn.raw_transcript,
+        final_transcript: langTurn.final_transcript,
+        asr_guard: guard.action,
+        tts_language: langTurn.response_language,
+      },
     });
+    if (b.call_session_id || b.callSessionId) {
+      callVoiceSession.recordLanguageTurn(b.call_session_id || b.callSessionId, {
+        detected_language: langTurn.detected_language,
+        response_language: langTurn.response_language,
+        raw_transcript: langTurn.raw_transcript,
+        final_transcript: langTurn.final_transcript,
+        asr_guard: { ok: false, action: guard.action, reasons: guard.reasons },
+        tts_language: langTurn.response_language,
+      });
+    }
     return res.end();
+  }
+
+  if ((b.call_session_id || b.callSessionId) && langTurn.response_language) {
+    callVoiceSession.applyCallLanguage(b.call_session_id || b.callSessionId, langTurn.response_language);
   }
 
   let system = String(b.system || '');
@@ -1197,6 +1322,7 @@ async function apiChatStream(req, res, ctx) {
       at_ms: Date.now(),
       booking_ack: true,
       language: turnPath.ack.language,
+      tts_language: langTurn.response_language,
       first_safe_phrase: true,
     });
     if (b.turn_id || b.record_latency) {
@@ -1222,6 +1348,11 @@ async function apiChatStream(req, res, ctx) {
     model: providers.llm.model,
     targets: voiceFastPath.latencyBudgets(),
     measurement: turnLatency.MEASUREMENT_SEMANTICS,
+    detected_language: langTurn.detected_language,
+    response_language: langTurn.response_language,
+    tts_language: langTurn.response_language,
+    primary_language: langTurn.primary_language,
+    allowed_languages: langTurn.allowed_languages,
   });
 
   const llmStarted = Date.now();
@@ -1278,6 +1409,9 @@ async function apiChatStream(req, res, ctx) {
           streamed_first_phrase: true,
           first_safe_phrase: true,
           rate_limit_ack: !!ev.rate_limit_ack,
+          tts_language: langTurn.response_language,
+          response_language: langTurn.response_language,
+          detected_language: langTurn.detected_language,
         });
       },
       onRateLimit: (ev) => {
@@ -1334,7 +1468,38 @@ async function apiChatStream(req, res, ctx) {
       rate_limited: !!out.rate_limited,
       fallback_used: !!out.fallback_used,
       streamed: true,
+      detected_language: langTurn.detected_language,
+      response_language: langTurn.response_language,
+      tts_language: (() => {
+        const replyDetect = multilingualRuntime.detectLanguageFromTranscript(out.text || '', {
+          allowed_languages: langTurn.allowed_languages,
+          primary_language: langTurn.primary_language,
+          last_known: langTurn.response_language,
+        });
+        return replyDetect.confidence >= 0.7 ? replyDetect.language : langTurn.response_language;
+      })(),
+      primary_language: langTurn.primary_language,
+      allowed_languages: langTurn.allowed_languages,
+      language_turn: {
+        primary_language: langTurn.primary_language,
+        allowed_languages: langTurn.allowed_languages,
+        detected_language: langTurn.detected_language,
+        raw_transcript: langTurn.raw_transcript,
+        final_transcript: langTurn.final_transcript,
+        asr_guard: 'accept',
+        tts_language: langTurn.response_language,
+      },
     });
+    if (b.call_session_id || b.callSessionId) {
+      callVoiceSession.recordLanguageTurn(b.call_session_id || b.callSessionId, {
+        detected_language: langTurn.detected_language,
+        response_language: langTurn.response_language,
+        raw_transcript: langTurn.raw_transcript,
+        final_transcript: langTurn.final_transcript,
+        asr_guard: { ok: true, action: 'accept', reasons: [] },
+        tts_language: langTurn.response_language,
+      });
+    }
     res.end();
   } catch (e) {
     write({
@@ -1587,6 +1752,7 @@ async function mintDograhVoiceSession(req, context) {
   // Attach employee runtime model selection (never secrets) so Browser Talk
   // sessions are attributable to the selected employee config.
   let pipelineTts = null;
+  let pipelineStt = null;
   let runtimeSource = null;
   if (employee) {
     const resolved = employeeRuntimeConfig.resolveEmployeePipeline(
@@ -1601,9 +1767,10 @@ async function mintDograhVoiceSession(req, context) {
         contextVariables.astra_llm_model = p.llm.model;
       }
       if (p.stt) {
-        contextVariables.astra_stt_provider = p.stt.provider;
-        contextVariables.astra_stt_model = p.stt.model;
-        contextVariables.astra_stt_language = p.stt.language;
+        pipelineStt = multilingualRuntime.enforceMultilingualStt(p.stt);
+        contextVariables.astra_stt_provider = pipelineStt.provider;
+        contextVariables.astra_stt_model = pipelineStt.model;
+        contextVariables.astra_stt_language = pipelineStt.language;
       }
       if (p.tts) {
         pipelineTts = p.tts;
@@ -1617,11 +1784,16 @@ async function mintDograhVoiceSession(req, context) {
 
   // Call-level voice lock. Persona / languageVoiceConfig pick STARTING voice only.
   // Mid-call language switches keep provider + speaker. Never persist lock across calls.
-  // Does not mutate Maya production TTS / Dograh WF8.
+  // Does not mutate Maya production TTS / Dograh WF8 (priya frozen; language_code only).
   let voiceSession = null;
   if (employee) {
     const preferredLanguage = context.preferredLanguage || context.preferred_language || null;
-    const initialLanguage = context.language || context.initialLanguage || preferredLanguage || null;
+    // Prefer explicit call language → preferred → employee primary (never leave null).
+    const employeePrimary = (employee.voice && (employee.voice.primary_language || employee.voice.language))
+      || employee.language
+      || null;
+    const initialLanguage = context.language || context.initialLanguage
+      || preferredLanguage || employeePrimary || null;
     const personaId = personaRouter.resolvePersonaId(employee);
     const policy = context.voiceSwitchPolicy || context.voice_switch_policy
       || personaRouter.DEFAULT_VOICE_SWITCH_POLICY;
@@ -1629,9 +1801,11 @@ async function mintDograhVoiceSession(req, context) {
       employee,
       persona: personaId,
       language: initialLanguage,
+      primary_language: employeePrimary || initialLanguage,
       preferred_language: preferredLanguage,
       mode: context.voiceMode || context.mode || 'astra_auto',
       pipelineTts,
+      stt: pipelineStt || multilingualRuntime.PLATFORM_STT,
       voice_switch_policy: policy,
       channel: context.channel || callVoiceSession.CHANNELS.BROWSER,
       forceLocked: personaId === 'maya' || policy === personaRouter.VOICE_SWITCH_POLICIES.LOCKED,
@@ -1643,6 +1817,12 @@ async function mintDograhVoiceSession(req, context) {
       }
       const lockSpeed = voiceSession.route && voiceSession.route.speed;
       if (lockSpeed != null) contextVariables.astra_tts_speed = String(lockSpeed);
+      // Ensure TTS language_code is session current language (not pipeline en default).
+      contextVariables.astra_tts_language = voiceSession.current_language
+        || voiceSession.initial_language
+        || employeePrimary
+        || contextVariables.astra_tts_language
+        || 'en-IN';
     } else {
       voiceSession = null;
     }
@@ -1711,6 +1891,10 @@ async function mintDograhVoiceSession(req, context) {
     voiceSwitchPolicy: voiceSession ? voiceSession.voice_switch_policy : null,
     initialLanguage: voiceSession ? voiceSession.initial_language : null,
     currentLanguage: voiceSession ? voiceSession.current_language : null,
+    primaryLanguage: voiceSession ? (voiceSession.primary_language || voiceSession.initial_language) : null,
+    allowedLanguages: voiceSession ? (voiceSession.allowed_languages || []) : [],
+    ttsLanguage: voiceSession ? (voiceSession.current_language || voiceSession.initial_language) : null,
+    stt: voiceSession ? voiceSession.stt : multilingualRuntime.PLATFORM_STT,
     sessionVoiceLocked: !!(voiceSession && voiceSession.voice_lock),
   };
 }

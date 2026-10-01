@@ -5103,8 +5103,38 @@ async function viewTalkLegacy(root) {
   /** Warm Rumik/Sarvam mint reused across first-phrase TTS (avoid TLS+mint per phrase). */
   let warmTtsMint = null;
   let warmTtsMintAt = 0;
+  /** Session TTS language_code (tracks detected/caller language; never stuck en-IN). */
+  let sessionTtsLanguage = 'en-IN';
+  let sessionPrimaryLanguage = 'en-IN';
+  let sessionAllowedLanguages = null;
+  let sessionCallId = null;
   /** AbortController for in-flight Browser Talk TTS HTTP stream (barge-in cancel). */
   let activeTtsAbort = null;
+
+  function detectClientLanguage(text, fallback) {
+    const s = String(text || '');
+    if (/[\u0C00-\u0C7F]/.test(s)) return 'te-IN';
+    if (/[\u0B80-\u0BFF]/.test(s)) return 'ta-IN';
+    if (/[\u0C80-\u0CFF]/.test(s)) return 'kn-IN';
+    if (/[\u0D00-\u0D7F]/.test(s)) return 'ml-IN';
+    if (/[\u0980-\u09FF]/.test(s)) return 'bn-IN';
+    if (/[\u0A80-\u0AFF]/.test(s)) return 'gu-IN';
+    if (/[\u0A00-\u0A7F]/.test(s)) return 'pa-IN';
+    if (/[\u0900-\u097F]/.test(s)) return 'hi-IN';
+    if (/\b(haan|ji|namaste|kar\s*sakte|bilkul)\b/i.test(s)) return 'hi-IN';
+    if (/\b(ela|undi|cheyyali|meeru|nenu)\b/i.test(s)) return 'te-IN';
+    return fallback || sessionTtsLanguage || sessionPrimaryLanguage || 'en-IN';
+  }
+
+  function recoveryLine(lang) {
+    const map = {
+      'en-IN': "Sorry, I didn't catch that. Could you say it again?",
+      'hi-IN': 'माफ़ कीजिए, मैं सुन नहीं पाया। क्या आप फिर से कह सकते हैं?',
+      'te-IN': 'క్షమించండి, నాకు అర్థం కాలేదు. మళ్లీ చెప్పగలరా?',
+      'ta-IN': 'மன்னிக்கவும், எனக்குப் புரியவில்லை. மீண்டும் சொல்ல முடியுமா?',
+    };
+    return map[lang] || map['en-IN'];
+  }
 
   /**
    * Platform-wide barge-in: stop playback ASAP (target ≤200ms, ok ≤300ms).
@@ -5246,16 +5276,18 @@ async function viewTalkLegacy(root) {
     return offset;
   }
 
-  async function warmTtsConnection(agent) {
+  async function warmTtsConnection(agent, language) {
     const tts = (agent && agent.tts) || {};
     try {
       // Warm TLS + mint config (Sarvam http_stream). Remaps dead Rumik mulberry.
+      // language_code must track session language (never silently stuck en-IN).
       const mint = await api('/api/ws-connect', {
         method: 'POST', timeoutMs: 8000,
         body: {
           text: ' ',
           model: tts.model || 'bulbul:v3',
           speaker: tts.speaker || tts.voice_id || 'priya',
+          language: language || sessionTtsLanguage || undefined,
           source: 'browser_talk',
           cold_start: !warmTtsMint,
         },
@@ -5266,7 +5298,8 @@ async function viewTalkLegacy(root) {
         if (activeLatency) {
           activeLatency.tts = Object.assign({}, activeLatency.tts, {
             warm_mint: true, keep_alive: true, mode: mint.mode || 'http_stream',
-            model: mint.model, speaker: mint.speaker, cold_start: false,
+            model: mint.model, speaker: mint.speaker, language: mint.language,
+            cold_start: false,
           });
         }
       }
@@ -5545,7 +5578,10 @@ async function viewTalkLegacy(root) {
       });
       if (meta && meta.booking_ack) markLatency('tool_start', { booking_ack: true });
       // Start TTS on first safe phrase. Do not wait for llm_complete.
-      await speakReply(phrase, agent, { partial: true });
+      await speakReply(phrase, agent, {
+        partial: true,
+        language: (meta && meta.tts_language) || sessionTtsLanguage,
+      });
     }
 
     try {
@@ -5561,6 +5597,11 @@ async function viewTalkLegacy(root) {
         record_latency: true,
         session_id: 'browser_talk_legacy',
         asr_confidence: lastAsrGuard && lastAsrGuard.confidence,
+        current_language: sessionTtsLanguage,
+        primary_language: sessionPrimaryLanguage,
+        allowed_languages: sessionAllowedLanguages,
+        call_session_id: sessionCallId,
+        tts_language: sessionTtsLanguage,
       };
 
       // Booking: speak local ack immediately (target <=1200ms) while stream starts.
@@ -5607,12 +5648,23 @@ async function viewTalkLegacy(root) {
             activeLatency.rate_limited = true;
             activeLatency.fallback_used = true;
           }
-          if (ev.type === 'first_phrase' && ev.phrase) {
-            // If booking ack already speaking, treat this as continue material later.
-            if (!bookingIntent) speakFirst(ev.phrase, { streamed_first_phrase: true });
-            else if (ev.booking_ack && !firstAudioStarted) speakFirst(ev.phrase, { booking_ack: true });
+          if (ev.type === 'meta') {
+            if (ev.tts_language) sessionTtsLanguage = ev.tts_language;
+            if (ev.response_language) sessionTtsLanguage = ev.response_language;
+            if (ev.primary_language) sessionPrimaryLanguage = ev.primary_language;
+            if (ev.allowed_languages) sessionAllowedLanguages = ev.allowed_languages;
           }
-          if (ev.type === 'done') donePayload = ev;
+          if (ev.type === 'first_phrase' && ev.phrase) {
+            if (ev.tts_language) sessionTtsLanguage = ev.tts_language;
+            // If booking ack already speaking, treat this as continue material later.
+            if (!bookingIntent) speakFirst(ev.phrase, { streamed_first_phrase: true, tts_language: ev.tts_language || sessionTtsLanguage });
+            else if (ev.booking_ack && !firstAudioStarted) speakFirst(ev.phrase, { booking_ack: true, tts_language: ev.tts_language || sessionTtsLanguage });
+          }
+          if (ev.type === 'done') {
+            donePayload = ev;
+            if (ev.tts_language) sessionTtsLanguage = ev.tts_language;
+            else if (ev.response_language) sessionTtsLanguage = ev.response_language;
+          }
           if (ev.type === 'error') throw new Error(ev.error || 'Brain stream error');
         });
       } catch (streamErr) {
@@ -5652,11 +5704,16 @@ async function viewTalkLegacy(root) {
         addBubble('bot', fullReply);
         setPhase('speaking');
         markLatency('first_safe_phrase');
-        await speakReply(fullReply, agent);
+        await speakReply(fullReply, agent, {
+          language: (donePayload && donePayload.tts_language) || sessionTtsLanguage,
+        });
       } else if (remainder && remainder !== spokenPrefix) {
         addBubble('bot', remainder);
         setPhase('speaking');
-        await speakReply(remainder, agent, { continuation: true });
+        await speakReply(remainder, agent, {
+          continuation: true,
+          language: (donePayload && donePayload.tts_language) || sessionTtsLanguage,
+        });
       }
 
       if (!convo.length || convo[convo.length - 1].text !== fullReply) {
@@ -5703,6 +5760,14 @@ async function viewTalkLegacy(root) {
       : Date.now();
     if (!opts.continuation) markLatency('tts_request');
     lastSpokenText = String(text || '').trim();
+    // CRITICAL: language_code tracks reply/session language every turn.
+    // Stuck en-IN while synthesizing Indic text → audible silence (Hostinger run 140).
+    const ttsLanguage = opts.language
+      || opts.tts_language
+      || detectClientLanguage(text, sessionTtsLanguage)
+      || sessionTtsLanguage
+      || 'en-IN';
+    sessionTtsLanguage = ttsLanguage;
     startBargeInWatcher();
     const abortCtl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     activeTtsAbort = abortCtl;
@@ -5714,6 +5779,7 @@ async function viewTalkLegacy(root) {
     }
     try {
       let mint = opts.continuation ? null : consumeWarmTtsMint();
+      if (mint && mint.language && mint.language !== ttsLanguage) mint = null;
       const coldStart = !mint;
       if (!mint) {
         mint = await api('/api/ws-connect', {
@@ -5722,6 +5788,7 @@ async function viewTalkLegacy(root) {
             text: text.slice(0, 2000),
             model: tts.model || 'bulbul:v3',
             speaker: tts.speaker || tts.voice_id || 'priya',
+            language: ttsLanguage,
             source: 'browser_talk',
             cold_start: true,
           },
@@ -5734,6 +5801,7 @@ async function viewTalkLegacy(root) {
           mode: (mint && mint.mode) || 'http_stream',
           model: (mint && mint.model) || 'bulbul:v3',
           speaker: (mint && mint.speaker) || 'priya',
+          language: ttsLanguage,
           cold_start: !!coldStart,
           warm_reuse: !coldStart,
           keep_alive: true,
@@ -5755,6 +5823,8 @@ async function viewTalkLegacy(root) {
             text: text.slice(0, 2000),
             model: mint.model || 'bulbul:v3',
             speaker: mint.speaker || 'priya',
+            language: ttsLanguage,
+            language_code: ttsLanguage,
             source: 'browser_talk',
             mode: 'http_stream',
           }),
@@ -5810,7 +5880,7 @@ async function viewTalkLegacy(root) {
           await new Promise((r) => setTimeout(r, remainingMs + 30));
         }
         if (!receivedAudio && !streamCancelled) throw new Error('Voice stream returned no audio');
-        if (!opts.continuation) warmTtsConnection(agent).catch(() => {});
+        if (!opts.continuation) warmTtsConnection(agent, ttsLanguage).catch(() => {});
         return;
       }
 
@@ -5883,9 +5953,18 @@ async function viewTalkLegacy(root) {
         socket.onerror = () => finish(new Error('Voice stream connection failed.'));
         socket.onclose = () => { if (!finished) finish(receivedAudio ? null : new Error('Voice stream closed early.')); };
       });
-      if (!opts.continuation) warmTtsConnection(agent).catch(() => {});
+      if (!opts.continuation) warmTtsConnection(agent, ttsLanguage).catch(() => {});
     } catch (streamError) {
       if (streamCancelled) return;
+      // Silent TTS failure is forbidden: recovery utterance in last-known language.
+      if (!opts.recovery && !opts.partial) {
+        try {
+          const line = recoveryLine(ttsLanguage);
+          addBubble('sys', line);
+          await speakReply(line, agent, { recovery: true, language: ttsLanguage });
+          return;
+        } catch (_) {}
+      }
       try {
         // Honest full-WAV fallback: TTFB includes complete clip wait.
         const res = await api('/api/tts', {
@@ -5894,6 +5973,7 @@ async function viewTalkLegacy(root) {
             text: text.slice(0, 2000),
             model: (tts.model && tts.model.indexOf('bulbul') === 0) ? tts.model : 'bulbul:v3',
             speaker: tts.speaker || tts.voice_id || 'priya',
+            language: ttsLanguage,
             source: 'browser_talk',
             mode: 'http_stream',
           },
@@ -6000,7 +6080,14 @@ async function viewTalkLegacy(root) {
         updateTiming();
         clearLiveTranscript();
         if (words) await runTurn(String(words).trim());
-        else if (sessionActive) listenForTurn();
+        else if (sessionActive) {
+          // Never silent on empty STT: recovery utterance in last-known language.
+          const line = recoveryLine(sessionTtsLanguage);
+          addBubble('bot', line);
+          const agent = getActiveAgent();
+          if (agent) await speakReply(line, agent, { recovery: true, language: sessionTtsLanguage });
+          if (sessionActive) listenForTurn();
+        }
       } catch (ex) {
         dg.close();
         clearLiveTranscript();
@@ -6032,7 +6119,7 @@ async function viewTalkLegacy(root) {
         markLatency('speech_end');
         // Warm TTS mint as soon as speech ends so first phrase skips mint RTT.
         const agent = getActiveAgent();
-        if (agent) warmTtsConnection(agent).catch(() => {});
+        if (agent) warmTtsConnection(agent, sessionTtsLanguage).catch(() => {});
         try { mediaRec.stop(); } catch (e) {}
       }
     }, 60);
@@ -6066,11 +6153,16 @@ async function viewTalkLegacy(root) {
       agentSel.disabled = true;
       setSessionButton(true);
       newLatencyTurn();
+      const agentLang = (agent.language || agent.voice && agent.voice.language
+        || agent.primary_language || 'en-IN');
+      sessionPrimaryLanguage = agentLang;
+      sessionTtsLanguage = agentLang;
+      sessionAllowedLanguages = agent.allowed_languages || agent.allowedLanguages || null;
       const greeting = String(agent.greeting || 'Hello, how can I help you today?').trim();
       addBubble('bot', greeting);
       convo.push({ role: 'bot', text: greeting });
       setPhase('speaking');
-      await speakReply(greeting, agent);
+      await speakReply(greeting, agent, { language: sessionTtsLanguage });
       if (sessionActive) listenForTurn();
     } catch (e) {
       toast('Microphone access failed. Allow the mic for this site, then start again.', 'err');

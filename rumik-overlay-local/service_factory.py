@@ -111,7 +111,16 @@ DEEPGRAM_FLUX_LANGUAGE_HINTS = {
 
 
 def dograh_stt_uses_flux_language(language: str | None) -> bool:
+    """Return True only for explicit Flux-supported single-language hints.
+
+    Ban Flux for language=multi (and empty→multi). Flux autodect subset is
+    de/en/es/fr/hi/it/ja/nl/pt/ru only. It does NOT cover Telugu or most
+    Indic languages required by Astra multilingual. EN+Indic+code-switch
+    must use Deepgram nova-3 (non-Flux) or Dograh non-Flux STT instead.
+    """
     language = language or "multi"
+    if language == "multi":
+        return False
     return language in DEEPGRAM_FLUX_MULTILINGUAL_LANGUAGE_OPTIONS
 
 
@@ -292,8 +301,7 @@ def create_stt_service(
         language = getattr(user_config.stt, "language", None) or "multi"
 
         if dograh_stt_uses_flux_language(language):
-            # Dograh's Flux proxy only supports multilingual auto-detect and the
-            # same language hint subset as Deepgram Flux multilingual.
+            # Explicit single-language Flux hint only (never language=multi).
             settings_kwargs = {
                 "model": "flux-general-multi",
                 "eot_timeout_ms": 3000,
@@ -313,12 +321,19 @@ def create_stt_service(
                 sample_rate=audio_config.transport_in_sample_rate,
             )
 
+        # language=multi (and non-Flux languages): non-Flux Dograh STT.
+        # Prefer nova-3-general semantics for EN+Indic multilingual + code-switch.
+        stt_model = getattr(user_config.stt, "model", None) or "default"
+        if language == "multi" and (
+            not stt_model or stt_model == "default" or "flux" in str(stt_model).lower()
+        ):
+            stt_model = "nova-3-general"
         return DograhSTTService(
             base_url=base_url,
             api_key=user_config.stt.api_key,
             correlation_id=correlation_id,
             settings=DograhSTTSettings(
-                model=user_config.stt.model,
+                model=stt_model,
                 language=language,
             ),
             keyterms=keyterms,

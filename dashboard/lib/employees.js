@@ -375,8 +375,16 @@ function publicLanguageVoiceConfig(cfg) {
 function publicVoice(voice) {
   const v = normalizeVoice(voice);
   const tier = VOICE_TIER_BY_ID.get(v.tier) || VOICE_TIER_BY_ID.get(DEFAULT_VOICE_TIER);
+  const multilingualRuntime = require('./multilingual-runtime');
+  const allowed = multilingualRuntime.resolveAllowedLanguages({ voice: v }, {
+    primary_language: v.language,
+    allowed_languages: v.allowed_languages,
+    languageVoiceConfig: v.languageVoiceConfig,
+  });
   return {
     language: v.language,
+    primary_language: v.language,
+    allowed_languages: allowed,
     tier: v.tier,
     tierLabel: tier ? tier.label : 'Standard',
     tierAvailable: !!(tier && tier.available),
@@ -391,7 +399,9 @@ function normalizeVoice(input, existing) {
   const b = input && typeof input === 'object' ? input : {};
   const base = existing && typeof existing === 'object' ? existing : {};
   const language = normalizeLanguage(
-    b.language != null ? b.language : base.language,
+    b.language != null ? b.language
+      : (b.primary_language != null ? b.primary_language
+        : (b.primaryLanguage != null ? b.primaryLanguage : base.language)),
     DEFAULT_LANGUAGE,
   );
   const tier = normalizeVoiceTier(
@@ -409,7 +419,25 @@ function normalizeVoice(input, existing) {
       : (b.language_voice_config != null ? b.language_voice_config : undefined),
     base.languageVoiceConfig,
   );
-  return { language, tier, model, speaker, f0_up_key: f0, languageVoiceConfig };
+  // First-class allowed_languages (never null). Derived from explicit list or
+  // languageVoiceConfig keys; always includes primary.
+  const multilingualRuntime = require('./multilingual-runtime');
+  const allowedRaw = b.allowed_languages != null ? b.allowed_languages
+    : (b.allowedLanguages != null ? b.allowedLanguages : base.allowed_languages);
+  const allowed_languages = multilingualRuntime.resolveAllowedLanguages(
+    { voice: { language, languageVoiceConfig, allowed_languages: allowedRaw } },
+    { primary_language: language, allowed_languages: allowedRaw, languageVoiceConfig },
+  );
+  return {
+    language,
+    primary_language: language,
+    allowed_languages,
+    tier,
+    model,
+    speaker,
+    f0_up_key: f0,
+    languageVoiceConfig,
+  };
 }
 
 /**
@@ -684,6 +712,21 @@ function publicEmployee(row, db, opts = {}) {
     outcomes: normalizeOutcomesList(row.outcomes),
     actions: normalizeActionsList(row.actions),
     language: normalizeLanguage((row.voice && row.voice.language) || DEFAULT_LANGUAGE),
+    primary_language: normalizeLanguage(
+      (row.voice && (row.voice.primary_language || row.voice.language)) || DEFAULT_LANGUAGE,
+    ),
+    allowed_languages: (() => {
+      try {
+        const multilingualRuntime = require('./multilingual-runtime');
+        return multilingualRuntime.resolveAllowedLanguages(row, {
+          primary_language: (row.voice && row.voice.language) || DEFAULT_LANGUAGE,
+          allowed_languages: row.voice && row.voice.allowed_languages,
+          languageVoiceConfig: row.voice && row.voice.languageVoiceConfig,
+        });
+      } catch (_) {
+        return [normalizeLanguage((row.voice && row.voice.language) || DEFAULT_LANGUAGE)];
+      }
+    })(),
     voiceTier: normalizeVoiceTier((row.voice && row.voice.tier) || DEFAULT_VOICE_TIER),
     assignedNumber: number,
     phoneConfig: phoneConfigSummary,
