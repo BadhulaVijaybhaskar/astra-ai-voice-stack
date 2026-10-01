@@ -69,6 +69,26 @@
     return '<svg viewBox="0 0 24 24">' + (paths[name] || paths.employee) + '</svg>';
   }
 
+  function statusKey(raw) {
+    const s = String(raw || '').trim().toLowerCase();
+    if (!s) return 'ready';
+    if (/qualif/.test(s)) return 'qualified';
+    if (/call(ing)?/.test(s) && !/callback/.test(s)) return 'calling';
+    if (/connect/.test(s)) return 'connected';
+    if (/complete|ended|done/.test(s)) return 'completed';
+    if (/fail|error/.test(s)) return 'failed';
+    if (/ready|active|live/.test(s)) return 'ready';
+    return s.replace(/\s+/g, '-');
+  }
+
+  function statusPill(label, opts) {
+    const text = String(label || 'Ready');
+    return el('span', {
+      class: 'journey-pill' + ((opts && opts.outline) ? ' is-outline' : ''),
+      'data-status': statusKey(text),
+    }, text);
+  }
+
   function demoBadge(show) {
     if (!show) return null;
     return el('span', { class: 'journey-demo-badge' }, 'Demo preview');
@@ -161,7 +181,10 @@
           el('strong', {}, name),
           el('div', { class: 'role-line' }, (e.role || 'Role') + ' · ' + (e.team || 'Team')),
         ]),
-        el('div', { class: 'journey-status' }, [el('span', { class: 'dot' }), e.status || 'Ready']),
+        el('div', {
+          class: 'journey-status',
+          'data-status': statusKey(e.status || 'Ready'),
+        }, [el('span', { class: 'dot' }), e.status || 'Ready']),
       ]),
       el('div', { class: 'journey-card' }, [
         el('div', { class: 'journey-job-title' }, 'Job'),
@@ -569,8 +592,16 @@
 
   function renderCall(data) {
     const c = data.call || {};
-    const statusEl = el('span', {}, c.demoPreview ? 'Connected' : 'Ready');
+    const initialStatus = c.demoPreview ? 'Connected' : 'Ready';
+    const statusEl = el('span', {
+      class: 'journey-pill',
+      'data-status': statusKey(initialStatus),
+    }, initialStatus);
     const timerEl = el('span', {}, c.timer || '00:00');
+    function setCallStatus(s) {
+      statusEl.textContent = s;
+      statusEl.setAttribute('data-status', statusKey(s));
+    }
 
     const transcriptHost = el('div', { class: 'journey-transcript' });
     function paintTranscript(rows) {
@@ -607,12 +638,12 @@
         if (!c.agentId) return toast('Employee has no linked agent for realtime Talk.', 'err');
         if (JourneyState.talk && JourneyState.talk.running) {
           stopTalk();
-          statusEl.textContent = 'Ended';
+          setCallStatus('Completed');
           startBtn.textContent = 'Start live call';
           return;
         }
         await startRealtimeCall(c.agentId, {
-          onStatus: (s) => { statusEl.textContent = s; },
+          onStatus: (s) => { setCallStatus(s); },
           onTick: (sec) => {
             const m = String(Math.floor(sec / 60)).padStart(2, '0');
             const s2 = String(sec % 60).padStart(2, '0');
@@ -642,7 +673,7 @@
             (c.participant && c.participant.context) || (c.note || 'Realtime Talk uses the employee agent when available.')),
         ]),
         el('div', { class: 'journey-call-badges' }, [
-          el('span', { class: 'journey-pill' }, ['', statusEl]),
+          statusEl,
           el('span', { class: 'journey-pill is-dark' }, [timerEl]),
           el('span', { class: 'journey-pill is-outline' }, c.language || (c.demoPreview ? 'Telugu · Demo preview' : 'Live')),
         ]),
@@ -650,7 +681,7 @@
       wave,
       transcriptHost,
       el('div', { class: 'journey-regional-foot' }, [
-        el('span', { class: 'journey-pill' }, 'Regional language'),
+        statusPill('Regional language', { outline: true }),
         el('span', {}, c.demoPreview
           ? 'Conversation continues in Telugu + English · illustrative demo'
           : 'Live mode never invents transcripts.'),
