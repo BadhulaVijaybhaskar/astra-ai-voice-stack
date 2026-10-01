@@ -25,9 +25,10 @@
  */
 'use strict';
 
-const { httpsPost, httpsGet, httpsPut, httpsPatch, httpsRequest } = require('./core');
+const { httpsPost, httpsGet, httpsPut, httpsPatch, httpsRequest, httpsPostStream } = require('./core');
 const voiceCatalog = require('./tts-voice-catalog');
 const llmStream = require('./llm-stream');
+const browserTalkTts = require('./browser-talk-tts');
 
 // Rumik sits behind Cloudflare, which 403s non-browser user-agents. NEVER remove.
 const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
@@ -234,19 +235,93 @@ const ttsSarvam = {
   },
 
   async wsConnect(opts) {
-    // Prefer short first-phrase synthesis for first-audio. Sarvam REST still
-    // returns a full clip per request; callers should pass only the first safe
-    // phrase for the initial mint, then synthesize continuation chunks.
-    // Dograh WF8 uses pipecat SarvamTTSService with aggregation off for true
-    // streaming first-audio on bulbul:v3 priya.
+    // Browser Talk mint: Sarvam HTTP stream (not Rumik WS). Rumik cannot carry
+    // priya; mulberry WS returns unsupported_model on Hostinger. Dograh overlay
+    // still streams via pipecat SarvamTTSService with TOKEN aggregation.
     const key = process.env.SARVAM_API_KEY;
     if (!key) throw notConfigured(this.label, this.needs);
+    const model = selectedModel(this, opts && opts.model);
+    const speaker = String((opts && (opts.speaker || opts.voice_id)) || 'priya')
+      .trim()
+      .toLowerCase()
+      .slice(0, 40) || 'priya';
     return {
-      mode: 'chunked_rest',
-      provider: 'sarvam',
-      model: selectedModel(this, opts && opts.model),
-      note: 'Dashboard uses chunked REST phrases for first-audio. Dograh overlay streams with full_response_aggregation=false.',
-      voice_id: String((opts && (opts.speaker || opts.voice_id)) || 'priya'),
+      mode: 'http_stream',
+      model,
+      speaker,
+      voice_id: speaker,
+      language: String((opts && (opts.language || opts.language_code)) || 'en-IN').slice(0, 16),
+      stream_path: '/api/tts/stream',
+      ws_url: null,
+      token: null,
+      early_audio: true,
+      full_wav_buffer: false,
+      keep_alive: true,
+      note: 'Browser Talk uses Sarvam HTTP /text-to-speech/stream (linear16). Full WAV REST waits for complete clip; stream marks first-byte honestly.',
+    };
+  },
+
+  /**
+   * Stream Sarvam HTTP TTS bytes (POST /text-to-speech/stream).
+   * onChunk receives Buffer slices as they arrive. Prefer linear16 @ 24kHz
+   * so Browser Talk can play the first PCM frame without waiting for EOF.
+   * Returns { chars, contentType, status }.
+   */
+  async synthesizeStream(opts, onChunk) {
+    const key = process.env.SARVAM_API_KEY;
+    if (!key) throw notConfigured(this.label, this.needs);
+
+    const model = selectedModel(this, opts && opts.model);
+    const text = String((opts && opts.text) || '').slice(0, Math.max(SARVAM_MAX_TEXT, 1500));
+    if (!text.trim()) throw new ProviderError('text is required', 422, 'no_text');
+
+    const speaker = String((opts && (opts.speaker || opts.voice_id)) || 'priya')
+      .trim()
+      .toLowerCase()
+      .slice(0, 40) || 'priya';
+    const language_code = String((opts && (opts.language || opts.language_code)) || 'en-IN')
+      .trim()
+      .slice(0, 16) || 'en-IN';
+    const codec = String((opts && opts.output_audio_codec) || 'linear16').trim().toLowerCase() || 'linear16';
+    const sampleRate = Number((opts && opts.speech_sample_rate) || 24000) || 24000;
+
+    const payload = {
+      text,
+      model,
+      speaker,
+      language_code,
+      output_audio_codec: codec,
+      speech_sample_rate: sampleRate,
+    };
+    const buf = Buffer.from(JSON.stringify(payload));
+    let firstByteAt = null;
+    const up = await httpsPostStream(
+      SARVAM_HOST,
+      '/text-to-speech/stream',
+      {
+        'api-subscription-key': key,
+        'Content-Type': 'application/json',
+        'Content-Length': buf.length,
+        Accept: 'application/octet-stream',
+      },
+      buf,
+      (chunk) => {
+        if (!firstByteAt) firstByteAt = Date.now();
+        if (typeof onChunk === 'function') onChunk(chunk);
+      },
+      { timeoutMs: Number((opts && opts.timeoutMs) || 45000) },
+    );
+
+    if (up.status !== 200) {
+      throw new ProviderError('sarvam stream failed', up.status, 'upstream');
+    }
+    return {
+      chars: text.length,
+      contentType: codec === 'linear16' ? 'audio/l16;rate=24000' : 'audio/mpeg',
+      status: up.status,
+      first_byte_at_ms: firstByteAt,
+      sample_rate: sampleRate,
+      codec,
     };
   },
 };
@@ -1206,4 +1281,5 @@ module.exports = {
   extractProviderRunId, extractProviderRunName, matchRecentWorkflowRun,
   phoneMatchKey, positiveIntOption,
   configuredDefaultId,
+  browserTalkTts,
 };

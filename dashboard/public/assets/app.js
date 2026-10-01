@@ -5100,9 +5100,11 @@ async function viewTalkLegacy(root) {
   /** P0.2: one monotonic clock per turn (performance.now). stage_trace holds offsets from speech_end. */
   let activeLatency = null;
   let lastAsrGuard = null;
-  /** Warm Rumik WS mint reused across first-phrase TTS (avoid TLS+mint per phrase). */
+  /** Warm Rumik/Sarvam mint reused across first-phrase TTS (avoid TLS+mint per phrase). */
   let warmTtsMint = null;
   let warmTtsMintAt = 0;
+  /** AbortController for in-flight Browser Talk TTS HTTP stream (barge-in cancel). */
+  let activeTtsAbort = null;
 
   /**
    * Platform-wide barge-in: stop playback ASAP (target ≤200ms, ok ≤300ms).
@@ -5112,6 +5114,8 @@ async function viewTalkLegacy(root) {
     const t0 = (typeof performance !== 'undefined' && performance.now)
       ? performance.now()
       : Date.now();
+    try { if (activeTtsAbort) activeTtsAbort.abort(); } catch (_) {}
+    activeTtsAbort = null;
     if (currentAudio) {
       try { currentAudio.pause(); } catch (_) {}
       currentAudio = null;
@@ -5245,14 +5249,26 @@ async function viewTalkLegacy(root) {
   async function warmTtsConnection(agent) {
     const tts = (agent && agent.tts) || {};
     try {
+      // Warm TLS + mint config (Sarvam http_stream). Remaps dead Rumik mulberry.
       const mint = await api('/api/ws-connect', {
         method: 'POST', timeoutMs: 8000,
-        body: { text: ' ', model: tts.model || 'mulberry' },
+        body: {
+          text: ' ',
+          model: tts.model || 'bulbul:v3',
+          speaker: tts.speaker || tts.voice_id || 'priya',
+          source: 'browser_talk',
+          cold_start: !warmTtsMint,
+        },
       });
-      if (mint && mint.ws_url) {
+      if (mint && (mint.mode === 'http_stream' || mint.stream_path || mint.ws_url)) {
         warmTtsMint = mint;
         warmTtsMintAt = Date.now();
-        if (activeLatency) activeLatency.tts = Object.assign({}, activeLatency.tts, { warm_mint: true, keep_alive: true });
+        if (activeLatency) {
+          activeLatency.tts = Object.assign({}, activeLatency.tts, {
+            warm_mint: true, keep_alive: true, mode: mint.mode || 'http_stream',
+            model: mint.model, speaker: mint.speaker, cold_start: false,
+          });
+        }
       }
     } catch (_) {
       warmTtsMint = null;
@@ -5688,17 +5704,118 @@ async function viewTalkLegacy(root) {
     if (!opts.continuation) markLatency('tts_request');
     lastSpokenText = String(text || '').trim();
     startBargeInWatcher();
+    const abortCtl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    activeTtsAbort = abortCtl;
+    const onBargeAbort = () => { try { if (abortCtl) abortCtl.abort(); } catch (_) {} };
+    let streamCancelled = false;
+    function cancelThisStream() {
+      streamCancelled = true;
+      onBargeAbort();
+    }
     try {
       let mint = opts.continuation ? null : consumeWarmTtsMint();
+      const coldStart = !mint;
       if (!mint) {
         mint = await api('/api/ws-connect', {
           method: 'POST', timeoutMs: 12000,
-          body: { text: text.slice(0, 2000), model: tts.model || 'mulberry' },
+          body: {
+            text: text.slice(0, 2000),
+            model: tts.model || 'bulbul:v3',
+            speaker: tts.speaker || tts.voice_id || 'priya',
+            source: 'browser_talk',
+            cold_start: true,
+          },
         });
       } else if (activeLatency) {
         activeLatency.tts = Object.assign({}, activeLatency.tts, { warm_mint: true, keep_alive: true });
       }
-      if (!mint.ws_url) throw new Error('Voice stream URL was not returned.');
+      if (activeLatency) {
+        activeLatency.tts = Object.assign({}, activeLatency.tts, {
+          mode: (mint && mint.mode) || 'http_stream',
+          model: (mint && mint.model) || 'bulbul:v3',
+          speaker: (mint && mint.speaker) || 'priya',
+          cold_start: !!coldStart,
+          warm_reuse: !coldStart,
+          keep_alive: true,
+          early_audio: !!(mint && mint.early_audio),
+          full_wav_buffer: !!(mint && mint.full_wav_buffer),
+        });
+      }
+
+      // Preferred path: Sarvam HTTP stream (first PCM chunk = honest tts_first_audio).
+      if (mint && (mint.mode === 'http_stream' || mint.stream_path) && !mint.ws_url) {
+        const streamPath = mint.stream_path || '/api/tts/stream';
+        const playbackContext = audioCtx || new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+        if (playbackContext.state === 'suspended') await playbackContext.resume();
+        const res = await fetch(streamPath, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: text.slice(0, 2000),
+            model: mint.model || 'bulbul:v3',
+            speaker: mint.speaker || 'priya',
+            source: 'browser_talk',
+            mode: 'http_stream',
+          }),
+          signal: abortCtl ? abortCtl.signal : undefined,
+        });
+        if (!res.ok) throw new Error('Voice stream HTTP ' + res.status);
+        const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+        if (!reader) throw new Error('Voice stream body missing');
+        let nextTime = 0;
+        let receivedAudio = false;
+        let pending = new Uint8Array(0);
+        while (!streamCancelled) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value || !value.length) continue;
+          const merged = new Uint8Array(pending.length + value.length);
+          merged.set(pending, 0);
+          merged.set(value, pending.length);
+          // Align to int16 sample pairs.
+          const usable = merged.length - (merged.length % 2);
+          pending = merged.slice(usable);
+          if (usable < 2) continue;
+          const pcm = new Int16Array(merged.buffer, merged.byteOffset, usable / 2);
+          if (!pcm.length) continue;
+          if (!receivedAudio) {
+            receivedAudio = true;
+            markLatency('tts_first_audio');
+            markLatency('playback_start');
+            const ttfb = Math.round(
+              ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now())
+              - ttsStartedMono,
+            );
+            turnTiming.tts = ttfb;
+            turnTiming.tts_ttfb = ttfb;
+            updateTiming();
+            if (opts.partial) break;
+          }
+          const samples = new Float32Array(pcm.length);
+          for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i] / 32768;
+          const buffer = playbackContext.createBuffer(1, samples.length, 24000);
+          buffer.copyToChannel(samples, 0);
+          const source = playbackContext.createBufferSource();
+          source.buffer = buffer;
+          source.connect(playbackContext.destination);
+          source.onended = () => { activeSpeechSources = activeSpeechSources.filter((item) => item !== source); };
+          activeSpeechSources.push(source);
+          if (nextTime < playbackContext.currentTime) nextTime = playbackContext.currentTime + 0.025;
+          source.start(nextTime);
+          nextTime += buffer.duration;
+        }
+        if (!opts.partial && !streamCancelled && receivedAudio) {
+          const remainingMs = Math.max(0, (nextTime - playbackContext.currentTime) * 1000);
+          await new Promise((r) => setTimeout(r, remainingMs + 30));
+        }
+        if (!receivedAudio && !streamCancelled) throw new Error('Voice stream returned no audio');
+        if (!opts.continuation) warmTtsConnection(agent).catch(() => {});
+        return;
+      }
+
+      // Legacy Rumik WS only if mint still returns ws_url (should not for production voice).
+      if (!mint || !mint.ws_url) throw new Error('Voice stream URL was not returned.');
       const url = mint.ws_url + (mint.token && mint.ws_url.indexOf('token=') === -1
         ? (mint.ws_url.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(mint.token)
         : '');
@@ -5718,21 +5835,13 @@ async function viewTalkLegacy(root) {
           clearTimeout(timeout);
           try { socket.close(); } catch (_) {}
           if (error) return reject(error);
-          // For first-phrase partials, unlock as soon as first audio is queued
-          // so the LLM can continue and the next chunk can follow. Full answers
-          // still wait for playback drain so natural pacing is preserved.
           if (opts.partial && receivedAudio) return resolve();
           const remainingMs = Math.max(0, (nextTime - playbackContext.currentTime) * 1000);
           setTimeout(resolve, remainingMs + 30);
         }
 
         socket.onopen = () => {
-          const frame = { text: text.slice(0, 2000), model: tts.model || 'mulberry' };
-          if (frame.model === 'mulberry') {
-            if (tts.description) frame.description = tts.description;
-            else frame.speaker = tts.speaker || 'speaker_1';
-            frame.f0_up_key = Number.isFinite(tts.f0_up_key) ? tts.f0_up_key : 0;
-          }
+          const frame = { text: text.slice(0, 2000), model: (mint && mint.model) || 'bulbul:v3' };
           socket.send(JSON.stringify(frame));
         };
         socket.onmessage = (event) => {
@@ -5774,12 +5883,27 @@ async function viewTalkLegacy(root) {
         socket.onerror = () => finish(new Error('Voice stream connection failed.'));
         socket.onclose = () => { if (!finished) finish(receivedAudio ? null : new Error('Voice stream closed early.')); };
       });
-      // Pre-warm next mint while audio plays (reduce next-phrase TTFB).
       if (!opts.continuation) warmTtsConnection(agent).catch(() => {});
     } catch (streamError) {
+      if (streamCancelled) return;
       try {
-        const res = await api('/api/tts', { method: 'POST', timeoutMs: 60000, body: { text: text.slice(0, 2000), model: tts.model || 'mulberry', speaker: tts.speaker, f0_up_key: tts.f0_up_key, description: tts.description } });
+        // Honest full-WAV fallback: TTFB includes complete clip wait.
+        const res = await api('/api/tts', {
+          method: 'POST', timeoutMs: 60000,
+          body: {
+            text: text.slice(0, 2000),
+            model: (tts.model && tts.model.indexOf('bulbul') === 0) ? tts.model : 'bulbul:v3',
+            speaker: tts.speaker || tts.voice_id || 'priya',
+            source: 'browser_talk',
+            mode: 'http_stream',
+          },
+        });
         const buf = await res.arrayBuffer();
+        if (activeLatency) {
+          activeLatency.tts = Object.assign({}, activeLatency.tts, {
+            full_wav_buffer: true, early_audio: false, mode: 'full_wav_fallback',
+          });
+        }
         markLatency('tts_first_audio');
         turnTiming.tts = Math.round(
           ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now())
@@ -5800,6 +5924,7 @@ async function viewTalkLegacy(root) {
         toast('Voice playback failed, the transcript is still available.', 'err');
       }
     } finally {
+      if (activeTtsAbort === abortCtl) activeTtsAbort = null;
       if (!opts.partial && !activeSpeechSources.length && !currentAudio) clearBargeInWatcher();
     }
   }
