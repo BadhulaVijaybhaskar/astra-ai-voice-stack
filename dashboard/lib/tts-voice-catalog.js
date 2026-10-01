@@ -374,6 +374,7 @@ module.exports = {
   findVoice,
   listProviders,
   normalizeVoiceRow,
+  normalizeDraftVoiceRef,
   defaultDraftPrefs,
   normalizeDraftPrefs,
   publicDraftPrefs,

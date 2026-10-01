@@ -55,6 +55,7 @@ const callJobs = require('./lib/call-jobs');
 const employees = require('./lib/employees');
 const timeline = require('./lib/timeline');
 const voiceCatalog = require('./lib/tts-voice-catalog');
+const unifiedVoiceCatalog = require('./lib/voice-catalog');
 const { createDefaultWorkflowProvider, WorkflowProviderError } = require('./lib/workflow-provider');
 
 const telephonyProvider = createDefaultTelephonyProvider(core);
@@ -569,6 +570,7 @@ async function apiTts(req, res, ctx) {
 
 // GET /api/tts/voices -> normalized voice catalog (Sarvam + Deepgram Aura + Rumik).
 // Auth required. Built from backend config (no Sarvam voice-list API). Never secrets.
+// Prefer GET /api/voice/catalog for the unified Dograh + BYOK shape.
 function apiTtsVoices(req, res) {
   const url = new URL(req.url || '/', 'http://localhost');
   const catalog = voiceCatalog.getCatalog({
@@ -583,11 +585,32 @@ function apiTtsVoices(req, res) {
   core.sendJson(res, 200, catalog);
 }
 
+// GET /api/voice/catalog -> unified Dograh + Deepgram + Sarvam + Rumik catalog.
+async function apiVoiceCatalog(req, res) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  try {
+    const catalog = await unifiedVoiceCatalog.getUnifiedCatalog({
+      provider: url.searchParams.get('provider') || '',
+      mode: url.searchParams.get('mode') || '',
+      language: url.searchParams.get('language') || '',
+      model: url.searchParams.get('model') || '',
+    });
+    const check = org.assertNoSecretValues(catalog);
+    if (!check.ok) {
+      return core.sendJson(res, 500, { error: 'voice catalog refused to leak secrets', code: 'secret_guard' });
+    }
+    core.sendJson(res, 200, catalog);
+  } catch (e) {
+    core.sendJson(res, 502, { error: String((e && e.message) || e), code: 'voice_catalog_failed' });
+  }
+}
+
 // GET /api/tts/draft-prefs -> tenant draft voice prefs (never live apply).
 function apiTtsDraftPrefsGet(req, res, ctx) {
   core.sendJson(res, 200, {
-    prefs: voiceCatalog.getTenantDraftPrefs(ctx.tenant),
+    prefs: unifiedVoiceCatalog.getTenantUnifiedDraftPrefs(ctx.tenant),
     live_apply_enabled: false,
+    set_active_enabled: false,
   });
 }
 
@@ -602,15 +625,21 @@ async function apiTtsDraftPrefsPut(req, res, ctx) {
   await core.mutate((d) => {
     const tenant = d.tenants.find((t) => t.id === ctx.tenant.id);
     if (!tenant) throw Object.assign(new Error('tenant not found'), { status: 404, code: 'not_found' });
-    prefs = voiceCatalog.setTenantDraftPrefs(tenant, ctx.body || {});
+    prefs = unifiedVoiceCatalog.setTenantUnifiedDraftPrefs(tenant, ctx.body || {});
     addAudit(d, ctx, 'tts.draft_prefs_updated', 'tenant', tenant.id, {
+      voice_mode: prefs.voice_mode,
       provider: prefs.provider,
       voice_id: prefs.voice_id,
       apply_live: false,
+      set_active_requested: !!(prefs.active_requested && prefs.active_requested.requestedAt),
     });
   });
-  core.sendJson(res, 200, { prefs, live_apply_enabled: false });
+  core.sendJson(res, 200, { prefs, live_apply_enabled: false, set_active_enabled: false });
 }
+
+// Aliases under /api/voice/* for the unified surface.
+function apiVoiceDraftPrefsGet(req, res, ctx) { return apiTtsDraftPrefsGet(req, res, ctx); }
+async function apiVoiceDraftPrefsPut(req, res, ctx) { return apiTtsDraftPrefsPut(req, res, ctx); }
 
 // POST /api/ws-connect -> { ws_url, token, model } (streaming voice mint).
 async function apiWsConnect(req, res, ctx) {
@@ -3391,7 +3420,9 @@ const server = http.createServer(async (req, res) => {
         if (route === '/api/version') return core.requireAuth(req, res, apiVersion);
         if (route === '/api/providers') return core.requireAuth(req, res, apiProviders);
         if (route === '/api/tts/voices') return core.requireAuth(req, res, apiTtsVoices);
+        if (route === '/api/voice/catalog') return core.requireAuth(req, res, apiVoiceCatalog);
         if (route === '/api/tts/draft-prefs') return core.requireAuth(req, res, apiTtsDraftPrefsGet);
+        if (route === '/api/voice/draft-prefs') return core.requireAuth(req, res, apiVoiceDraftPrefsGet);
         if (route === '/api/agents') return core.requireAuth(req, res, apiAgentsList);
         if (route === '/api/usage') return core.requireAuth(req, res, apiUsage);
         if (route === '/api/telephony/status') return core.requireAuth(req, res, apiTelephonyStatus);
@@ -3569,14 +3600,14 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (req.method === 'PUT') {
-        if (route === '/api/tts/draft-prefs') {
+        if (route === '/api/tts/draft-prefs' || route === '/api/voice/draft-prefs') {
           let body;
           try { body = await core.readBody(req, 64 * 1024); }
           catch (e) {
             const tooBig = /too large/.test(String(e.message));
             return core.sendJson(res, tooBig ? 413 : 400, { error: e.message, code: tooBig ? 'too_large' : 'bad_body' });
           }
-          return core.requireAuth(req, res, apiTtsDraftPrefsPut, body);
+          return core.requireAuth(req, res, route === '/api/voice/draft-prefs' ? apiVoiceDraftPrefsPut : apiTtsDraftPrefsPut, body);
         }
         const pnPut = matchPhoneNumberRoute(route);
         if (pnPut && pnPut.action === 'inbound') {
@@ -3694,7 +3725,9 @@ const server = http.createServer(async (req, res) => {
       if (route === '/api/agents/update') return core.requireAuth(req, res, apiAgentsUpdate, body);
       if (route === '/api/agents/delete') return core.requireAuth(req, res, apiAgentsDelete, body);
       if (route === '/api/tts') return core.requireAuth(req, res, apiTts, body);
-      if (route === '/api/tts/draft-prefs') return core.requireAuth(req, res, apiTtsDraftPrefsPut, body);
+      if (route === '/api/tts/draft-prefs' || route === '/api/voice/draft-prefs') {
+        return core.requireAuth(req, res, route === '/api/voice/draft-prefs' ? apiVoiceDraftPrefsPut : apiTtsDraftPrefsPut, body);
+      }
       if (route === '/api/ws-connect') return core.requireAuth(req, res, apiWsConnect, body);
       if (route === '/api/chat') return core.requireAuth(req, res, apiChat, body);
       if (route === '/api/stt') return core.requireAuth(req, res, apiStt, body);
