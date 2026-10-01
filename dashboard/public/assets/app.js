@@ -1411,8 +1411,10 @@ async function viewEmployeeStudio(root, id) {
 
   if (tab === 'overview') {
     const phoneE164 = (emp.assignedNumber && emp.assignedNumber.e164)
-      || numberLabel
       || '+918065353938';
+    const phoneMeta = (emp.assignedNumber && emp.assignedNumber.e164)
+      ? 'Inbound + Outbound'
+      : 'Preferred DID · assign to go live';
     const voiceMode = (emp.voice && emp.voice.mode) || 'Astra Auto';
     const langs = ['English', 'Hindi', 'Telugu'];
     const knowledgeCount = (emp.knowledgeIds && emp.knowledgeIds.length)
@@ -1465,7 +1467,7 @@ async function viewEmployeeStudio(root, id) {
     ovCard('Status', [statusLabel, emp.status === 'LIVE' ? 'Live and answering' : 'Configure then go live']);
     ovCard('Voice', [String(voiceMode).replace(/_/g, ' '), 'Preview only · production voice unchanged'], '#/employees?id=' + encodeURIComponent(id) + '&tab=voice');
     ovCard('Languages', [langs.join(' · ')], '#/employees?id=' + encodeURIComponent(id) + '&tab=voice');
-    ovCard('Phone', [phoneE164, 'Inbound + Outbound'], '#/employees?id=' + encodeURIComponent(id) + '&tab=routing');
+    ovCard('Phone', [phoneE164, phoneMeta], '#/employees?id=' + encodeURIComponent(id) + '&tab=routing');
     ovCard('Workflow', [dash(emp.workflowName || emp.workflowId || (workflow && workflow.name) || 'Not linked')]);
     ovCard('Calendar', ['Cal.com · Astra Voice Demo', '30 minutes'], '#/employees?id=' + encodeURIComponent(id) + '&tab=routing');
     ovCard('Knowledge', [knowledgeCount ? (knowledgeCount + ' source' + (knowledgeCount === 1 ? '' : 's')) : 'No sources yet'], '#/employees?id=' + encodeURIComponent(id) + '&tab=knowledge');
