@@ -28,16 +28,16 @@ const STEP_IDS = new Set(JOURNEY_STEPS.map((s) => s.id));
 const MODES = new Set(['live', 'demo']);
 
 const LANGUAGE_CATALOG = Object.freeze([
-  Object.freeze({ id: 'EN', code: 'en-IN', label: 'English', status: 'Available' }),
-  Object.freeze({ id: 'HI', code: 'hi-IN', label: 'Hindi', status: 'Available' }),
-  Object.freeze({ id: 'TE', code: 'te-IN', label: 'Telugu', status: 'Ready for paid validation' }),
-  Object.freeze({ id: 'TA', code: 'ta-IN', label: 'Tamil', status: 'Ready for paid validation' }),
-  Object.freeze({ id: 'KN', code: 'kn-IN', label: 'Kannada', status: 'Tested' }),
-  Object.freeze({ id: 'ML', code: 'ml-IN', label: 'Malayalam', status: 'Tested' }),
-  Object.freeze({ id: 'MR', code: 'mr-IN', label: 'Marathi', status: 'Ready for validation' }),
-  Object.freeze({ id: 'BN', code: 'bn-IN', label: 'Bengali', status: 'Ready for validation' }),
-  Object.freeze({ id: 'GU', code: 'gu-IN', label: 'Gujarati', status: 'Unavailable' }),
-  Object.freeze({ id: 'PA', code: 'pa-IN', label: 'Punjabi', status: 'Unavailable' }),
+  Object.freeze({ id: 'EN', code: 'en-IN', label: 'English', status: 'Ready for validation' }),
+  Object.freeze({ id: 'HI', code: 'hi-IN', label: 'Hindi', status: 'Ready for validation' }),
+  Object.freeze({ id: 'TE', code: 'te-IN', label: 'Telugu', status: 'Ready for validation' }),
+  Object.freeze({ id: 'TA', code: 'ta-IN', label: 'Tamil', status: 'Ready for validation' }),
+  Object.freeze({ id: 'KN', code: 'kn-IN', label: 'Kannada', status: 'Available' }),
+  Object.freeze({ id: 'ML', code: 'ml-IN', label: 'Malayalam', status: 'Available' }),
+  Object.freeze({ id: 'MR', code: 'mr-IN', label: 'Marathi', status: 'Available' }),
+  Object.freeze({ id: 'BN', code: 'bn-IN', label: 'Bengali', status: 'Available' }),
+  Object.freeze({ id: 'GU', code: 'gu-IN', label: 'Gujarati', status: 'Available' }),
+  Object.freeze({ id: 'PA', code: 'pa-IN', label: 'Punjabi', status: 'Available' }),
 ]);
 
 function featureEnabled(env = process.env) {
@@ -120,7 +120,10 @@ function setTenantDraft(tenant, body) {
 }
 
 /**
- * Prefer explicit env id, then draft employeeId, then name match Maya / Lead Qual.
+ * Resolve the Employee for the journey payload.
+ * Prefer explicit env id, then draft employeeId, then most recently updated
+ * non-archived employee. Never silently force Maya when another employee
+ * was selected or when the workspace has a newer custom employee.
  */
 function resolveEmployee(db, tenantId, draft) {
   const envId = String(process.env.AI_EMPLOYEE_JOURNEY_EMPLOYEE_ID || '').trim();
@@ -134,11 +137,9 @@ function resolveEmployee(db, tenantId, draft) {
   }
   const rows = (db.employees || []).filter((e) => e.tenantId === tenantId
     && String(e.status || '').toUpperCase() !== 'ARCHIVED');
-  const maya = rows.find((e) => /^maya$/i.test(String(e.name || '').trim()));
-  if (maya) return maya;
-  const lead = rows.find((e) => /lead\s*qual/i.test(String(e.role || ''))
-    || e.templateKey === 'lead_qualification');
-  if (lead) return lead;
+  if (!rows.length) return null;
+  rows.sort((a, b) => String(b.updatedAt || b.createdAt || '')
+    .localeCompare(String(a.updatedAt || a.createdAt || '')));
   return rows[0] || null;
 }
 
@@ -311,7 +312,7 @@ function buildLanguageStep(employee, mode, draft, voiceCatalogSummary) {
       voiceMode: 'astra_auto',
       voiceModes: [
         { id: 'astra_auto', label: 'Astra Auto' },
-        { id: 'dograh_managed', label: 'Dograh Managed' },
+        { id: 'dograh_managed', label: 'Managed' },
         { id: 'byok', label: 'BYOK' },
       ],
       voice: {
@@ -324,16 +325,14 @@ function buildLanguageStep(employee, mode, draft, voiceCatalogSummary) {
         previewText: 'Hi, this is Maya from Astra Voice. Is now a good time?',
       },
       languages: LANGUAGE_CATALOG.map((l) => {
-        let tone = 'unavailable';
-        if (['EN', 'HI', 'TE', 'TA'].includes(l.id)) tone = 'tested';
-        else if (['KN', 'ML', 'MR', 'BN'].includes(l.id)) tone = 'validation';
+        let tone = 'available';
+        if (['EN', 'HI', 'TE', 'TA'].includes(l.id)) tone = 'validation';
         return {
           ...l,
           selected: l.id === 'EN',
           demoPreview: true,
           tone,
-          status: tone === 'tested' ? 'Tested'
-            : (tone === 'validation' ? 'Ready for validation' : 'Unavailable'),
+          status: tone === 'validation' ? 'Ready for validation' : 'Available',
         };
       }),
       note: null,
@@ -350,18 +349,15 @@ function buildLanguageStep(employee, mode, draft, voiceCatalogSummary) {
     || (draft.voiceDraft && draft.voiceDraft.provider === 'dograh' ? 'dograh_managed' : null)
     || 'astra_auto';
   const languages = LANGUAGE_CATALOG.map((l) => {
-    const supported = ['en-IN', 'hi-IN', 'te-IN', 'ta-IN'].includes(l.code);
-    let tone = 'unavailable';
-    let status = 'Unavailable';
+    let tone = 'available';
+    let status = 'Available';
+    // Honest statuses: never mark TESTED unless VALIDATED_LANGUAGE_IDS says so.
     if (['EN', 'HI', 'TE', 'TA'].includes(l.id)) {
-      tone = 'tested';
-      status = 'Tested';
-    } else if (['KN', 'ML', 'MR', 'BN'].includes(l.id)) {
       tone = 'validation';
       status = 'Ready for validation';
-    }
-    if (!supported && tone === 'tested') {
-      // keep catalog honesty for unvalidated codes already marked
+    } else {
+      tone = 'available';
+      status = 'Available';
     }
     return {
       ...l,
@@ -369,7 +365,7 @@ function buildLanguageStep(employee, mode, draft, voiceCatalogSummary) {
       tone,
       selected: l.code === selectedLang || l.id === selectedLang,
       demoPreview: false,
-      live: tone === 'tested',
+      live: false,
     };
   });
 
@@ -378,12 +374,14 @@ function buildLanguageStep(employee, mode, draft, voiceCatalogSummary) {
     voiceMode: draftMode,
     voiceModes: [
       { id: 'astra_auto', label: 'Astra Auto' },
-      { id: 'dograh_managed', label: 'Dograh Managed' },
+      { id: 'dograh_managed', label: 'Managed' },
       { id: 'byok', label: 'BYOK' },
     ],
     voice: {
-      title: voice.speaker || voice.model || 'Maya · Natural Indian English',
-      subtitle: 'Draft preview only. Saving does not flip Maya production voice.',
+      title: (employee && employee.name)
+        ? (employee.name + ' · Natural')
+        : (voice.speaker || voice.model || 'Natural Indian English'),
+      subtitle: 'Draft preview only. Saving does not flip production voice.',
       speed: (draft.voiceDraft && draft.voiceDraft.speed != null) ? Number(draft.voiceDraft.speed) : 0.9,
       draft: draft.voiceDraft || null,
       current: {
@@ -392,11 +390,13 @@ function buildLanguageStep(employee, mode, draft, voiceCatalogSummary) {
         model: voice.model || null,
         tier: voice.tier || 'standard',
       },
-      previewText: 'Hi, this is Maya from Astra Voice. Is now a good time?',
+      previewText: employee && employee.name
+        ? ('Hi, this is ' + employee.name + ' from Astra Voice. Is now a good time?')
+        : 'Hi, this is Astra Voice. Is now a good time?',
       options: [
         {
-          id: 'maya',
-          name: employee && employee.name ? employee.name : 'Maya',
+          id: employee && employee.id ? employee.id : 'voice_default',
+          name: employee && employee.name ? employee.name : 'Employee',
           description: 'Natural Indian English',
           selected: true,
           demoPreview: false,

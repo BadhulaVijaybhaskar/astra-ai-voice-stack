@@ -469,7 +469,6 @@ class DograhVobizProvider extends TelephonyProvider {
     const tried = [];
 
     const dbSnap = this.db();
-    const tenantAgents = (dbSnap.agents || []).filter((a) => a.tenantId === tenantId);
     const assignedNumber = (dbSnap.phoneNumbers || []).find(
       (n) => n.tenantId === tenantId && n.status === 'assigned',
     );
@@ -479,10 +478,27 @@ class DograhVobizProvider extends TelephonyProvider {
       workflowId = meta.inboundWorkflowId || meta.outboundWorkflowId || meta.dograhWorkflowId || null;
     }
     if (!workflowId && options.workflowId) workflowId = options.workflowId;
+
+    // Prefer explicit employee/agent from options. Never silently bind Maya
+    // (tenantAgents[0]) when syncing another employee's calls.
+    let agentId = options.agentId || null;
+    if (!agentId && options.employeeId) {
+      const emp = (dbSnap.employees || []).find((e) =>
+        e.id === options.employeeId && e.tenantId === tenantId);
+      if (emp) agentId = emp.agentId || null;
+      if (!workflowId && emp && emp.workflowId) {
+        const workflowsMod = require('./workflows');
+        const resolved = workflowsMod.resolveProviderWorkflowId(dbSnap, tenantId, emp.workflowId);
+        if (resolved) workflowId = resolved;
+      }
+    }
+    if (!agentId && assignedNumber && assignedNumber.assignedAgentId) {
+      agentId = assignedNumber.assignedAgentId;
+    }
     const numericWorkflowId = providers.positiveIntOption(workflowId);
 
     const context = {
-      agentId: tenantAgents[0] && tenantAgents[0].id,
+      agentId: agentId || null,
       phoneNumberId: assignedNumber && assignedNumber.id,
       fromE164: assignedNumber && assignedNumber.e164,
       toE164: assignedNumber && assignedNumber.e164,

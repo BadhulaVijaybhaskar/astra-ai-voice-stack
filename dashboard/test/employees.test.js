@@ -398,3 +398,100 @@ test('assignedNumber resolves via reverse assignedEmployeeId when phoneNumberId 
   assert.equal(pub.assignedNumber.e164, '+918065353938');
   assert.equal(db.employees[0].phoneNumberId, n.id, 'heal forward phoneNumberId');
 });
+
+test('create custom/blank employee never copies Maya persona or Dograh WF8', () => {
+  const db = emptyDb();
+  seedPresets(db);
+  // Seed an existing Maya flagship agent with WF8 to prove it is not inherited.
+  db.agents.push({
+    id: 'ag_maya',
+    tenantId: 't_a',
+    name: 'Maya',
+    persona: 'You are Maya, AstraNova English receptionist. Collect caller details.',
+    greeting: 'Thank you for calling AstraNova.',
+    dograhWorkflowId: 8,
+    agentType: 'inbound_receptionist',
+    presetId: 'preset_astranova_eng_receptionist_v1',
+    tts: { provider: 'rumik', model: 'mulberry', speaker: 'speaker_2' },
+    createdAt: new Date().toISOString(),
+  });
+  db.employees.push({
+    id: 'emp_33eae8ef454680f0',
+    tenantId: 't_a',
+    name: 'Maya',
+    role: 'Lead Qualification',
+    templateKey: 'lead_qualification',
+    status: 'LIVE',
+    agentId: 'ag_maya',
+    workflowId: 'wf_maya',
+    voice: { language: 'en-IN', tier: 'standard' },
+    knowledgeIds: [],
+    outcomes: [],
+    actions: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  db.workflows.push({
+    id: 'wf_maya',
+    tenantId: 't_a',
+    name: 'Maya workflow',
+    providerWorkflowId: '8',
+    status: 'published',
+    agentId: 'ag_maya',
+  });
+
+  const custom = employees.createEmployee(db, 't_a', {
+    templateKey: 'custom',
+    name: 'Vaani',
+    description: 'Custom Telugu receptionist for Vaani desk.',
+  }, 'u1');
+  assert.equal(custom.ok, true);
+  assert.ok(custom.employee.agentId);
+  assert.notEqual(custom.employee.agentId, 'ag_maya');
+  assert.notEqual(custom.employee.id, 'emp_33eae8ef454680f0');
+
+  const agent = db.agents.find((a) => a.id === custom.employee.agentId);
+  assert.ok(agent);
+  assert.equal(agent.dograhWorkflowId, null);
+  assert.equal(agent.name, 'Vaani');
+  assert.equal(String(agent.persona || '').includes('You are Maya'), false);
+  assert.equal(String(agent.greeting || '').includes('AstraNova'), false);
+  assert.match(String(agent.persona || ''), /Vaani|Telugu|Custom/i);
+
+  const wf = db.workflows.find((w) => w.id === custom.employee.workflowId);
+  assert.ok(wf);
+  assert.equal(wf.providerWorkflowId, null);
+  assert.notEqual(String(wf.providerWorkflowId), '8');
+});
+
+test('create receptionist employee does not bind Maya WF8', () => {
+  const db = emptyDb();
+  seedPresets(db);
+  const created = employees.createEmployee(db, 't_a', {
+    templateKey: 'receptionist',
+    name: 'Front Desk',
+    description: 'Greet callers for Acme.',
+  }, 'u1');
+  assert.equal(created.ok, true);
+  const agent = db.agents.find((a) => a.id === created.employee.agentId);
+  assert.equal(agent.dograhWorkflowId, null);
+  assert.notEqual(agent.presetId, 'preset_astranova_eng_receptionist_v1');
+  assert.equal(String(agent.persona || '').includes('You are Maya'), false);
+});
+
+test('curated employee languages expose all 10 Astra locales', () => {
+  const langs = employees.listSupportedLanguages();
+  assert.equal(langs.length, 10);
+  assert.deepEqual(langs.map((l) => l.id), [
+    'en-IN', 'hi-IN', 'te-IN', 'ta-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'bn-IN', 'gu-IN', 'pa-IN',
+  ]);
+  assert.ok(langs.every((l) => !/^tested$/i.test(String(l.status))));
+  const db = emptyDb();
+  seedPresets(db);
+  const created = employees.createEmployee(db, 't_a', {
+    templateKey: 'custom', name: 'Lang Bot', compose: true,
+  }, 'u1');
+  const set = employees.setEmployeeLanguage(db, 't_a', created.employee.id, 'kn-IN');
+  assert.equal(set.ok, true);
+  assert.equal(set.language, 'kn-IN');
+});

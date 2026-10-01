@@ -146,3 +146,62 @@ test('provider filter returns only requested block', async () => {
   assert.ok(cat.providers.every((p) => p.provider === 'deepgram'));
   assert.ok(cat.voices.every((v) => v.provider === 'deepgram'));
 });
+
+test('product catalog excludes openai/grok realtime and always includes Sarvam', async () => {
+  const cat = await unified.getUnifiedCatalog();
+  const productIds = cat.providers.map((p) => p.provider);
+  assert.ok(productIds.includes('sarvam'));
+  assert.ok(productIds.includes('dograh'));
+  assert.ok(productIds.includes('deepgram'));
+  assert.ok(productIds.includes('rumik'));
+  assert.equal(productIds.includes('openai_realtime'), false);
+  assert.equal(productIds.includes('grok_realtime'), false);
+  assert.ok(cat.voices.every((v) => !/openai_realtime|grok_realtime/i.test(v.provider)));
+  assert.ok(cat.voices.some((v) => v.provider === 'sarvam' && v.id === 'shubh'));
+  assert.ok(cat.astra_supported_languages.length === 10);
+  assert.deepEqual(
+    cat.astra_supported_languages.map((l) => l.id),
+    ['en-IN', 'hi-IN', 'te-IN', 'ta-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'bn-IN', 'gu-IN', 'pa-IN'],
+  );
+  assert.ok(cat.astra_supported_languages.every((l) => l.status !== 'TESTED'));
+  assert.equal(cat.voice_modes.find((m) => m.id === 'dograh_managed').label, 'Managed');
+  const sarvamOpt = cat.provider_options.find((p) => p.id === 'sarvam');
+  assert.ok(sarvamOpt);
+  assert.ok(['ready', 'needs_funding', 'needs_credentials', 'unavailable'].includes(sarvamOpt.state));
+});
+
+test('Sarvam stays visible with needs_funding and preview gated', async () => {
+  const prevKey = process.env.SARVAM_API_KEY;
+  const prevFund = process.env.SARVAM_NEEDS_FUNDING;
+  process.env.SARVAM_API_KEY = 'sk_test_sarvam';
+  process.env.SARVAM_NEEDS_FUNDING = '1';
+  try {
+    const state = unified.resolveProviderState('sarvam');
+    assert.equal(state.state, 'needs_funding');
+    assert.equal(state.can_preview, false);
+    assert.equal(state.can_activate, false);
+    const cat = await unified.getUnifiedCatalog();
+    const sarvam = cat.providers.find((p) => p.provider === 'sarvam');
+    assert.ok(sarvam);
+    assert.equal(sarvam.state, 'needs_funding');
+    assert.ok(sarvam.voices.length >= 30);
+    assert.equal(sarvam.can_preview, false);
+    const opt = cat.provider_options.find((p) => p.id === 'sarvam');
+    assert.equal(opt.state, 'needs_funding');
+  } finally {
+    if (prevKey === undefined) delete process.env.SARVAM_API_KEY;
+    else process.env.SARVAM_API_KEY = prevKey;
+    if (prevFund === undefined) delete process.env.SARVAM_NEEDS_FUNDING;
+    else process.env.SARVAM_NEEDS_FUNDING = prevFund;
+  }
+});
+
+test('product provider languages are curated Astra list, not Dograh 81', async () => {
+  const cat = await unified.getUnifiedCatalog();
+  const dograh = cat.providers.find((p) => p.provider === 'dograh');
+  assert.ok(dograh);
+  assert.equal(dograh.languages.length, 10);
+  assert.ok(dograh.languages.every((l) => cat.astra_supported_languages.some((a) => a.id === l.id)));
+  // Odia and other extras only under advanced_languages when present.
+  assert.ok(!dograh.languages.some((l) => l.id === 'od-IN'));
+});

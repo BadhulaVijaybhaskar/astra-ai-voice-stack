@@ -129,7 +129,9 @@ test('Phase 17: inbound config on Phone Number syncs greeting to Employee agent'
 
 test('Phase 18: India languages catalog and Employee language wire-up', () => {
   const langs = employees.listSupportedLanguages();
-  assert.deepEqual(langs.map((l) => l.id), ['en-IN', 'hi-IN', 'te-IN', 'ta-IN']);
+  assert.deepEqual(langs.map((l) => l.id), [
+    'en-IN', 'hi-IN', 'te-IN', 'ta-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'bn-IN', 'gu-IN', 'pa-IN',
+  ]);
   assert.ok(langs.every((l) => l.label && !/deepgram|rumik|sarvam|eleven/i.test(l.label)));
 
   const db = baseDb();
@@ -157,7 +159,7 @@ test('Phase 18: India languages catalog and Employee language wire-up', () => {
   const bad = employees.setEmployeeLanguage(db, 't_a', emp.employee.id, 'fr-FR');
   assert.equal(bad.ok, false);
   assert.equal(bad.code, 'unsupported_language');
-  assert.equal(bad.supported.length, 4);
+  assert.equal(bad.supported.length, 10);
 
   const cross = employees.setEmployeeLanguage(db, 't_b', emp.employee.id, 'hi-IN');
   assert.equal(cross.ok, false);

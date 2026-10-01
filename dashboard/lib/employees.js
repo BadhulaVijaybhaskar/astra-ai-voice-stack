@@ -23,16 +23,21 @@ const CHANNELS = Object.freeze(['inbound', 'instant_lead', 'campaign', 'outbound
 const CHANNEL_SET = new Set(CHANNELS);
 
 /**
- * India-first Language catalog for Employee voice (Phase 18).
- * Honest list only: languages the stack can route today. Customer copy uses
- * "Language", never STT/TTS vendor names.
+ * India-first Language catalog for Employee voice (Phase 18 + curated Astra list).
+ * Honest list only. Customer copy uses "Language", never STT/TTS vendor names.
+ * Product UI shows ASTRA_SUPPORTED_LANGUAGES only. Provider extras are Advanced.
  */
-const SUPPORTED_LANGUAGES = Object.freeze([
-  Object.freeze({ id: 'en-IN', label: 'English (India)', nativeLabel: 'English', status: 'Tested' }),
-  Object.freeze({ id: 'hi-IN', label: 'Hindi', nativeLabel: 'हिन्दी', status: 'Tested' }),
-  Object.freeze({ id: 'te-IN', label: 'Telugu', nativeLabel: 'తెలుగు', status: 'Tested' }),
-  Object.freeze({ id: 'ta-IN', label: 'Tamil', nativeLabel: 'தமிழ்', status: 'Ready for validation' }),
-]);
+const voiceLangCatalog = require('./tts-voice-catalog');
+
+const SUPPORTED_LANGUAGES = Object.freeze(
+  voiceLangCatalog.listAstraSupportedLanguages().map((l) => Object.freeze({
+    id: l.id,
+    label: l.label,
+    nativeLabel: l.nativeLabel,
+    status: l.statusLabel,
+    statusKey: l.status,
+  })),
+);
 const LANGUAGE_BY_ID = new Map(SUPPORTED_LANGUAGES.map((l) => [l.id, l]));
 const DEFAULT_LANGUAGE = 'en-IN';
 
@@ -263,10 +268,19 @@ function normalizeLanguage(value, fallback = DEFAULT_LANGUAGE) {
   if (LANGUAGE_BY_ID.has(raw)) return raw;
   // Accept short codes and map to India locales when unambiguous.
   const lower = raw.toLowerCase();
-  if (lower === 'en' || lower === 'english' || lower === 'en-in') return 'en-IN';
-  if (lower === 'hi' || lower === 'hindi' || lower === 'hi-in') return 'hi-IN';
-  if (lower === 'te' || lower === 'telugu' || lower === 'te-in') return 'te-IN';
-  if (lower === 'ta' || lower === 'tamil' || lower === 'ta-in') return 'ta-IN';
+  const aliases = {
+    en: 'en-IN', english: 'en-IN', 'en-in': 'en-IN',
+    hi: 'hi-IN', hindi: 'hi-IN', 'hi-in': 'hi-IN',
+    te: 'te-IN', telugu: 'te-IN', 'te-in': 'te-IN',
+    ta: 'ta-IN', tamil: 'ta-IN', 'ta-in': 'ta-IN',
+    kn: 'kn-IN', kannada: 'kn-IN', 'kn-in': 'kn-IN',
+    ml: 'ml-IN', malayalam: 'ml-IN', 'ml-in': 'ml-IN',
+    mr: 'mr-IN', marathi: 'mr-IN', 'mr-in': 'mr-IN',
+    bn: 'bn-IN', bengali: 'bn-IN', 'bn-in': 'bn-IN',
+    gu: 'gu-IN', gujarati: 'gu-IN', 'gu-in': 'gu-IN',
+    pa: 'pa-IN', punjabi: 'pa-IN', 'pa-in': 'pa-IN',
+  };
+  if (aliases[lower]) return aliases[lower];
   return LANGUAGE_BY_ID.has(fallback) ? fallback : DEFAULT_LANGUAGE;
 }
 
@@ -707,9 +721,16 @@ function createEmployee(db, tenantId, input, actorUserId, opts = {}) {
       ? (db.presets || []).find((p) => p.id === template.presetId && (p.isSystem || p.tenantId === tenantId))
       : null;
 
+    // Maya flagship is the only preset allowed to bind Dograh workflow 8.
+    // Blank / custom / other templates must never inherit Maya persona or WF8.
+    const isMayaFlagship = !!(preset && preset.id === 'preset_astranova_eng_receptionist_v1');
     const personaBits = [];
     if (description) personaBits.push(description);
-    if (preset) personaBits.push(`${preset.name}. Collect: ${(preset.fields || []).join(', ')}.`);
+    if (preset && !isMayaFlagship) {
+      personaBits.push(`${preset.name}. Collect: ${(preset.fields || []).join(', ')}.`);
+    } else if (preset && isMayaFlagship && description) {
+      // Keep user brief; preset greeting/persona applied only via applyPresetToAgent.
+    }
 
     const agentBase = {
       id: genId('ag_'),
@@ -723,18 +744,37 @@ function createEmployee(db, tenantId, input, actorUserId, opts = {}) {
       telephony: { did: '' },
       createdAt: nowIso(),
     };
-    const agent = applyPresetToAgent(agentBase, preset, {
+
+    const agentOverrides = {
       name,
-      persona: personaBits.join(' ').slice(0, 1500) || undefined,
-      greeting: b.greeting != null ? String(b.greeting).slice(0, 300) : undefined,
-      agentType: normalizeAgentType(b.agentType || template.agentType, template.agentType),
+      persona: personaBits.join(' ').slice(0, 1500) || (preset ? undefined : ''),
+      greeting: b.greeting != null
+        ? String(b.greeting).slice(0, 300)
+        : (preset ? undefined : ''),
+      agentType: normalizeAgentType(b.agentType || template.agentType, template.agentType || 'custom'),
       direction: channel === 'inbound' ? 'inbound'
         : (channel === 'outbound' || channel === 'instant_lead' || channel === 'campaign') ? 'outbound'
           : 'both',
-    });
+    };
+    // Force isolation: never copy Maya WF8 onto non-flagship employees.
+    if (!isMayaFlagship) {
+      agentOverrides.dograhWorkflowId = null;
+      agentOverrides.dograhWorkflowKey = Object.prototype.hasOwnProperty.call(b, 'dograhWorkflowKey')
+        ? b.dograhWorkflowKey
+        : (preset && preset.dograhWorkflowKey) || null;
+    }
+
+    const agent = applyPresetToAgent(agentBase, preset, agentOverrides);
     if (!agent.name) agent.name = name;
     if (agent.persona == null) agent.persona = description.slice(0, 1500);
     if (agent.greeting == null) agent.greeting = '';
+    // Hard guard: blank/custom employees never receive Maya display name or WF8.
+    if (!isMayaFlagship) {
+      agent.dograhWorkflowId = null;
+      if (/^maya$/i.test(String(agent.name || '').trim()) && !/^maya$/i.test(name.trim())) {
+        agent.name = name;
+      }
+    }
     db.agents.push(agent);
     agentId = agent.id;
 
@@ -747,6 +787,10 @@ function createEmployee(db, tenantId, input, actorUserId, opts = {}) {
       agentId,
     }, actorUserId);
     if (!wfResult.ok) return wfResult;
+    // New workflows start with providerWorkflowId null. Never auto-bind WF8.
+    if (!isMayaFlagship && wfResult.workflow && wfResult.workflow.providerWorkflowId === '8') {
+      wfResult.workflow.providerWorkflowId = null;
+    }
     workflowId = wfResult.workflow.id;
   }
 
@@ -1149,14 +1193,24 @@ function setEmployeeLanguage(db, tenantId, id, language) {
   let resolved = null;
   if (LANGUAGE_BY_ID.has(next)) resolved = next;
   else {
-    const lower = next.toLowerCase();
-    const aliases = {
-      en: 'en-IN', english: 'en-IN', 'en-in': 'en-IN',
-      hi: 'hi-IN', hindi: 'hi-IN', 'hi-in': 'hi-IN',
-      te: 'te-IN', telugu: 'te-IN', 'te-in': 'te-IN',
-      ta: 'ta-IN', tamil: 'ta-IN', 'ta-in': 'ta-IN',
-    };
-    resolved = aliases[lower] || null;
+    const mapped = normalizeLanguage(next, '');
+    if (mapped && LANGUAGE_BY_ID.has(mapped) && next) {
+      // Only accept alias when normalizeLanguage actually recognized it.
+      const lower = next.toLowerCase();
+      const known = new Set([
+        'en', 'english', 'en-in', 'en-IN',
+        'hi', 'hindi', 'hi-in', 'hi-IN',
+        'te', 'telugu', 'te-in', 'te-IN',
+        'ta', 'tamil', 'ta-in', 'ta-IN',
+        'kn', 'kannada', 'kn-in', 'kn-IN',
+        'ml', 'malayalam', 'ml-in', 'ml-IN',
+        'mr', 'marathi', 'mr-in', 'mr-IN',
+        'bn', 'bengali', 'bn-in', 'bn-IN',
+        'gu', 'gujarati', 'gu-in', 'gu-IN',
+        'pa', 'punjabi', 'pa-in', 'pa-IN',
+      ]);
+      if (known.has(lower) || known.has(next)) resolved = mapped;
+    }
   }
   if (!resolved) {
     return {
