@@ -9,13 +9,13 @@
 
   const STORAGE_KEY = 'astra_ai_employee_journey_v1';
   const STEPS = [
-    { id: 'employee', label: 'Employee', timeline: 'Create AI Employee', title: 'Your AI employee' },
-    { id: 'knowledge', label: 'Knowledge', timeline: 'Teach the job', title: 'Teach Maya the job' },
-    { id: 'language', label: 'Language', timeline: 'Choose Voice & Language', title: 'Voice & language' },
-    { id: 'routing', label: 'Routing', timeline: 'Connect', title: 'Connect customers' },
-    { id: 'call', label: 'Call', timeline: 'Conversation', title: 'Live conversation' },
-    { id: 'outcome', label: 'Outcome', timeline: 'Structured result', title: 'Structured result' },
-    { id: 'next', label: 'Next', timeline: 'Next action', title: 'Next action' },
+    { id: 'employee', label: 'Employee', timeline: 'Employee', subtitle: 'Create or select your AI Employee', title: 'Your AI employee' },
+    { id: 'knowledge', label: 'Knowledge', timeline: 'Knowledge', subtitle: 'Teach Maya about your business', title: 'Teach Maya the job' },
+    { id: 'language', label: 'Language', timeline: 'Voice & Language', subtitle: 'Choose voice, mode, and languages', title: 'Voice & language' },
+    { id: 'routing', label: 'Routing', timeline: 'Routing & Connections', subtitle: 'Connect channels and actions', title: 'Connect customers' },
+    { id: 'call', label: 'Call', timeline: 'Live Conversation', subtitle: 'Maya speaks with your customer', title: 'Live conversation' },
+    { id: 'outcome', label: 'Outcome', timeline: 'Structured Outcome', subtitle: 'Call to structured business data', title: 'Structured result' },
+    { id: 'next', label: 'Next', timeline: 'Next Action', subtitle: 'Turn conversations into outcomes', title: 'Next action' },
   ];
 
   const JourneyState = {
@@ -29,6 +29,8 @@
     voiceProgress: 0,
     voiceTimer: null,
     selectedVoiceId: 'maya',
+    voiceMode: 'astra_auto',
+    voiceSpeed: 0.9,
     autoStartTalk: false,
   };
 
@@ -245,6 +247,10 @@
           ready.instructionsReady ? 'Instructions ready' : 'Instructions needed'),
         el('div', { class: 'journey-check' + (ready.knowledgeAdded ? '' : ' is-pending') },
           ready.knowledgeAdded ? 'Knowledge added' : 'Knowledge needed'),
+        el('div', { class: 'journey-check' + (ready.voiceConfigured ? '' : ' is-pending') },
+          ready.voiceConfigured ? 'Voice configured' : 'Voice needed'),
+        el('div', { class: 'journey-check' + (ready.routingConfigured ? '' : ' is-pending') },
+          ready.routingConfigured ? 'Routing configured' : 'Routing needed'),
         el('div', { class: 'journey-check' + (ready.outcomeFieldsSet ? '' : ' is-pending') },
           ready.outcomeFieldsSet ? 'Outcome fields set' : 'Outcome fields needed'),
       ]),
@@ -440,49 +446,67 @@
     // Language chips: prefer EN/HI/TE/TA like marketing for demo; full catalog in live
     let langs = L.languages || [];
     if (L.demoPreview) {
-      langs = langs.filter((l) => ['EN', 'HI', 'TE', 'TA'].includes(l.id));
+      langs = langs.filter((l) => ['EN', 'HI', 'TE', 'TA', 'KN', 'ML', 'MR', 'BN'].includes(l.id));
       if (!langs.length) {
         langs = [
-          { id: 'EN', label: 'English', selected: false, demoPreview: true },
-          { id: 'HI', label: 'Hindi', selected: false, demoPreview: true },
-          { id: 'TE', label: 'Telugu', selected: true, demoPreview: true },
-          { id: 'TA', label: 'Tamil', selected: false, demoPreview: true },
+          { id: 'EN', label: 'English', selected: true, tone: 'tested', status: 'Tested', demoPreview: true },
+          { id: 'HI', label: 'Hindi', selected: false, tone: 'tested', status: 'Tested', demoPreview: true },
+          { id: 'TE', label: 'Telugu', selected: false, tone: 'tested', status: 'Tested', demoPreview: true },
+          { id: 'TA', label: 'Tamil', selected: false, tone: 'tested', status: 'Tested', demoPreview: true },
+          { id: 'KN', label: 'Kannada', selected: false, tone: 'validation', status: 'Ready for validation', demoPreview: true },
+          { id: 'ML', label: 'Malayalam', selected: false, tone: 'validation', status: 'Ready for validation', demoPreview: true },
+          { id: 'MR', label: 'Marathi', selected: false, tone: 'validation', status: 'Ready for validation', demoPreview: true },
+          { id: 'BN', label: 'Bengali', selected: false, tone: 'validation', status: 'Ready for validation', demoPreview: true },
         ];
       }
     }
 
-    const chips = langs.map((lang) => el('button', {
-      class: 'journey-chip' + (lang.selected ? ' is-selected' : ''),
-      type: 'button',
-      'aria-pressed': lang.selected ? 'true' : 'false',
-      onclick: async () => {
-        if (L.demoPreview || lang.demoPreview) {
-          // Allow local selection in demo for visual fidelity without writing live.
-          langs.forEach((l) => { l.selected = l.id === lang.id; });
-          L.note = lang.id === 'TE' || /telugu/i.test(lang.label || '')
-            ? 'Telugu selected for this illustrative demo · outcome fields stay in English.'
-            : null;
-          return refresh();
-        }
-        try {
-          await saveJourney({
-            mode: 'live',
-            step: 'language',
-            languageDraft: lang.code,
-            language: lang.live ? lang.code : undefined,
-          });
-          toast(lang.live ? ('Language set to ' + lang.label) : ('Draft language ' + lang.label + ' saved.'), 'ok');
-          await refresh();
-        } catch (err) {
-          toast(err.message || 'Could not save language.', 'err');
-        }
-      },
-    }, [
-      lang.label,
-      (lang.demoPreview || (lang.status && lang.status !== 'Available'))
-        ? el('span', { class: 'chip-demo' }, 'Demo preview')
-        : null,
-    ]));
+    const statusChip = (lang) => {
+      const tone = lang.tone
+        || (/tested/i.test(lang.status || '') ? 'tested'
+          : /validation/i.test(lang.status || '') ? 'validation' : 'unavailable');
+      const label = tone === 'tested' ? 'TESTED'
+        : (tone === 'validation' ? 'READY FOR VALIDATION' : 'UNAVAILABLE');
+      return el('span', { class: 'journey-lang-status is-' + tone }, label);
+    };
+
+    const chips = langs.map((lang) => {
+      const unavailable = (lang.tone === 'unavailable') || /unavailable/i.test(lang.status || '');
+      return el('button', {
+        class: 'journey-chip' + (lang.selected ? ' is-selected' : '') + (unavailable ? ' is-unavailable' : ''),
+        type: 'button',
+        disabled: unavailable && !L.demoPreview ? false : undefined,
+        'aria-pressed': lang.selected ? 'true' : 'false',
+        onclick: async () => {
+          if (unavailable) {
+            toast('Language not available yet.', 'info');
+            return;
+          }
+          if (L.demoPreview || lang.demoPreview) {
+            langs.forEach((l) => { l.selected = l.id === lang.id; });
+            L.note = lang.id === 'TE' || /telugu/i.test(lang.label || '')
+              ? 'Telugu selected for this illustrative demo · outcome fields stay in English.'
+              : null;
+            return refresh();
+          }
+          try {
+            await saveJourney({
+              mode: 'live',
+              step: 'language',
+              languageDraft: lang.code,
+              language: lang.live ? lang.code : undefined,
+            });
+            toast(lang.live ? ('Language set to ' + lang.label) : ('Draft language ' + lang.label + ' saved.'), 'ok');
+            await refresh();
+          } catch (err) {
+            toast(err.message || 'Could not save language.', 'err');
+          }
+        },
+      }, [
+        el('span', { class: 'journey-chip-label' }, lang.label),
+        statusChip(lang),
+      ]);
+    });
 
     const selectedLang = langs.find((l) => l.selected);
     const bannerText = L.note
@@ -490,51 +514,95 @@
         ? 'Telugu selected for this illustrative demo · outcome fields stay in English.'
         : null);
 
-    const draftControls = L.demoPreview ? null : el('div', { class: 'journey-select-row' }, [
-      el('label', {}, [
-        'Voice draft',
-        el('select', { id: 'journeyProvider' }, [
-          el('option', { value: 'managed' }, 'Astra Auto (managed)'),
-          el('option', { value: 'custom' }, 'Custom draft (advanced)'),
-        ]),
-      ]),
-      el('button', {
-        class: 'btn btn-ghost btn-sm',
+    const voiceModes = (L.voiceModes && L.voiceModes.length)
+      ? L.voiceModes
+      : [
+        { id: 'astra_auto', label: 'Astra Auto' },
+        { id: 'dograh_managed', label: 'Dograh Managed' },
+        { id: 'byok', label: 'BYOK' },
+      ];
+    const activeMode = L.voiceMode || 'astra_auto';
+    const modePills = el('div', { class: 'journey-voice-modes', role: 'group', 'aria-label': 'Voice mode' },
+      voiceModes.map((m) => el('button', {
+        class: 'journey-voice-mode' + (m.id === activeMode ? ' is-active' : ''),
         type: 'button',
+        'aria-pressed': m.id === activeMode ? 'true' : 'false',
         onclick: async () => {
-          const choice = (document.getElementById('journeyProvider') || {}).value || 'managed';
-          const provider = choice === 'managed' ? 'dograh' : 'rumik';
+          if (L.demoPreview) {
+            L.voiceMode = m.id;
+            return refresh();
+          }
           try {
-            await api('/api/voice/draft-prefs', {
-              method: 'PUT',
-              body: {
-                voice_mode: choice === 'managed' ? 'dograh_managed' : 'byok',
-                provider: provider,
-                apply_live: false,
-              },
-            });
             await saveJourney({
               mode: 'live',
               step: 'language',
-              voiceDraft: { provider: provider, apply_live: false, label: choice === 'managed' ? 'Astra Auto' : 'Custom draft' },
+              voiceDraft: {
+                voiceMode: m.id,
+                provider: m.id === 'byok' ? 'rumik' : (m.id === 'dograh_managed' ? 'dograh' : 'auto'),
+                apply_live: false,
+                label: m.label,
+              },
             });
-            toast('Voice draft saved. Maya production voice unchanged.', 'ok');
+            toast(m.label + ' draft saved. Maya production voice unchanged.', 'ok');
+            await refresh();
           } catch (err) {
-            toast(err.message || 'Could not save voice draft.', 'err');
+            toast(err.message || 'Could not save voice mode.', 'err');
           }
         },
-      }, 'Save draft'),
+      }, m.label))
+    );
+
+    const speedVal = (voice.speed != null && !Number.isNaN(Number(voice.speed)))
+      ? Number(voice.speed)
+      : 0.9;
+    const speedRow = el('div', { class: 'journey-speed-row' }, [
+      el('label', { for: 'journeySpeed' }, 'Speed'),
+      el('input', {
+        id: 'journeySpeed',
+        type: 'range',
+        min: '0.5',
+        max: '1.5',
+        step: '0.1',
+        value: String(speedVal),
+        oninput: (e) => {
+          const v = Number(e.target.value);
+          const label = document.getElementById('journeySpeedVal');
+          if (label) label.textContent = v.toFixed(1) + 'x';
+        },
+        onchange: async (e) => {
+          const v = Number(e.target.value);
+          if (L.demoPreview) {
+            voice.speed = v;
+            return refresh();
+          }
+          try {
+            await saveJourney({
+              mode: 'live',
+              step: 'language',
+              voiceDraft: Object.assign({}, voice.draft || {}, {
+                speed: v,
+                apply_live: false,
+              }),
+            });
+            toast('Speed draft ' + v.toFixed(1) + 'x saved.', 'ok');
+          } catch (err) {
+            toast(err.message || 'Could not save speed.', 'err');
+          }
+        },
+      }),
+      el('span', { id: 'journeySpeedVal', class: 'journey-speed-val' }, speedVal.toFixed(1) + 'x'),
     ]);
 
     return el('div', { class: 'journey-body' }, [
       el('div', { class: 'journey-voice-panel' }, [
         el('p', { class: 'journey-section-label' }, [el('span', { html: icon('mic') }), ' VOICE']),
-        el('h3', {}, voice.title || 'Warm · Natural · Indian English'),
+        el('h3', {}, voice.title || 'Maya · Natural Indian English'),
         el('p', { class: 'sub' }, voice.subtitle || (L.demoPreview
           ? 'Demo voice profile for Maya - illustrative sample.'
           : 'Draft preview only. Saving does not flip Maya production voice.')),
+        modePills,
+        speedRow,
         el('div', { class: 'journey-voice-options' }, options),
-        draftControls,
         el('div', { class: 'journey-preview-bar' }, [
           playBtn,
           el('div', { style: 'min-width:0;flex:1' }, [
@@ -545,10 +613,14 @@
       ]),
       el('div', { class: 'journey-lang-panel' }, [
         el('p', { class: 'journey-section-label is-muted' }, [el('span', { html: icon('langs') }), ' LANGUAGE']),
-        el('h3', {}, 'Regional language ready'),
+        el('h3', {}, 'Supported languages'),
         el('p', { class: 'sub' }, 'Speak to customers in English and selected regional languages.'),
         el('div', { class: 'journey-lang-chips' }, chips),
         bannerText ? el('p', { class: 'journey-info-banner' }, bannerText) : null,
+        L.catalog && Array.isArray(L.catalog.languages) && L.catalog.languages.length
+          ? el('p', { class: 'journey-note', style: 'margin-top:8px' },
+            L.catalog.languages.length + ' catalog languages available for draft preview.')
+          : null,
       ]),
     ]);
   }

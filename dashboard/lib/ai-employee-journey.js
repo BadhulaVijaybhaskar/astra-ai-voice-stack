@@ -34,8 +34,8 @@ const LANGUAGE_CATALOG = Object.freeze([
   Object.freeze({ id: 'TA', code: 'ta-IN', label: 'Tamil', status: 'Ready for paid validation' }),
   Object.freeze({ id: 'KN', code: 'kn-IN', label: 'Kannada', status: 'Tested' }),
   Object.freeze({ id: 'ML', code: 'ml-IN', label: 'Malayalam', status: 'Tested' }),
-  Object.freeze({ id: 'MR', code: 'mr-IN', label: 'Marathi', status: 'Unavailable' }),
-  Object.freeze({ id: 'BN', code: 'bn-IN', label: 'Bengali', status: 'Unavailable' }),
+  Object.freeze({ id: 'MR', code: 'mr-IN', label: 'Marathi', status: 'Ready for validation' }),
+  Object.freeze({ id: 'BN', code: 'bn-IN', label: 'Bengali', status: 'Ready for validation' }),
   Object.freeze({ id: 'GU', code: 'gu-IN', label: 'Gujarati', status: 'Unavailable' }),
   Object.freeze({ id: 'PA', code: 'pa-IN', label: 'Punjabi', status: 'Unavailable' }),
 ]);
@@ -144,13 +144,25 @@ function resolveEmployee(db, tenantId, draft) {
 
 function readinessBits(db, employee) {
   let instructionsReady = false;
+  let voiceConfigured = false;
   if (employee && employee.agentId) {
     const agent = (db.agents || []).find((a) => a.id === employee.agentId && a.tenantId === employee.tenantId);
     instructionsReady = !!(agent && (agent.persona || agent.greeting));
   }
+  if (employee && employee.voice) {
+    voiceConfigured = !!(employee.voice.language || employee.voice.speaker || employee.voice.model || employee.voice.tier);
+  }
   const knowledgeAdded = Array.isArray(employee && employee.knowledgeIds) && employee.knowledgeIds.length > 0;
+  const routingConfigured = !!(employee && (employee.phoneNumberId || employee.workflowId
+    || (Array.isArray(employee.actions) && employee.actions.some((a) => a.enabled !== false))));
   const outcomeFieldsSet = Array.isArray(employee && employee.outcomes) && employee.outcomes.length > 0;
-  return { instructionsReady, knowledgeAdded, outcomeFieldsSet };
+  return {
+    instructionsReady,
+    knowledgeAdded,
+    voiceConfigured,
+    routingConfigured,
+    outcomeFieldsSet,
+  };
 }
 
 function teamLabel(employee) {
@@ -173,6 +185,8 @@ function buildEmployeeStep(db, employee, mode) {
       readiness: {
         instructionsReady: true,
         knowledgeAdded: true,
+        voiceConfigured: true,
+        routingConfigured: true,
         outcomeFieldsSet: true,
       },
     };
@@ -271,7 +285,9 @@ function buildKnowledgeStep(db, tenantId, employee, mode, draft) {
     qualificationRules = (outcomes || []).slice(0, 8).map((o) => ({
       id: o.key,
       label: o.label || o.key,
-      enabled: o.success !== false,
+      // success marks outcome polarity, NOT whether the qualification rule is on.
+      enabled: true,
+      successOutcome: !!o.success,
       demoPreview: false,
       source: 'outcome',
     }));
@@ -292,26 +308,37 @@ function buildLanguageStep(employee, mode, draft, voiceCatalogSummary) {
     return {
       demoPreview: true,
       label: 'DEMO PREVIEW',
+      voiceMode: 'astra_auto',
+      voiceModes: [
+        { id: 'astra_auto', label: 'Astra Auto' },
+        { id: 'dograh_managed', label: 'Dograh Managed' },
+        { id: 'byok', label: 'BYOK' },
+      ],
       voice: {
-        title: 'Warm · Natural · Indian English',
-        subtitle: 'Illustrative voice profile for Maya (Demo preview only).',
+        title: 'Maya · Natural Indian English',
+        subtitle: 'Illustrative voice profile (Demo preview only).',
+        speed: 0.9,
         options: [
-          { id: 'maya', name: 'Maya', description: 'Lead qualification', selected: true, demoPreview: true },
-          { id: 'dev', name: 'Dev', description: 'Customer support', selected: false, demoPreview: true },
-          { id: 'sara', name: 'Sara', description: 'Appointments', selected: false, demoPreview: true },
+          { id: 'maya', name: 'Maya', description: 'Natural Indian English', selected: true, demoPreview: true },
         ],
         previewText: 'Hi, this is Maya from Astra Voice. Is now a good time?',
       },
-      languages: LANGUAGE_CATALOG.map((l) => ({
-        ...l,
-        selected: l.id === 'TE',
-        demoPreview: true,
-        statusNote: l.status === 'Available' ? null : l.status,
-      })),
-      note: 'Telugu selected for this Demo preview · outcome fields stay in English.',
-      // Provider brands stay out of the primary investor surface.
+      languages: LANGUAGE_CATALOG.map((l) => {
+        let tone = 'unavailable';
+        if (['EN', 'HI', 'TE', 'TA'].includes(l.id)) tone = 'tested';
+        else if (['KN', 'ML', 'MR', 'BN'].includes(l.id)) tone = 'validation';
+        return {
+          ...l,
+          selected: l.id === 'EN',
+          demoPreview: true,
+          tone,
+          status: tone === 'tested' ? 'Tested'
+            : (tone === 'validation' ? 'Ready for validation' : 'Unavailable'),
+        };
+      }),
+      note: null,
       providers: [],
-      advancedProviders: ['Dograh Managed', 'Deepgram Aura', 'Sarvam', 'Rumik'],
+      advancedProviders: [],
       productionSafe: true,
     };
   }
@@ -319,25 +346,45 @@ function buildLanguageStep(employee, mode, draft, voiceCatalogSummary) {
   const voice = employee && employee.voice ? employee.voice : {};
   const selectedLang = draft.languageDraft
     || (voice.language || employees.DEFAULT_LANGUAGE || 'en-IN');
+  const draftMode = (draft.voiceDraft && draft.voiceDraft.voiceMode)
+    || (draft.voiceDraft && draft.voiceDraft.provider === 'dograh' ? 'dograh_managed' : null)
+    || 'astra_auto';
   const languages = LANGUAGE_CATALOG.map((l) => {
     const supported = ['en-IN', 'hi-IN', 'te-IN', 'ta-IN'].includes(l.code);
-    let status = l.status;
-    if (supported && (l.id === 'EN' || l.id === 'HI')) status = 'Available';
-    else if (supported) status = 'Ready for paid validation';
+    let tone = 'unavailable';
+    let status = 'Unavailable';
+    if (['EN', 'HI', 'TE', 'TA'].includes(l.id)) {
+      tone = 'tested';
+      status = 'Tested';
+    } else if (['KN', 'ML', 'MR', 'BN'].includes(l.id)) {
+      tone = 'validation';
+      status = 'Ready for validation';
+    }
+    if (!supported && tone === 'tested') {
+      // keep catalog honesty for unvalidated codes already marked
+    }
     return {
       ...l,
       status,
+      tone,
       selected: l.code === selectedLang || l.id === selectedLang,
       demoPreview: false,
-      live: status === 'Available',
+      live: tone === 'tested',
     };
   });
 
   return {
     demoPreview: false,
+    voiceMode: draftMode,
+    voiceModes: [
+      { id: 'astra_auto', label: 'Astra Auto' },
+      { id: 'dograh_managed', label: 'Dograh Managed' },
+      { id: 'byok', label: 'BYOK' },
+    ],
     voice: {
-      title: voice.speaker || voice.model || 'Standard voice',
+      title: voice.speaker || voice.model || 'Maya · Natural Indian English',
       subtitle: 'Draft preview only. Saving does not flip Maya production voice.',
+      speed: (draft.voiceDraft && draft.voiceDraft.speed != null) ? Number(draft.voiceDraft.speed) : 0.9,
       draft: draft.voiceDraft || null,
       current: {
         language: voice.language || null,
@@ -350,7 +397,7 @@ function buildLanguageStep(employee, mode, draft, voiceCatalogSummary) {
         {
           id: 'maya',
           name: employee && employee.name ? employee.name : 'Maya',
-          description: 'Current employee voice draft',
+          description: 'Natural Indian English',
           selected: true,
           demoPreview: false,
         },
@@ -358,8 +405,9 @@ function buildLanguageStep(employee, mode, draft, voiceCatalogSummary) {
     },
     languages,
     catalog: voiceCatalogSummary || null,
+    // STT/LLM/TTS brand soup stays out of investor primary UI.
     providers: [],
-    advancedProviders: ['Dograh Managed', 'Deepgram Aura', 'Sarvam', 'Rumik'],
+    advancedProviders: ['Deepgram', 'Sarvam', 'Groq', 'Rumik'],
     productionSafe: true,
     applyLive: false,
   };
@@ -457,6 +505,14 @@ function buildRoutingStep(db, tenantId, employee, mode, draft, calendar) {
     }
   }
   const window0 = Array.isArray(hours.windows) && hours.windows[0] ? hours.windows[0] : null;
+  const tz = hours.timezone || 'Asia/Kolkata';
+  const tzLabel = tz === 'Asia/Kolkata' ? 'IST' : tz;
+  let hoursLabel;
+  if (hours.mode === 'always') {
+    hoursLabel = 'Always open · ' + tzLabel;
+  } else {
+    hoursLabel = (window0 ? (window0.start + ' – ' + window0.end) : '09:00 – 19:00') + ' ' + tzLabel;
+  }
 
   return {
     demoPreview: false,
@@ -478,13 +534,12 @@ function buildRoutingStep(db, tenantId, employee, mode, draft, calendar) {
     },
     routing: buildRoutingRules(db, tenantId, employee, draft),
     workingHours: {
-      timezone: hours.timezone || 'Asia/Kolkata',
+      timezone: tz,
       mode: hours.mode || 'schedule',
       days: days.length ? days.sort() : [1, 2, 3, 4, 5],
-      start: window0 ? window0.start : '09:00',
-      end: window0 ? window0.end : '19:00',
-      label: (window0 ? (window0.start + ' – ' + window0.end) : '09:00 – 19:00')
-        + ' ' + ((hours.timezone || 'Asia/Kolkata') === 'Asia/Kolkata' ? 'IST' : (hours.timezone || '')),
+      start: hours.mode === 'always' ? null : (window0 ? window0.start : '09:00'),
+      end: hours.mode === 'always' ? null : (window0 ? window0.end : '19:00'),
+      label: hoursLabel,
     },
     calendar,
     workflowName: employee && employee.workflowId
@@ -538,18 +593,18 @@ function buildCallStep(db, tenantId, employee, mode) {
     return {
       demoPreview: true,
       label: 'DEMO PREVIEW',
-      participant: { name: 'Demo Caller', context: 'New enquiry · Product demo' },
+      participant: { name: 'Arjun Mehta', context: 'New enquiry · Product demo', phone: '+91 98765 43210' },
       language: 'Telugu · DEMO PREVIEW',
       status: 'Connected',
       timer: '02:18',
       transcript: [
-        { speaker: 'Maya', role: 'agent', language: 'TELUGU', text: 'హలో, మీ enquiry గురించి మాట్లాడుతున్నాను.', demoPreview: true },
-        { speaker: 'Caller', role: 'caller', text: 'మా sales team కోసం product demo కావాలి.', highlights: ['sales team', 'product demo'], demoPreview: true },
+        { speaker: 'Maya', role: 'agent', language: 'TELUGU', text: 'హలో అర్జున్, మీ enquiry గురించి మాట్లాడుతున్నాను.', demoPreview: true },
+        { speaker: 'Arjun', role: 'caller', text: 'మా sales team కోసం product demo కావాలి.', highlights: ['sales team', 'product demo'], demoPreview: true },
         { speaker: 'Maya', role: 'agent', language: 'TELUGU', text: 'మీరు ఏ solution గురించి చూస్తున్నారు?', demoPreview: true },
-        { speaker: 'Caller', role: 'caller', text: 'ఈ వారం సరిపోతుంది.', highlights: ['ఈ వారం'], demoPreview: true },
+        { speaker: 'Arjun', role: 'caller', text: 'ఈ వారం సరిపోతుంది.', highlights: ['ఈ వారం'], demoPreview: true },
         { speaker: 'Maya', role: 'agent', language: 'TELUGU', text: 'ఎప్పుడు schedule చేయాలని అనుకుంటున్నారు?', demoPreview: true },
       ],
-      toolChips: ['Listening', 'Speaking', 'Book meeting'],
+      toolChips: ['Listening', 'Speaking', 'Checking calendar availability…'],
       note: 'Illustrative conversation · DEMO PREVIEW only. Never written to live call records.',
       realtimeAvailable: false,
     };
@@ -691,9 +746,11 @@ function buildNextStep(db, tenantId, employee, mode) {
   }
 
   const pub = employee ? employees.publicEmployee(employee, db) : null;
-  const actions = employee && Array.isArray(employee.actions)
-    ? employee.actions.filter((a) => a.enabled !== false)
-    : [];
+  // Hostinger rows may store bare action strings; normalize before picking primary.
+  const actions = (employees.normalizeActionsList
+    ? employees.normalizeActionsList(employee && employee.actions)
+    : (employee && Array.isArray(employee.actions) ? employee.actions : [])
+  ).filter((a) => a && a.enabled !== false);
   const primary = actions[0] || null;
 
   const recent = (db.calls || [])

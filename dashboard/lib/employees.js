@@ -363,16 +363,30 @@ function normalizeOutcomesList(list) {
  * tag_outcome; CRM webhook URL is stored only (never invoked here).
  */
 function normalizeActionDef(raw) {
+  // Hostinger / legacy rows sometimes store bare action strings.
+  if (typeof raw === 'string') {
+    const s = String(raw || '').trim();
+    if (!s) return null;
+    raw = { key: s, label: s, type: '' };
+  }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   let type = String(raw.type || raw.actionType || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_');
   if (!ACTION_TYPE_SET.has(type)) {
     // Infer from key/label when type omitted.
-    const hint = String(raw.key || raw.label || '').toLowerCase();
-    if (hint.includes('callback')) type = 'book_callback';
-    else if (hint.includes('transfer') || hint.includes('human')) type = 'transfer_to_human';
-    else if (hint.includes('webhook') || hint.includes('crm')) type = 'crm_webhook';
-    else if (hint.includes('outcome') || hint.includes('tag')) type = 'tag_outcome';
-    else return null;
+    const hint = String(raw.key || raw.label || raw.name || '').toLowerCase();
+    if (hint.includes('callback') || hint.includes('follow') || hint.includes('schedule') || hint.includes('book')) {
+      type = 'book_callback';
+    } else if (hint.includes('transfer') || hint.includes('human')) {
+      type = 'transfer_to_human';
+    } else if (hint.includes('webhook') || hint.includes('crm')) {
+      type = 'crm_webhook';
+    } else if (hint.includes('outcome') || hint.includes('tag') || hint.includes('qualif')) {
+      type = 'tag_outcome';
+    } else {
+      // Preserve unknown legacy strings as book_callback-shaped actions so Next Action
+      // still surfaces real workspace intent instead of going empty.
+      type = 'book_callback';
+    }
   }
   const key = String(raw.key || raw.id || type)
     .trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
