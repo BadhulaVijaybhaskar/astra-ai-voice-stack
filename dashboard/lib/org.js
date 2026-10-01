@@ -247,7 +247,7 @@ function assertNoSecretValues(payload, env = process.env) {
   const keys = [
     'DOGRAH_API_KEY', 'DOGRAH_PASSWORD', 'VOBIZ_AUTH_TOKEN', 'RUMIK_API_KEY',
     'GROQ_API_KEY', 'DEEPGRAM_API_KEY', 'GEMINI_API_KEY', 'PAYU_SALT', 'PAYU_KEY',
-    'CALLBACK_SECRET', 'ANTHROPIC_API_KEY',
+    'CALLBACK_SECRET', 'ANTHROPIC_API_KEY', 'SARVAM_API_KEY', 'ELEVENLABS_API_KEY',
   ];
   for (const key of keys) {
     const value = env[key];

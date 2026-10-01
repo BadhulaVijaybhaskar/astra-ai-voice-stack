@@ -265,10 +265,20 @@ function renderAuth() {
         route = '/api/auth/login';
       }
       const res = await api(route, { method: 'POST', body: body, allow401: true });
-      State.me = { user: res.user, tenant: res.tenant };
+      // Prefer /api/me so feature flags (e.g. aiEmployeeJourney) land in State.me.
+      try {
+        State.me = await api('/api/me');
+      } catch (_) {
+        State.me = {
+          user: res.user,
+          tenant: res.tenant,
+          features: (res && res.features) || {},
+        };
+      }
       resetData();
       toast(mode === 'login' ? 'Signed in.' : 'Account created.', 'ok');
       renderShell();
+      onRoute();
     } catch (ex) {
       btn.disabled = false; btn.textContent = mode === 'login' ? 'Sign in' : 'Create account';
       if (ex.status === 409) showErr('That email is already registered. Try signing in.');
@@ -298,6 +308,7 @@ function resetData() {
 const ROUTES = [
   { id: 'overview', label: 'Home', icon: 'grid', group: 'HOME' },
   { id: 'employees', label: 'My Employees', icon: 'users', group: 'JOURNEY' },
+  { id: 'ai-employee-setup', label: 'AI Employee Setup', icon: 'users', group: 'JOURNEY', feature: 'aiEmployeeJourney' },
   { id: 'leads', label: 'Instant Leads', icon: 'leads', group: 'LEADS' },
   { id: 'campaigns', label: 'Campaigns', icon: 'megaphone', group: 'LEADS' },
   { id: 'calls', label: 'Conversations', icon: 'calls', group: 'JOURNEY' },
@@ -353,6 +364,9 @@ function renderShell() {
     if (r.adminOnly && !['super_admin', 'admin'].includes(u.role)) return false;
     if (r.ownerOnly && !['super_admin', 'admin', 'owner'].includes(u.role)) return false;
     if (r.advanced && u.role !== 'super_admin') return false;
+    if (r.feature === 'aiEmployeeJourney') {
+      return !!(State.me && State.me.features && State.me.features.aiEmployeeJourney);
+    }
     return true;
   });
   const groupOrder = ['HOME', 'JOURNEY', 'LEADS', 'ACCOUNT', 'ADVANCED'];
@@ -488,7 +502,8 @@ function currentRoute() {
   const hash = (location.hash || '').replace(/^#\/?/, '').split('?')[0];
   const found = ROUTES.find((r) => r.id === hash &&
     (!r.adminOnly || (State.me && ['super_admin', 'admin'].includes(State.me.user.role))) &&
-    (!r.ownerOnly || (State.me && ['super_admin', 'admin', 'owner'].includes(State.me.user.role))));
+    (!r.ownerOnly || (State.me && ['super_admin', 'admin', 'owner'].includes(State.me.user.role))) &&
+    (r.feature !== 'aiEmployeeJourney' || (State.me && State.me.features && State.me.features.aiEmployeeJourney)));
   return found ? found.id : 'overview';
 }
 function onRoute() {
@@ -503,7 +518,7 @@ function onRoute() {
   const wrap = el('div', { class: 'view' });
   view.appendChild(wrap);
   ({
-    overview: viewOverview, employees: viewEmployees, agents: viewAgents, workflows: viewWorkflows, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
+    overview: viewOverview, employees: viewEmployees, 'ai-employee-setup': viewAiEmployeeSetupRoute, agents: viewAgents, workflows: viewWorkflows, presets: viewPresets, studio: viewStudio, demos: viewDemoLinks,
     talk: viewTalk, numbers: viewPhoneNumbers, telephony: viewPhoneNumbers, calls: viewCalls, leads: viewInstantLeads,
     knowledge: viewKnowledge, integrations: viewIntegrations, campaigns: viewCampaigns, analytics: viewAnalytics,
     training: viewTrainingHub, billing: viewBilling,
@@ -511,6 +526,14 @@ function onRoute() {
   }[id] || viewOverview)(wrap);
 }
 function goto(id) { location.hash = '#/' + id; }
+
+function viewAiEmployeeSetupRoute(root) {
+  if (window.AstraAiEmployeeJourney && typeof window.AstraAiEmployeeJourney.view === 'function') {
+    return window.AstraAiEmployeeJourney.view(root);
+  }
+  root.appendChild(viewHead('AI Employee Setup', 'Journey module is not loaded.'));
+  root.appendChild(el('p', { class: 'muted' }, 'Enable ENABLE_AI_EMPLOYEE_JOURNEY=1 and reload.'));
+}
 
 /* ---- shared view header ---- */
 function viewHead(title, sub, extraClass) {
