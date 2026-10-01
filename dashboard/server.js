@@ -60,6 +60,7 @@ const customerContext = require('./lib/customer-context');
 const outboundJobs = require('./lib/outbound-jobs');
 const eventTriggers = require('./lib/event-triggers');
 const endOfCallPipeline = require('./lib/end-of-call-pipeline');
+const calcom = require('./lib/calcom');
 const voiceCatalog = require('./lib/tts-voice-catalog');
 const unifiedVoiceCatalog = require('./lib/voice-catalog');
 const voicePreview = require('./lib/voice-preview');
@@ -405,7 +406,15 @@ function calRequest(method, pathname, version, payload) {
     const upstream = require('https').request({ host: 'api.cal.com', path: pathname, method, headers }, (resp) => {
       const parts = []; resp.on('data', (part) => parts.push(part)); resp.on('end', () => {
         let body = {}; try { body = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (_) {}
-        if (resp.statusCode < 200 || resp.statusCode >= 300) return reject(new providers.ProviderError(body.message || body.error || 'Cal.com request failed', resp.statusCode || 502, 'calendar_upstream'));
+        if (resp.statusCode < 200 || resp.statusCode >= 300) {
+          const formatted = calcom.formatCalcomError(body, resp.statusCode || 502);
+          return reject(new providers.ProviderError(
+            formatted.message,
+            resp.statusCode || 502,
+            formatted.code || 'calendar_upstream',
+            formatted.detail,
+          ));
+        }
         resolve(body);
       });
     });
@@ -447,16 +456,35 @@ async function apiHvacJobSave(req, res, ctx) {
 async function apiHvacBook(req, res, ctx) {
   const b = ctx.body || {}; const eventTypeId = Number(b.eventTypeId); const start = String(b.start || ''); const attendee = b.attendee || {};
   if (!Number.isInteger(eventTypeId) || Number(eventTypeId) <= 0 || !/^\d{4}-\d{2}-\d{2}T/.test(start)) return core.sendJson(res, 422, { error: 'event type and appointment time are required', code: 'bad_booking' });
-  const name = String(attendee.name || '').trim(); const email = String(attendee.email || '').trim().toLowerCase(); const phone = String(attendee.phone || '').trim();
-  if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !phone) return core.sendJson(res, 422, { error: 'attendee name, email and phone are required for Cal.com booking', code: 'missing_booking_contact' });
+  const name = String(attendee.name || '').trim(); const email = calcom.normalizeEmail(attendee.email); const phone = String(attendee.phone || '').trim();
+  if (!name || !email || !phone) return core.sendJson(res, 422, { error: 'attendee name, email and phone are required for Cal.com booking', code: 'missing_booking_contact' });
+  if (!calcom.EMAIL_RE.test(email)) return core.sendJson(res, 422, { error: 'attendee email is invalid', code: 'invalid_attendee_email' });
+  // Reject non-mailable domains before calling Cal.com (avoids email_domain_cannot_receive_mail).
+  if (!calcom.isMailableAttendeeEmail(email)) {
+    return core.sendJson(res, 422, {
+      error: 'attendee email domain cannot receive mail. Use a real mailbox (not @example.com or similar).',
+      code: 'email_domain_cannot_receive_mail',
+      detail: { domain: calcom.emailDomain(email) },
+    });
+  }
   try {
     const booking = await calRequest('POST', '/v2/bookings', '2026-02-25', { eventTypeId, start: new Date(start).toISOString(), attendee: { name, email, phoneNumber: phone, timeZone: HVAC_TIMEZONE, language: 'en' }, metadata: { source: 'rumik_hvac_desk', service: String(b.service || 'General HVAC').slice(0, 80), urgency: String(b.urgency || 'normal').slice(0, 30), jobId: String(b.jobId || '') } });
+    const bookingUid = calcom.extractBookingUid(booking);
+    // Gate: never mark Astra booked or create confirmation without a real Cal.com booking uid.
+    if (!bookingUid) {
+      throw new providers.ProviderError(
+        'Cal.com booking response missing booking uid',
+        502,
+        'calendar_booking_incomplete',
+        { booking: booking && booking.data ? { id: booking.data.id || null, status: booking.data.status || null } : null },
+      );
+    }
     const now = new Date().toISOString(); let job; let contextResult = null;
     await core.mutate((d) => {
       job = b.jobId ? d.hvacJobs.find((item) => item.id === String(b.jobId) && item.tenantId === ctx.tenant.id) : null;
       if (!job) { job = { id: core.genId('hvac_'), tenantId: ctx.tenant.id, callerName: name, phone, email, service: String(b.service || 'General HVAC').slice(0, 80), urgency: String(b.urgency || 'normal').slice(0, 30), assignedTo: '', notes: '', createdAt: now }; d.hvacJobs.push(job); }
-      job.outcome = 'booked'; job.updatedAt = now; job.appointment = { calBookingUid: booking.data && booking.data.uid, eventTypeId, start: booking.data && booking.data.start, end: booking.data && booking.data.end, status: booking.data && booking.data.status, timezone: HVAC_TIMEZONE };
-      addAudit(d, ctx, 'hvac.booking.created', 'hvac_job', job.id, { eventTypeId, bookingUid: job.appointment.calBookingUid || '' });
+      job.outcome = 'booked'; job.updatedAt = now; job.appointment = { calBookingUid: bookingUid, eventTypeId, start: booking.data && booking.data.start, end: booking.data && booking.data.end, status: booking.data && booking.data.status, timezone: HVAC_TIMEZONE };
+      addAudit(d, ctx, 'hvac.booking.created', 'hvac_job', job.id, { eventTypeId, bookingUid });
 
       // Continuous context: resolve contact, store appointment, schedule confirmation/reminder jobs (no PSTN dial).
       const resolved = customerContext.resolveContact(d, ctx.tenant.id, phone, {
@@ -469,7 +497,7 @@ async function apiHvacBook(req, res, ctx) {
           startAt: job.appointment.start || start,
           endAt: job.appointment.end || null,
           timezone: HVAC_TIMEZONE,
-          calBookingUid: job.appointment.calBookingUid,
+          calBookingUid: bookingUid,
           eventTypeId,
         });
         const evt = eventTriggers.handleEvent(d, ctx.tenant.id, 'appointment.booked', {
@@ -479,16 +507,28 @@ async function apiHvacBook(req, res, ctx) {
           appointmentId: apptRes.appointment && apptRes.appointment.id,
           appointmentStartAt: apptRes.appointment && apptRes.appointment.startAt,
         }, { actorUserId: ctx.user.id });
+        // Confirmation follow-up jobs always autoDial=false (enforced in outbound-jobs).
         contextResult = {
           contact_id: resolved.contact.id,
           appointment: apptRes.appointment || null,
+          booking_id: bookingUid,
           jobs: (evt.ok ? evt.jobs : []).map((j) => outboundJobs.publicOutboundJob(j.job)),
           dialed: false,
+          claimed: true,
         };
       }
     });
-    core.sendJson(res, 201, { booking: booking.data, job: publicHvacJob(job), customer_context: contextResult });
-  } catch (e) { handleProviderError(res, e); }
+    core.sendJson(res, 201, {
+      booking: booking.data,
+      booking_id: bookingUid,
+      job: publicHvacJob(job),
+      customer_context: contextResult,
+      claimed: true,
+    });
+  } catch (e) {
+    // On Cal.com failure: do not mark booked, do not create confirmation, do not claim booked.
+    handleProviderError(res, e);
+  }
 }
 
 function apiAgentsList(req, res, ctx) {
@@ -4287,13 +4327,23 @@ async function apiContactsAppointments(req, res, ctx) {
     }
     result = customerContext.addAppointment(contact, b);
     if (result.ok && result.created) {
-      const eventName = result.appointment.status === 'requested'
-        ? 'appointment.requested'
-        : result.appointment.status === 'cancelled'
-          ? 'appointment.cancelled'
-          : result.appointment.status === 'rescheduled'
-            ? 'appointment.rescheduled'
-            : 'appointment.booked';
+      const bookingId = result.appointment.calBookingUid
+        || b.calBookingUid
+        || b.cal_booking_uid
+        || b.bookingId
+        || b.booking_id
+        || null;
+      // appointment.booked (and confirmation jobs) only when a real booking id exists.
+      let eventName = 'appointment.requested';
+      if (result.appointment.status === 'cancelled') eventName = 'appointment.cancelled';
+      else if (result.appointment.status === 'rescheduled') eventName = 'appointment.rescheduled';
+      else if (result.appointment.status === 'booked' && bookingId) eventName = 'appointment.booked';
+      else if (result.appointment.status === 'booked' && !bookingId) {
+        // Downgrade false booked claims without Cal.com uid.
+        result.appointment.status = 'requested';
+        result.appointment.updatedAt = new Date().toISOString();
+        eventName = 'appointment.requested';
+      }
       evt = eventTriggers.handleEvent(d, ctx.tenant.id, eventName, {
         contactId: contact.id,
         employeeId: contact.assignedEmployee || b.employeeId,
@@ -4303,6 +4353,7 @@ async function apiContactsAppointments(req, res, ctx) {
       }, { actorUserId: ctx.user.id });
       addAudit(d, ctx, eventName, 'contact', contact.id, {
         appointmentId: result.appointment.id,
+        bookingId: bookingId || null,
         persisted: true,
       });
     }
