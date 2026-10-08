@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Shared helpers. Sourced by every deploy script.
+# Generic bootstrap for a fresh root-access Ubuntu box. Production runs on Hostinger
+# (/opt/astra, astraadmin) and is NOT managed by these scripts; the old Google
+# Cloud VPS layout (/opt/dograh-hq, root@) is retired.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
