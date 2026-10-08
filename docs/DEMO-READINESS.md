@@ -6,15 +6,15 @@
 - Fail-closed dial + voice tier stubs + customer provider leak strip (prior commit on this branch).
 - **Excel/CSV bulk Campaigns** on the **same** `placeOutboundCallJob` → `createOutboundCall` path as Instant Leads (this commit). See [CAMPAIGNS-ANALYTICS.md](./CAMPAIGNS-ANALYTICS.md).
 
-## Live VPS (audit)
+## Production host
 
-`http://8.231.82.37:8787` still runs a **stale** build (`app.js?v=20260915-polish`):
+AstraConnect runs on **Hostinger KVM only** (`194.238.17.38`, base path `/opt/astra`,
+public host `194-238-17-38.sslip.io`). The old Google Cloud VPS is no longer part of
+the architecture and must not be used as a deploy or audit target.
 
-- Anon `/api/health` still leaks provider inventory (deepgram/rumik/groq/vobiz)
-- `/api/employees` and `/api/leads` → `not_found`
-- Product journey APIs from `main@a2677f5`+ tip are **not deployed**
-
-**After this PR merges:** redeploy tip via `deploy/06-deploy-dashboard.sh` with `GIT_SHA` / `DEPLOYED_AT` and preserve VPS `.env` (`DOGRAH_*`, `DEEPGRAM_API_KEY`, `GROQ_API_KEY`, `RUMIK_API_KEY`).
+Live Astra app: `/opt/astra/astra-ai` (container `astra-dograh-astra-ai-1`, internal
+port 8787, reached through nginx). Dograh stack: `/opt/astra/dograh`
+(`docker-compose.hostinger.yaml`).
 
 ## Demo DID / sample file
 
@@ -23,22 +23,18 @@
 - Authorized live test DID when approved: `+918065353938`
 - Do not place paid real dials without human confirm. Live phone proof remains **AWAITING EXTERNAL ACCEPTANCE**.
 
-## VPS redeploy (required before claiming deployed)
+## Redeploy (Hostinger)
 
-Live box is still stale (`app.js?v=20260915-polish`). After this PR merges onto the deploy branch:
+Follow the Hostinger deploy runbook used for PR deploys: back up
+`/opt/astra/astra-ai/data/db.json` and the active `.env` into
+`/opt/astra/backups/pre-deploy-<ref>-<ts>/`, update `/opt/astra/astra-ai`, then
+recreate only the Astra service:
 
 ```sh
-# on the VPS (paths may be /opt/rapidx-voice or /opt/astra-ai depending on install)
-cd /opt/astra-ai   # or /opt/rapidx-voice
-git fetch origin
-git checkout <merged-tip-sha>   # or: git pull origin main
-# preserve .env (DOGRAH_*, DEEPGRAM_API_KEY, GROQ_API_KEY, RUMIK_API_KEY)
-docker restart rapidx-voice     # container name from deploy/06-deploy-dashboard.sh
-# or: docker restart astra-ai
-curl -s http://127.0.0.1:8787/api/health
+cd /opt/astra/dograh
+docker compose -f docker-compose.hostinger.yaml -f docker-compose.override.hostinger.yaml up -d astra-ai
+docker exec astra-dograh-astra-ai-1 wget -qO- http://127.0.0.1:8787/api/health
 # expect: no providers/models/selected on anon health; gitSha when GIT_SHA set
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/api/employees
-# expect: 401 (endpoint exists) not 404
 ```
 
-Do **not** claim the celebrity demo is live on VPS until the above redeploy is verified.
+Do **not** claim a demo is live until the redeploy is verified on Hostinger.
